@@ -14,6 +14,7 @@ import (
 
 type Config struct {
 	OrchestratorEndpoint url.URL
+	OrchestratorClient   *http.Client
 	Client               *http.Client
 	DoValidation         bool
 	AffinityKey          string

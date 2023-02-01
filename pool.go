@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 
 // loadPool refreshes the set of endpoints to fetch cars from from the Orchestrator Endpoint
 func (p *pool) loadPool() ([]string, error) {
-	resp, err := p.config.Client.Get(p.config.OrchestratorEndpoint.String())
+	resp, err := p.config.OrchestratorClient.Get(p.config.OrchestratorEndpoint.String())
 	if err != nil {
 		return nil, err
 	}
@@ -35,6 +36,7 @@ type pool struct {
 	endpoints []Member
 	c         *consistent.Consistent
 	lk        sync.RWMutex
+	started   chan struct{}
 	done      chan struct{}
 }
 
@@ -54,21 +56,19 @@ func (h hasher) Sum64(data []byte) uint64 {
 
 func newPool(c *Config) *pool {
 	p := pool{
-		config: c,
-		c: consistent.New([]consistent.Member{}, consistent.Config{
-			PartitionCount:    7,
-			ReplicationFactor: 20,
-			Load:              1.25,
-			Hasher:            hasher{},
-		}),
-		done: make(chan struct{}, 1),
+		config:    c,
+		endpoints: []Member{},
+		c:         nil,
+		started:   make(chan struct{}),
+		done:      make(chan struct{}, 1),
 	}
 	go p.refreshPool()
 	return &p
 }
 
 func (p *pool) refreshPool() {
-	t := time.NewTimer(p.config.PoolRefresh)
+	t := time.NewTimer(0)
+	started := sync.Once{}
 	for {
 		select {
 		case <-t.C:
@@ -103,14 +103,32 @@ func (p *pool) refreshPool() {
 				}
 
 				p.lk.Lock()
-				for _, a := range toAdd {
-					p.c.Add(Member(a))
-				}
-				for _, r := range toRemove {
-					p.c.Remove(r)
+				if p.c == nil {
+					ms := make([]consistent.Member, 0, len(toAdd))
+					for _, a := range toAdd {
+						ms = append(ms, Member(a))
+					}
+					p.c = consistent.New(ms, consistent.Config{
+						PartitionCount:    701,
+						ReplicationFactor: 20,
+						Load:              1.25,
+						Hasher:            hasher{},
+					})
+				} else {
+					for _, a := range toAdd {
+						p.c.Add(Member(a))
+					}
+					for _, r := range toRemove {
+						p.c.Remove(r)
+					}
 				}
 				p.endpoints = n
 				p.lk.Unlock()
+				started.Do(func() {
+					close(p.started)
+				})
+			} else {
+				fmt.Printf("error loading pool: %v\n", err)
 			}
 			t.Reset(p.config.PoolRefresh)
 		case <-p.done:
@@ -129,21 +147,33 @@ func (p *pool) Close() {
 }
 
 func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blocks.Block, error) {
+	<-p.started
 	aff := with
 	if aff == "" {
 		aff = c.Hash().B58String()
 	}
+	p.lk.RLock()
 	member := p.c.LocateKey([]byte(aff))
+	p.lk.RUnlock()
 	root := member.String()
 
-	return doFetch(ctx, p.config.Client, root, c)
+	return p.doFetch(ctx, root, c)
 }
 
 var tmpl = "http://%s/ipfs/%s?format=raw"
 
-func doFetch(ctx context.Context, client *http.Client, from string, c cid.Cid) (blocks.Block, error) {
-	u := fmt.Sprintf(tmpl, from, c)
-	resp, err := client.Get(u)
+func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (blocks.Block, error) {
+	u, err := url.Parse(fmt.Sprintf(tmpl, from, c))
+	if err != nil {
+		return nil, err
+	}
+	resp, err := p.config.Client.Do(&http.Request{
+		Method: http.MethodGet,
+		URL:    u,
+		Header: http.Header{
+			"Accept": []string{"application/vnd.ipld.raw"},
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -153,5 +183,15 @@ func doFetch(ctx context.Context, client *http.Client, from string, c cid.Cid) (
 		return nil, err
 	}
 
+	if p.config.DoValidation {
+		nc, err := c.Prefix().Sum(rb)
+		if err != nil {
+			return nil, blocks.ErrWrongHash
+		}
+		if !nc.Equals(c) {
+			fmt.Printf("got %s vs %s\n", nc, c)
+			return nil, blocks.ErrWrongHash
+		}
+	}
 	return blocks.NewBlockWithCid(rb, c)
 }
