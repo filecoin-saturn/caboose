@@ -15,12 +15,18 @@ import (
 type Config struct {
 	OrchestratorEndpoint url.URL
 	OrchestratorClient   *http.Client
-	Client               *http.Client
-	DoValidation         bool
-	AffinityKey          string
-	PoolRefresh          time.Duration
-	PoolMaxSize          int
-	MaxConcurrency       int
+
+	LoggingEndpoint url.URL
+	LoggingClient   *http.Client
+	LoggingInterval time.Duration
+
+	Client *http.Client
+
+	DoValidation   bool
+	AffinityKey    string
+	PoolRefresh    time.Duration
+	PoolMaxSize    int
+	MaxConcurrency int
 }
 
 var ErrNotImplemented error = errors.New("not implemented")
@@ -28,13 +34,16 @@ var ErrNotImplemented error = errors.New("not implemented")
 type Caboose struct {
 	config *Config
 	pool   *pool
+	logger *logger
 }
 
 func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 	c := Caboose{
 		config: config,
 		pool:   newPool(config),
+		logger: newLogger(config),
 	}
+	c.pool.logger = c.logger
 	if c.config.Client == nil {
 		c.config.Client = http.DefaultClient
 	}
@@ -43,6 +52,7 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 
 func (c *Caboose) Close() {
 	c.pool.Close()
+	c.logger.Close()
 }
 
 func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {

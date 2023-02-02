@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/buraksezer/consistent"
+	"github.com/google/uuid"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 )
@@ -34,6 +35,7 @@ func (p *pool) loadPool() ([]string, error) {
 type pool struct {
 	config    *Config
 	endpoints []Member
+	logger    *logger
 	c         *consistent.Consistent
 	lk        sync.RWMutex
 	started   chan struct{}
@@ -162,7 +164,32 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blocks.Bl
 
 var tmpl = "http://%s/ipfs/%s?format=raw"
 
-func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (blocks.Block, error) {
+func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Block, e error) {
+	start := time.Now()
+	fb := time.Now()
+	code := 0
+	proto := "unknown"
+	respReq := &http.Request{}
+	received := 0
+	defer func() {
+		p.logger.queue <- log{
+			CacheHit:  false,
+			URL:       "",
+			LocalTime: start,
+			// TODO: does this include header sizes?
+			NumBytesSent:    received,
+			RequestDuration: time.Now().Sub(start).Seconds(),
+			RequestID:       uuid.NewString(),
+			HTTPStatusCode:  code,
+			HTTPProtocol:    proto,
+			TTFBMS:          int(fb.Sub(start).Milliseconds()),
+			// my address
+			ClientAddress: "",
+			Range:         "",
+			Referrer:      respReq.Referer(),
+			UserAgent:     respReq.UserAgent(),
+		}
+	}()
 	u, err := url.Parse(fmt.Sprintf(tmpl, from, c))
 	if err != nil {
 		return nil, err
@@ -174,14 +201,19 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (blocks.Bloc
 			"Accept": []string{"application/vnd.ipld.raw"},
 		},
 	})
+	fb = time.Now()
+	code = resp.StatusCode
+	proto = resp.Proto
 	if err != nil {
 		return nil, err
 	}
+	respReq = resp.Request
 	defer resp.Body.Close()
 	rb, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
+	received = len(rb)
 
 	if p.config.DoValidation {
 		nc, err := c.Prefix().Sum(rb)

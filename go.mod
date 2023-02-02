@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	github.com/buraksezer/consistent v0.10.0
+	github.com/google/uuid v1.3.0
 	github.com/ipfs/go-block-format v0.1.1
 	github.com/ipfs/go-cid v0.3.2
 	github.com/ipfs/go-ipfs-blockstore v1.2.0
@@ -18,7 +19,6 @@ require (
 	github.com/go-logr/logr v1.2.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/google/uuid v1.3.0 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/ipfs/bbloom v0.0.4 // indirect
 	github.com/ipfs/go-blockservice v0.5.0 // indirect

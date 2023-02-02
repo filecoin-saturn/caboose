@@ -39,6 +39,7 @@ func main1() int {
 			out := args.Get(1)
 
 			oe, _ := url.Parse("https://orchestrator.strn.pl/nodes/nearby")
+			le, _ := url.Parse("https://twb3qukm2i654i3tnvx36char40aymqq.lambda-url.us-west-2.on.aws/")
 			saturnClient := http.Client{
 				Transport: &http.Transport{
 					TLSClientConfig: &tls.Config{
@@ -50,9 +51,14 @@ func main1() int {
 			cb, err := caboose.NewCaboose(&caboose.Config{
 				OrchestratorEndpoint: *oe,
 				OrchestratorClient:   http.DefaultClient,
-				DoValidation:         true,
-				PoolRefresh:          5 * time.Minute,
-				Client:               &saturnClient,
+
+				LoggingEndpoint: *le,
+				LoggingClient:   http.DefaultClient,
+				LoggingInterval: 5 * time.Second,
+
+				DoValidation: true,
+				PoolRefresh:  5 * time.Minute,
+				Client:       &saturnClient,
 			})
 			if err != nil {
 				return err
