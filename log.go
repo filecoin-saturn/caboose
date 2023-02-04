@@ -6,7 +6,12 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	golog "github.com/ipfs/go-log/v2"
 )
+
+// goLogger gets process aggregation logs
+var goLogger = golog.Logger("caboose")
 
 type logger struct {
 	queue    chan log
