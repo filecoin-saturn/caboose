@@ -126,10 +126,12 @@ func (p *pool) refreshPool() {
 				}
 				p.endpoints = n
 				p.lk.Unlock()
+				poolSizeMetric.Set(float64(len(n)))
 				started.Do(func() {
 					close(p.started)
 				})
 			} else {
+				poolErrorMetric.Add(1)
 				fmt.Printf("error loading pool: %v\n", err)
 			}
 			t.Reset(p.config.PoolRefresh)
@@ -172,6 +174,12 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	respReq := &http.Request{}
 	received := 0
 	defer func() {
+		if e != nil {
+			fetchErrorMetric.Add(1)
+		} else {
+			fetchLatencyMetric.Observe(float64(fb.Sub(start).Milliseconds()))
+			fetchSpeedMetric.Observe(float64(received) / time.Now().Sub(start).Seconds())
+		}
 		p.logger.queue <- log{
 			CacheHit:  false,
 			URL:       "",
