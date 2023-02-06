@@ -17,10 +17,10 @@ var (
 		Help: "Number of active caboose peers",
 	})
 
-	fetchErrorMetric = prometheus.NewCounter(prometheus.CounterOpts{
+	fetchResponseMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "fetch_errors"),
 		Help: "Errors fetching from Caboose Peers",
-	})
+	}, []string{"code"})
 
 	fetchSpeedMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_speed"),
@@ -32,12 +32,18 @@ var (
 		Help:    "Latency observed during caboose fetches",
 		Buckets: prometheus.ExponentialBucketsRange(1, 10000, 10),
 	})
+	fetchSizeMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_size"),
+		Help:    "Size in bytes of caboose fetches",
+		Buckets: prometheus.ExponentialBucketsRange(1, 4000000, 16),
+	})
 )
 
 func init() {
 	CabooseMetrics.MustRegister(poolErrorMetric)
 	CabooseMetrics.MustRegister(poolSizeMetric)
-	CabooseMetrics.MustRegister(fetchErrorMetric)
+	CabooseMetrics.MustRegister(fetchResponseMetric)
 	CabooseMetrics.MustRegister(fetchSpeedMetric)
 	CabooseMetrics.MustRegister(fetchLatencyMetric)
+	CabooseMetrics.MustRegister(fetchSizeMetric)
 }

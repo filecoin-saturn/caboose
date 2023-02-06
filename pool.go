@@ -174,11 +174,11 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	respReq := &http.Request{}
 	received := 0
 	defer func() {
-		if e != nil {
-			fetchErrorMetric.Add(1)
-		} else {
+		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
+		if e == nil {
 			fetchLatencyMetric.Observe(float64(fb.Sub(start).Milliseconds()))
-			fetchSpeedMetric.Observe(float64(received) / time.Now().Sub(start).Seconds())
+			fetchSpeedMetric.Observe(float64(received) / time.Since(start).Seconds())
+			fetchSizeMetric.Observe(float64(received))
 		}
 		p.logger.queue <- log{
 			CacheHit:  false,
@@ -186,7 +186,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 			LocalTime: start,
 			// TODO: does this include header sizes?
 			NumBytesSent:    received,
-			RequestDuration: time.Now().Sub(start).Seconds(),
+			RequestDuration: time.Since(start).Seconds(),
 			RequestID:       uuid.NewString(),
 			HTTPStatusCode:  code,
 			HTTPProtocol:    proto,
