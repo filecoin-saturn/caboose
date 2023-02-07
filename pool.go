@@ -227,13 +227,22 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	if err != nil {
 		return nil, err
 	}
-	resp, err := p.config.Client.Do(&http.Request{
+	req := http.Request{
 		Method: http.MethodGet,
 		URL:    u,
 		Header: http.Header{
 			"Accept": []string{"application/vnd.ipld.raw"},
 		},
-	})
+	}
+	if p.config.ExtraHeaders != nil {
+		for k, vs := range *p.config.ExtraHeaders {
+			for _, v := range vs {
+				req.Header.Add(k, v)
+			}
+		}
+	}
+
+	resp, err := p.config.Client.Do(&req)
 	if err != nil {
 		return nil, err
 	}
