@@ -201,12 +201,12 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 			"Accept": []string{"application/vnd.ipld.raw"},
 		},
 	})
-	fb = time.Now()
-	code = resp.StatusCode
-	proto = resp.Proto
 	if err != nil {
 		return nil, err
 	}
+	fb = time.Now()
+	code = resp.StatusCode
+	proto = resp.Proto
 	respReq = resp.Request
 	defer resp.Body.Close()
 	rb, err := io.ReadAll(resp.Body)
