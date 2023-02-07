@@ -20,7 +20,8 @@ type Config struct {
 	LoggingClient   *http.Client
 	LoggingInterval time.Duration
 
-	Client *http.Client
+	Client       *http.Client
+	ExtraHeaders *http.Header
 
 	DoValidation   bool
 	AffinityKey    string
