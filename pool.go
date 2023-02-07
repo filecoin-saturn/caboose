@@ -126,10 +126,12 @@ func (p *pool) refreshPool() {
 				}
 				p.endpoints = n
 				p.lk.Unlock()
+				poolSizeMetric.Set(float64(len(n)))
 				started.Do(func() {
 					close(p.started)
 				})
 			} else {
+				poolErrorMetric.Add(1)
 				fmt.Printf("error loading pool: %v\n", err)
 			}
 			t.Reset(p.config.PoolRefresh)
@@ -172,13 +174,19 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	respReq := &http.Request{}
 	received := 0
 	defer func() {
+		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
+		if e == nil {
+			fetchLatencyMetric.Observe(float64(fb.Sub(start).Milliseconds()))
+			fetchSpeedMetric.Observe(float64(received) / time.Since(start).Seconds())
+			fetchSizeMetric.Observe(float64(received))
+		}
 		p.logger.queue <- log{
 			CacheHit:  false,
 			URL:       "",
 			LocalTime: start,
 			// TODO: does this include header sizes?
 			NumBytesSent:    received,
-			RequestDuration: time.Now().Sub(start).Seconds(),
+			RequestDuration: time.Since(start).Seconds(),
 			RequestID:       uuid.NewString(),
 			HTTPStatusCode:  code,
 			HTTPProtocol:    proto,
