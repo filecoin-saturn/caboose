@@ -27,7 +27,10 @@ type Config struct {
 	PoolRefresh    time.Duration
 	PoolMaxSize    int
 	MaxConcurrency int
+	MaxRetries     int
 }
+
+const DefaultMaxRetries = 3
 
 var ErrNotImplemented error = errors.New("not implemented")
 

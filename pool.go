@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +22,9 @@ import (
 
 // loadPool refreshes the set of endpoints to fetch cars from from the Orchestrator Endpoint
 func (p *pool) loadPool() ([]string, error) {
+	if override := os.Getenv("CABOOSE_BACKEND_OVERRIDE"); len(override) > 0 {
+		return strings.Split(override, ","), nil
+	}
 	resp, err := p.config.OrchestratorClient.Get(p.config.OrchestratorEndpoint.String())
 	if err != nil {
 		goLogger.Warnw("failed to get backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint.String())
@@ -153,18 +158,33 @@ func (p *pool) Close() {
 	}
 }
 
-func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blocks.Block, error) {
+func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk blocks.Block, err error) {
 	<-p.started
-	aff := with
-	if aff == "" {
-		aff = c.Hash().B58String()
-	}
-	p.lk.RLock()
-	member := p.c.LocateKey([]byte(aff))
-	p.lk.RUnlock()
-	root := member.String()
 
-	return p.doFetch(ctx, root, c)
+	left := p.config.MaxRetries
+	if left == 0 {
+		left = DefaultMaxRetries
+	}
+
+	for i := 0; i < left; i++ {
+		aff := with
+		if aff == "" {
+			aff = fmt.Sprintf("%d%s", i, c.Hash().B58String())
+		} else {
+			aff = fmt.Sprintf("%d%s", i, aff)
+		}
+		p.lk.RLock()
+		member := p.c.LocateKey([]byte(aff))
+		p.lk.RUnlock()
+		root := member.String()
+
+		blk, err = p.doFetch(ctx, root, c)
+		if err != nil {
+			continue
+		}
+		return
+	}
+	return
 }
 
 var tmpl = "http://%s/ipfs/%s?format=raw"
