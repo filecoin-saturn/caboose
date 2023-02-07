@@ -22,13 +22,16 @@ import (
 func (p *pool) loadPool() ([]string, error) {
 	resp, err := p.config.OrchestratorClient.Get(p.config.OrchestratorEndpoint.String())
 	if err != nil {
+		goLogger.Warnw("failed to get backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint.String())
 		return nil, err
 	}
 	defer resp.Body.Close()
 	responses := make([]string, 0)
 	if err := json.NewDecoder(resp.Body).Decode(&responses); err != nil {
+		goLogger.Warnw("failed to decode backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint.String())
 		return nil, err
 	}
+	goLogger.Infow("got backends from orchestrator", "cnt", len(responses), "endpoint", p.config.OrchestratorEndpoint.String())
 	return responses, nil
 }
 
@@ -182,6 +185,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 var tmpl = "http://%s/ipfs/%s?format=raw"
 
 func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Block, e error) {
+	goLogger.Debugw("doing fetch", "from", from, "of", c)
 	start := time.Now()
 	fb := time.Now()
 	code := 0
@@ -189,6 +193,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	respReq := &http.Request{}
 	received := 0
 	defer func() {
+		goLogger.Infow("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(fb.Sub(start).Milliseconds()), "duration", time.Since(start).Seconds())
 		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
 		if e == nil {
 			fetchLatencyMetric.Observe(float64(fb.Sub(start).Milliseconds()))
