@@ -7,9 +7,9 @@ import (
 	"net/url"
 	"time"
 
-	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	ipfsblockstore "github.com/ipfs/go-ipfs-blockstore"
+	blocks "github.com/ipfs/go-libipfs/blocks"
 )
 
 type Config struct {

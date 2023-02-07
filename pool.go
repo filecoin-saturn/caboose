@@ -14,8 +14,8 @@ import (
 
 	"github.com/buraksezer/consistent"
 	"github.com/google/uuid"
-	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
+	blocks "github.com/ipfs/go-libipfs/blocks"
 )
 
 // loadPool refreshes the set of endpoints to fetch cars from from the Orchestrator Endpoint
