@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +22,9 @@ import (
 
 // loadPool refreshes the set of endpoints to fetch cars from from the Orchestrator Endpoint
 func (p *pool) loadPool() ([]string, error) {
+	if override := os.Getenv("CABOOSE_BACKEND_OVERRIDE"); len(override) > 0 {
+		return strings.Split(override, ","), nil
+	}
 	resp, err := p.config.OrchestratorClient.Get(p.config.OrchestratorEndpoint.String())
 	if err != nil {
 		goLogger.Warnw("failed to get backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint.String())
