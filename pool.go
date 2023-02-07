@@ -178,7 +178,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	respReq := &http.Request{}
 	received := 0
 	defer func() {
-		goLogger.Infow("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(fb.Sub(start).Milliseconds()), "duration", time.Now().Sub(start).Seconds())
+		goLogger.Infow("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(fb.Sub(start).Milliseconds()), "duration", time.Since(start).Seconds())
 		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
 		if e == nil {
 			fetchLatencyMetric.Observe(float64(fb.Sub(start).Milliseconds()))
