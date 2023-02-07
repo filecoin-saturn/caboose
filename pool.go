@@ -14,8 +14,8 @@ import (
 
 	"github.com/buraksezer/consistent"
 	"github.com/google/uuid"
-	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
+	blocks "github.com/ipfs/go-libipfs/blocks"
 )
 
 // loadPool refreshes the set of endpoints to fetch cars from from the Orchestrator Endpoint
@@ -129,10 +129,12 @@ func (p *pool) refreshPool() {
 				}
 				p.endpoints = n
 				p.lk.Unlock()
+				poolSizeMetric.Set(float64(len(n)))
 				started.Do(func() {
 					close(p.started)
 				})
 			} else {
+				poolErrorMetric.Add(1)
 				fmt.Printf("error loading pool: %v\n", err)
 			}
 			t.Reset(p.config.PoolRefresh)
@@ -177,13 +179,19 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	received := 0
 	defer func() {
 		goLogger.Infow("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(fb.Sub(start).Milliseconds()), "duration", time.Now().Sub(start).Seconds())
+		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
+		if e == nil {
+			fetchLatencyMetric.Observe(float64(fb.Sub(start).Milliseconds()))
+			fetchSpeedMetric.Observe(float64(received) / time.Since(start).Seconds())
+			fetchSizeMetric.Observe(float64(received))
+		}
 		p.logger.queue <- log{
 			CacheHit:  false,
 			URL:       "",
 			LocalTime: start,
 			// TODO: does this include header sizes?
 			NumBytesSent:    received,
-			RequestDuration: time.Now().Sub(start).Seconds(),
+			RequestDuration: time.Since(start).Seconds(),
 			RequestID:       uuid.NewString(),
 			HTTPStatusCode:  code,
 			HTTPProtocol:    proto,
@@ -206,12 +214,12 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 			"Accept": []string{"application/vnd.ipld.raw"},
 		},
 	})
-	fb = time.Now()
-	code = resp.StatusCode
-	proto = resp.Proto
 	if err != nil {
 		return nil, err
 	}
+	fb = time.Now()
+	code = resp.StatusCode
+	proto = resp.Proto
 	respReq = resp.Request
 	defer resp.Body.Close()
 	rb, err := io.ReadAll(resp.Body)
