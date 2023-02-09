@@ -180,9 +180,6 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	<-p.started
 
 	left := p.config.MaxRetries
-	if left > len(p.endpoints) {
-		left = len(p.endpoints)
-	}
 
 	aff := with
 	if aff == "" {
@@ -190,6 +187,9 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	}
 
 	p.lk.RLock()
+	if left > len(p.endpoints) {
+		left = len(p.endpoints)
+	}
 	if p.c == nil || p.c.Size() == 0 {
 		p.lk.RUnlock()
 		return nil, ErrNoBackend

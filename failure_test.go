@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,8 +23,11 @@ func TestCabooseFailures(t *testing.T) {
 		pool[i].Setup()
 		purls[i] = strings.TrimPrefix(pool[i].server.URL, "http://")
 	}
+	gol := sync.Mutex{}
 	goodOrch := true
 	orch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gol.Lock()
+		defer gol.Unlock()
 		if goodOrch {
 			json.NewEncoder(w).Encode(purls)
 		} else {
@@ -86,7 +90,9 @@ func TestCabooseFailures(t *testing.T) {
 	}
 
 	// force pool down to the 1 remaining good node.
+	gol.Lock()
 	goodOrch = false
+	gol.Unlock()
 	for i := 0; i < 20; i++ {
 		randCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte{uint8(i)})
 		c.Get(context.Background(), randCid)
@@ -110,7 +116,9 @@ func TestCabooseFailures(t *testing.T) {
 	}
 
 	// more nodes should populate
+	gol.Lock()
 	goodOrch = true
+	gol.Unlock()
 	pool[0].valid = true
 	time.Sleep(time.Millisecond * 100)
 
