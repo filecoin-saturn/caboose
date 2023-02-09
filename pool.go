@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -260,7 +259,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	respReq := &http.Request{}
 	received := 0
 	defer func() {
-		goLogger.Infow("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(fb.Sub(start).Milliseconds()), "duration", time.Since(start).Seconds())
+		goLogger.Debugw("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(fb.Sub(start).Milliseconds()), "duration", time.Since(start).Seconds())
 		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
 		if e == nil {
 			fetchLatencyMetric.Observe(float64(fb.Sub(start).Milliseconds()))
@@ -285,17 +284,12 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 			UserAgent:     respReq.UserAgent(),
 		}
 	}()
-	u, err := url.Parse(fmt.Sprintf(tmpl, from, c))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(tmpl, from, c), nil)
 	if err != nil {
 		return nil, err
 	}
-	req := http.Request{
-		Method: http.MethodGet,
-		URL:    u,
-		Header: http.Header{
-			"Accept": []string{"application/vnd.ipld.raw"},
-		},
-	}
+
+	req.Header.Add("Accept", "application/vnd.ipld.raw")
 	if p.config.ExtraHeaders != nil {
 		for k, vs := range *p.config.ExtraHeaders {
 			for _, v := range vs {
@@ -304,7 +298,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 		}
 	}
 
-	resp, err := p.config.Client.Do(&req)
+	resp, err := p.config.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}
