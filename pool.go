@@ -227,7 +227,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	if err != nil {
 		return nil, err
 	}
-	req := http.Request{
+	req := &http.Request{
 		Method: http.MethodGet,
 		URL:    u,
 		Header: http.Header{
@@ -241,8 +241,9 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 			}
 		}
 	}
+	req = req.WithContext(ctx)
 
-	resp, err := p.config.Client.Do(&req)
+	resp, err := p.config.Client.Do(req)
 	if err != nil {
 		return nil, err
 	}
