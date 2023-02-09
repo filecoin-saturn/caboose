@@ -23,17 +23,23 @@ type Config struct {
 	Client       *http.Client
 	ExtraHeaders *http.Header
 
-	DoValidation   bool
-	AffinityKey    string
-	PoolRefresh    time.Duration
-	PoolMaxSize    int
-	MaxConcurrency int
-	MaxRetries     int
+	DoValidation                bool
+	AffinityKey                 string
+	PoolRefresh                 time.Duration
+	PoolFailureDownvoteDebounce time.Duration
+	PoolMaxSize                 int
+	// trigger early refreshes when pool size drops below this low watermark
+	PoolLowWatermark int
+	MaxConcurrency   int
+	MaxRetries       int
 }
 
 const DefaultMaxRetries = 3
+const DefaultPoolFailureDownvoteDebounce = time.Second
+const DefaultPoolLowWatermark = 5
 
 var ErrNotImplemented error = errors.New("not implemented")
+var ErrNoBackend error = errors.New("no available backend")
 
 type Caboose struct {
 	config *Config
@@ -50,6 +56,15 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 	c.pool.logger = c.logger
 	if c.config.Client == nil {
 		c.config.Client = http.DefaultClient
+	}
+	if c.config.PoolFailureDownvoteDebounce == 0 {
+		c.config.PoolFailureDownvoteDebounce = DefaultPoolFailureDownvoteDebounce
+	}
+	if c.config.PoolLowWatermark == 0 {
+		c.config.PoolLowWatermark = DefaultPoolLowWatermark
+	}
+	if c.config.MaxRetries == 0 {
+		c.config.MaxRetries = DefaultMaxRetries
 	}
 	return &c, nil
 }

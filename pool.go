@@ -2,8 +2,6 @@ package caboose
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/buraksezer/consistent"
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
 	blocks "github.com/ipfs/go-libipfs/blocks"
+	"github.com/serialx/hashring"
 )
 
 // loadPool refreshes the set of endpoints to fetch cars from from the Orchestrator Endpoint
@@ -42,38 +40,104 @@ func (p *pool) loadPool() ([]string, error) {
 
 type pool struct {
 	config    *Config
-	endpoints []Member
+	endpoints MemberList
 	logger    *logger
-	c         *consistent.Consistent
+	c         *hashring.HashRing
 	lk        sync.RWMutex
 	started   chan struct{}
+	refresh   chan struct{}
 	done      chan struct{}
 }
 
-type Member string
+type MemberList []*Member
 
-func (m Member) String() string {
-	return string(m)
+func (m MemberList) ToWeights() map[string]int {
+	ml := make(map[string]int, len(m))
+	for _, mm := range m {
+		ml[mm.string] = mm.replication
+	}
+	return ml
 }
 
-type hasher struct{}
+type Member struct {
+	string
+	sync.Mutex
+	lastUpdate  time.Time
+	replication int
+}
 
-func (h hasher) Sum64(data []byte) uint64 {
-	// todo: can just prefix good multihashes, probably
-	sha := sha256.Sum256(data)
-	return binary.BigEndian.Uint64(sha[0:8])
+func NewMember(addr string) *Member {
+	return &Member{addr, sync.Mutex{}, time.Now(), 20}
+}
+
+func (m *Member) String() string {
+	return string(m.string)
+}
+
+func (m *Member) ReplicationFactor() int {
+	return m.replication
+}
+
+func (m *Member) Downvote(debounce time.Duration) (*Member, bool) {
+	// this is a best-effort. if there's a correlated failure we ignore the others, so do the try on best-effort.
+	if m.TryLock() {
+		if time.Since(m.lastUpdate) > debounce {
+			// make the down-voted member
+			nm := NewMember(m.string)
+			nm.replication = m.replication / 2
+			m.lastUpdate = time.Now()
+			m.Unlock()
+			return nm, true
+		}
+		m.Unlock()
+	}
+	return nil, false
 }
 
 func newPool(c *Config) *pool {
 	p := pool{
 		config:    c,
-		endpoints: []Member{},
+		endpoints: []*Member{},
 		c:         nil,
 		started:   make(chan struct{}),
+		refresh:   make(chan struct{}, 1),
 		done:      make(chan struct{}, 1),
 	}
 	go p.refreshPool()
 	return &p
+}
+
+func (p *pool) doRefresh() {
+	newEP, err := p.loadPool()
+	if err == nil {
+		p.lk.RLock()
+		oldMap := make(map[string]bool)
+		n := make([]*Member, 0, len(newEP))
+		for _, o := range p.endpoints {
+			oldMap[o.String()] = true
+			n = append(n, o)
+		}
+		p.lk.RUnlock()
+
+		for _, s := range newEP {
+			if _, ok := oldMap[s]; !ok {
+				n = append(n, NewMember(s))
+			}
+		}
+
+		p.lk.Lock()
+		p.endpoints = n
+		if p.c == nil {
+			p.c = hashring.NewWithWeights(p.endpoints.ToWeights())
+		} else {
+			p.c.UpdateWithWeights(p.endpoints.ToWeights())
+		}
+		p.lk.Unlock()
+		poolSizeMetric.Set(float64(len(n)))
+	} else {
+		poolErrorMetric.Add(1)
+	}
+
 }
 
 func (p *pool) refreshPool() {
@@ -82,65 +146,20 @@ func (p *pool) refreshPool() {
 	for {
 		select {
 		case <-t.C:
-			newEP, err := p.loadPool()
-			if err == nil {
-				toRemove := []string{}
-				toAdd := []string{}
+			p.doRefresh()
+			started.Do(func() {
+				close(p.started)
+			})
 
-				p.lk.RLock()
-				oldMap := make(map[string]bool)
-				for _, o := range p.endpoints {
-					oldMap[o.String()] = true
-					remains := false
-					for _, n := range newEP {
-						if n == o.String() {
-							remains = true
-							break
-						}
-					}
-					if !remains {
-						toRemove = append(toRemove, o.String())
-					}
-				}
-				p.lk.RUnlock()
+			t.Reset(p.config.PoolRefresh)
+		case <-p.refresh:
+			p.doRefresh()
+			started.Do(func() {
+				close(p.started)
+			})
 
-				n := make([]Member, 0, len(newEP))
-				for _, s := range newEP {
-					n = append(n, Member(s))
-					if _, ok := oldMap[s]; !ok {
-						toAdd = append(toAdd, s)
-					}
-				}
-
-				p.lk.Lock()
-				if p.c == nil {
-					ms := make([]consistent.Member, 0, len(toAdd))
-					for _, a := range toAdd {
-						ms = append(ms, Member(a))
-					}
-					p.c = consistent.New(ms, consistent.Config{
-						PartitionCount:    701,
-						ReplicationFactor: 20,
-						Load:              1.25,
-						Hasher:            hasher{},
-					})
-				} else {
-					for _, a := range toAdd {
-						p.c.Add(Member(a))
-					}
-					for _, r := range toRemove {
-						p.c.Remove(r)
-					}
-				}
-				p.endpoints = n
-				p.lk.Unlock()
-				poolSizeMetric.Set(float64(len(n)))
-				started.Do(func() {
-					close(p.started)
-				})
-			} else {
-				poolErrorMetric.Add(1)
-				fmt.Printf("error loading pool: %v\n", err)
+			if !t.Stop() {
+				<-t.C
 			}
 			t.Reset(p.config.PoolRefresh)
 		case <-p.done:
@@ -162,26 +181,69 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	<-p.started
 
 	left := p.config.MaxRetries
-	if left == 0 {
-		left = DefaultMaxRetries
+	if left > len(p.endpoints) {
+		left = len(p.endpoints)
 	}
 
-	for i := 0; i < left; i++ {
-		aff := with
-		if aff == "" {
-			aff = fmt.Sprintf("%d%s", i, c.Hash().B58String())
-		} else {
-			aff = fmt.Sprintf("%d%s", i, aff)
-		}
-		p.lk.RLock()
-		member := p.c.LocateKey([]byte(aff))
-		p.lk.RUnlock()
-		root := member.String()
+	aff := with
+	if aff == "" {
+		aff = c.Hash().B58String()
+	}
 
-		blk, err = p.doFetch(ctx, root, c)
+	p.lk.RLock()
+	if p.c == nil || p.c.Size() == 0 {
+		p.lk.RUnlock()
+		return nil, ErrNoBackend
+	}
+	nodes, ok := p.c.GetNodes(aff, left)
+	p.lk.RUnlock()
+	if !ok || len(nodes) == 0 {
+		select {
+		case p.refresh <- struct{}{}:
+		default:
+		}
+
+		return nil, ErrNoBackend
+	}
+
+	for i := 0; i < len(nodes); i++ {
+		blk, err = p.doFetch(ctx, nodes[i], c)
 		if err != nil {
+			p.lk.RLock()
+			idx := -1
+			var nm *Member
+			var needUpdate bool
+			for j, m := range p.endpoints {
+				if m.String() == nodes[i] {
+					if nm, needUpdate = m.Downvote(p.config.PoolFailureDownvoteDebounce); needUpdate {
+						idx = j
+					}
+					break
+				}
+			}
+			p.lk.RUnlock()
+			if idx != -1 {
+				p.lk.Lock()
+				if p.endpoints[idx].string == nm.string {
+					if nm.replication == 0 {
+						p.c = p.c.RemoveNode(nm.string)
+						p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
+						if len(p.endpoints) < p.config.PoolLowWatermark {
+							select {
+							case p.refresh <- struct{}{}:
+							default:
+							}
+						}
+					} else {
+						p.endpoints[idx] = nm
+						p.c.UpdateWithWeights(p.endpoints.ToWeights())
+					}
+				}
+				p.lk.Unlock()
+			}
 			continue
 		}
+
 		return
 	}
 	return
@@ -263,9 +325,10 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 			return nil, blocks.ErrWrongHash
 		}
 		if !nc.Equals(c) {
-			fmt.Printf("got %s vs %s\n", nc, c)
 			return nil, blocks.ErrWrongHash
 		}
+	} else if resp.StatusCode != http.StatusOK {
+		return nil, ErrNoBackend
 	}
 	return blocks.NewBlockWithCid(rb, c)
 }

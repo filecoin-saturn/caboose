@@ -3,7 +3,6 @@ module github.com/filecoin-saturn/caboose
 go 1.19
 
 require (
-	github.com/buraksezer/consistent v0.10.0
 	github.com/google/uuid v1.3.0
 	github.com/ipfs/go-cid v0.3.2
 	github.com/ipfs/go-ipfs-blockstore v1.2.0
@@ -12,7 +11,9 @@ require (
 	github.com/ipld/go-car/v2 v2.6.0
 	github.com/ipld/go-ipld-prime v0.19.0
 	github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20230102063945-1a409dc236dd
+	github.com/multiformats/go-multicodec v0.7.0
 	github.com/prometheus/client_golang v1.14.0
+	github.com/serialx/hashring v0.0.0-20200727003509-22c0c7ab6b1b
 	github.com/urfave/cli/v2 v2.24.2
 )
 
@@ -49,7 +50,6 @@ require (
 	github.com/multiformats/go-base32 v0.1.0 // indirect
 	github.com/multiformats/go-base36 v0.2.0 // indirect
 	github.com/multiformats/go-multibase v0.1.1 // indirect
-	github.com/multiformats/go-multicodec v0.7.0 // indirect
 	github.com/multiformats/go-multihash v0.2.1 // indirect
 	github.com/multiformats/go-varint v0.0.7 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
