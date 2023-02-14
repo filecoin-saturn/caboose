@@ -179,6 +179,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 
 		blk, err = p.doFetch(ctx, root, c)
 		if err != nil {
+			goLogger.Debugw("fetch failed", "from", root, "of", c, "attempt", i, "error", err)
 			continue
 		}
 		return
