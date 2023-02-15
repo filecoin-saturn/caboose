@@ -50,6 +50,7 @@ type Config struct {
 const DefaultMaxRetries = 3
 const DefaultPoolFailureDownvoteDebounce = time.Second
 const DefaultPoolLowWatermark = 5
+const DefaultSaturnRequestTimeout = 19 * time.Second
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available backend")
@@ -68,7 +69,9 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 	}
 	c.pool.logger = c.logger
 	if c.config.SaturnClient == nil {
-		c.config.SaturnClient = http.DefaultClient
+		c.config.SaturnClient = &http.Client{
+			Timeout: DefaultSaturnRequestTimeout,
+		}
 	}
 	if c.config.PoolFailureDownvoteDebounce == 0 {
 		c.config.PoolFailureDownvoteDebounce = DefaultPoolFailureDownvoteDebounce

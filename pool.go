@@ -325,7 +325,10 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 			UserAgent:     respReq.UserAgent(),
 		}
 	}()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(saturnReqTmpl, from, c), nil)
+
+	reqCtx, cancel := context.WithTimeout(ctx, DefaultSaturnRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, fmt.Sprintf(saturnReqTmpl, from, c), nil)
 	if err != nil {
 		return nil, err
 	}
