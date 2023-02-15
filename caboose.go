@@ -18,27 +18,27 @@ type Config struct {
 	// OrchestratorClient is the HTTP client to use when communicating with the Saturn orchestrator.
 	OrchestratorClient *http.Client
 
-	// LoggingEndpoint is the URL of the Caboose logging endpoint where we submit the logs pertaining to our Saturn retrieval requests.
+	// LoggingEndpoint is the URL of the logging endpoint where we submit logs pertaining to our Saturn retrieval requests.
 	LoggingEndpoint url.URL
-	// LoggingClient is the HTTP client to use when communicating with the Caboose logging endpoint.
+	// LoggingClient is the HTTP client to use when communicating with the logging endpoint.
 	LoggingClient *http.Client
-	// LoggingInterval is the interval at which we submit logs to the Caboose logging endpoint.
+	// LoggingInterval is the interval at which we submit logs to the logging endpoint.
 	LoggingInterval time.Duration
 
 	// SaturnClient is the HTTP client to use when retrieving content from the Saturn network.
 	SaturnClient *http.Client
 	ExtraHeaders *http.Header
 
-	// DoValidation is used to determine if Caboose should validate the blocks recieved from the Saturn network.
+	// DoValidation is used to determine if we should validate the blocks recieved from the Saturn network.
 	DoValidation bool
-	// If set, AffinityKey is used instead of the block cid as the key on the consistent hashing ring
-	// to decide which Saturn node to retrieve the block from.
+	// If set, AffinityKey is used instead of the block cid as the key on the Saturn node pool
+	// to determine which Saturn node to retrieve the block from.
 	AffinityKey string
 	// PoolRefresh is the interval at which we refresh the pool of Saturn nodes.
 	PoolRefresh time.Duration
 
-	// PoolFailureDownvoteDebounce is the amount of time we wait between consecutive downvotings of a Saturn node
-	// on our consistent hashing ring after a retrieval failure.
+	// PoolFailureDownvoteDebounce is the amount of time we wait between consecutive updates to the weight of a Saturn node
+	// in our pool after a retrieval success/failure.
 	PoolFailureDownvoteDebounce time.Duration
 
 	// trigger early refreshes when pool size drops below this low watermark
