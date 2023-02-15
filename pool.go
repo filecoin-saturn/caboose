@@ -75,8 +75,10 @@ type Member struct {
 	replication int
 }
 
+var defaultReplication = 20
+
 func NewMember(addr string) *Member {
-	return &Member{url: addr, lk: sync.Mutex{}, lastUpdate: time.Now(), replication: 20}
+	return &Member{url: addr, lk: sync.Mutex{}, lastUpdate: time.Now(), replication: defaultReplication}
 }
 
 func (m *Member) String() string {
@@ -87,13 +89,13 @@ func (m *Member) ReplicationFactor() int {
 	return m.replication
 }
 
-func (m *Member) Downvote(debounce time.Duration) (*Member, bool) {
+func (m *Member) Updatevote(debounce time.Duration, updateWeightF func(old int) int) (*Member, bool) {
 	// this is a best-effort. if there's a correlated failure we ignore the others, so do the try on best-effort.
 	if m.lk.TryLock() {
 		if time.Since(m.lastUpdate) > debounce {
 			// make the down-voted member
 			nm := NewMember(m.url)
-			nm.replication = m.replication / 2
+			nm.replication = updateWeightF(m.replication)
 			nm.lastUpdate = time.Now()
 			m.lk.Unlock()
 			return nm, true
@@ -227,14 +229,40 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 
 	for i := 0; i < len(nodes); i++ {
 		blk, err = p.doFetch(ctx, nodes[i], c)
-		// Saturn fetch was successful, we can return the block.
+		var idx int
+		var nm *Member
+
 		if err == nil {
+			// we need to acquire the lock to update the member's weight in the pool.
+			// and now that we are here, we know we're gonna return and hit the defer before exiting this block.
+			p.lk.Lock()
+			defer p.lk.Unlock()
+
+			// Saturn fetch worked, we should try upvoting the member.
+			idx, nm = p.updateVoteUnlocked(nodes[i], func(old int) int {
+				// bump by 20 percent only if the current replication factor is less than 20.
+				if old < defaultReplication {
+					updated := old + (old / 5)
+					if updated > defaultReplication {
+						updated = defaultReplication
+					}
+					return updated
+				}
+				return old
+			})
+
+			if idx != -1 && nm != nil && p.endpoints[idx].url == nm.url {
+				p.endpoints[idx] = nm
+				p.c.UpdateWithWeights(p.endpoints.ToWeights())
+			}
 			return
 		}
 
-		// Saturn fetch failed, we downvote the failing member and try the next one.
 		p.lk.RLock()
-		idx, nm := p.downVoteMemberUnlocked(nodes[i])
+		// Saturn fetch failed, we downvote the failing member and try the next one.
+		idx, nm = p.updateVoteUnlocked(nodes[i], func(old int) int {
+			return old / 2
+		})
 		p.lk.RUnlock()
 
 		// we weren't able to downvote the failing Saturn node, let's just retry the fetch with a new node.
@@ -245,7 +273,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 		// we need to take the lock as we're updating the list of pool endpoint members below.
 		p.lk.Lock()
 		if p.endpoints[idx].url == nm.url {
-			// if the failing member has been downvoted to 0, we remove it from the pool.
+			// if the member has been downvoted to 0, we remove it from the pool.
 			// if after removing this member from the pool, the size of the pool falls below the low watermark,
 			// we attempt a pool refresh.
 			if nm.replication == 0 {
@@ -258,8 +286,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 					}
 				}
 			} else {
-				// if the failing member has been downvotes but not to 0, simply update the new weight
-				// in the pool.
+				// update the new weight of the member in the pool
 				p.endpoints[idx] = nm
 				p.c.UpdateWithWeights(p.endpoints.ToWeights())
 			}
@@ -271,19 +298,18 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	return
 }
 
-func (p *pool) downVoteMemberUnlocked(node string) (index int, member *Member) {
+func (p *pool) updateVoteUnlocked(node string, updateF func(old int) int) (index int, member *Member) {
 	idx := -1
 	var nm *Member
 	var needUpdate bool
 	for j, m := range p.endpoints {
 		if m.String() == node {
-			if nm, needUpdate = m.Downvote(p.config.PoolFailureDownvoteDebounce); needUpdate {
+			if nm, needUpdate = m.Updatevote(p.config.PoolFailureDownvoteDebounce, updateF); needUpdate {
 				idx = j
 			}
 			break
 		}
 	}
-
 	return idx, nm
 }
 
