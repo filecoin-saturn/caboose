@@ -43,11 +43,11 @@ func TestCabooseFailures(t *testing.T) {
 		LoggingClient:        http.DefaultClient,
 		LoggingInterval:      time.Hour,
 
-		SaturnClient:                http.DefaultClient,
-		DoValidation:                false,
-		PoolFailureDownvoteDebounce: time.Duration(1),
-		PoolRefresh:                 time.Millisecond * 50,
-		MaxRetrievalAttempts:        2,
+		SaturnClient:             http.DefaultClient,
+		DoValidation:             false,
+		PoolWeightChangeDebounce: time.Duration(1),
+		PoolRefresh:              time.Millisecond * 50,
+		MaxRetrievalAttempts:     2,
 	})
 	if err != nil {
 		t.Fatal(err)

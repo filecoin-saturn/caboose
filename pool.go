@@ -17,9 +17,8 @@ import (
 	"github.com/serialx/hashring"
 )
 
-var l1_discovery_timeout = 1 * time.Minute
-
-// loadPool refreshes the set of Saturn endpoints to fetch cars from the Orchestrator Endpoint
+// loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
+// Saturn Orchestrator.
 func (p *pool) loadPool() ([]string, error) {
 	if override := os.Getenv("CABOOSE_BACKEND_OVERRIDE"); len(override) > 0 {
 		return strings.Split(override, ","), nil
@@ -89,7 +88,7 @@ func (m *Member) ReplicationFactor() int {
 	return m.replication
 }
 
-func (m *Member) Updatevote(debounce time.Duration, updateWeightF func(old int) int) (*Member, bool) {
+func (m *Member) UpdateWeight(debounce time.Duration, updateWeightF func(old int) int) (*Member, bool) {
 	// this is a best-effort. if there's a correlated failure we ignore the others, so do the try on best-effort.
 	if m.lk.TryLock() {
 		if time.Since(m.lastUpdate) > debounce {
@@ -239,7 +238,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 			defer p.lk.Unlock()
 
 			// Saturn fetch worked, we should try upvoting the member.
-			idx, nm = p.updateVoteUnlocked(nodes[i], func(old int) int {
+			idx, nm = p.updateWeightUnlocked(nodes[i], func(old int) int {
 				// bump by 20 percent only if the current replication factor is less than 20.
 				if old < defaultReplication {
 					updated := old + (old / 5)
@@ -255,12 +254,14 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 				p.endpoints[idx] = nm
 				p.c.UpdateWithWeights(p.endpoints.ToWeights())
 			}
+
+			// Saturn fetch worked, we return the block.
 			return
 		}
 
 		p.lk.RLock()
 		// Saturn fetch failed, we downvote the failing member and try the next one.
-		idx, nm = p.updateVoteUnlocked(nodes[i], func(old int) int {
+		idx, nm = p.updateWeightUnlocked(nodes[i], func(old int) int {
 			return old / 2
 		})
 		p.lk.RUnlock()
@@ -298,13 +299,13 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	return
 }
 
-func (p *pool) updateVoteUnlocked(node string, updateF func(old int) int) (index int, member *Member) {
+func (p *pool) updateWeightUnlocked(node string, updateF func(old int) int) (index int, member *Member) {
 	idx := -1
 	var nm *Member
 	var needUpdate bool
 	for j, m := range p.endpoints {
 		if m.String() == node {
-			if nm, needUpdate = m.Updatevote(p.config.PoolFailureDownvoteDebounce, updateF); needUpdate {
+			if nm, needUpdate = m.UpdateWeight(p.config.PoolWeightChangeDebounce, updateF); needUpdate {
 				idx = j
 			}
 			break

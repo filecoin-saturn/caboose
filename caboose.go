@@ -37,9 +37,9 @@ type Config struct {
 	// PoolRefresh is the interval at which we refresh the pool of Saturn nodes.
 	PoolRefresh time.Duration
 
-	// PoolFailureDownvoteDebounce is the amount of time we wait between consecutive updates to the weight of a Saturn node
+	// PoolWeightChangeDebounce is the amount of time we wait between consecutive updates to the weight of a Saturn node
 	// in our pool after a retrieval success/failure.
-	PoolFailureDownvoteDebounce time.Duration
+	PoolWeightChangeDebounce time.Duration
 
 	// trigger early refreshes when pool size drops below this low watermark
 	PoolLowWatermark int
@@ -73,8 +73,8 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 			Timeout: DefaultSaturnRequestTimeout,
 		}
 	}
-	if c.config.PoolFailureDownvoteDebounce == 0 {
-		c.config.PoolFailureDownvoteDebounce = DefaultPoolFailureDownvoteDebounce
+	if c.config.PoolWeightChangeDebounce == 0 {
+		c.config.PoolWeightChangeDebounce = DefaultPoolFailureDownvoteDebounce
 	}
 	if c.config.PoolLowWatermark == 0 {
 		c.config.PoolLowWatermark = DefaultPoolLowWatermark
