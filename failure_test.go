@@ -17,11 +17,12 @@ import (
 )
 
 func TestCabooseFailures(t *testing.T) {
+
 	pool := make([]ep, 3)
 	purls := make([]string, 3)
 	for i := 0; i < len(pool); i++ {
 		pool[i].Setup()
-		purls[i] = strings.TrimPrefix(pool[i].server.URL, "http://")
+		purls[i] = strings.TrimPrefix(pool[i].server.URL, "https://")
 	}
 	gol := sync.Mutex{}
 	goodOrch := true
@@ -37,7 +38,7 @@ func TestCabooseFailures(t *testing.T) {
 
 	ourl, _ := url.Parse(orch.URL)
 	c, err := caboose.NewCaboose(&caboose.Config{
-		OrchestratorEndpoint: *ourl,
+		OrchestratorEndpoint: ourl,
 		OrchestratorClient:   http.DefaultClient,
 		LoggingEndpoint:      *ourl,
 		LoggingClient:        http.DefaultClient,
@@ -145,7 +146,7 @@ var testBlock = []byte("hello World")
 
 func (e *ep) Setup() {
 	e.valid = true
-	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	e.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.cnt++
 		if e.valid {
 			w.Write(testBlock)

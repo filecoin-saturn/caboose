@@ -38,7 +38,6 @@ func main1() int {
 			}
 			out := args.Get(1)
 
-			oe, _ := url.Parse("https://orchestrator.strn.pl/nodes/nearby?count=100")
 			le, _ := url.Parse("https://twb3qukm2i654i3tnvx36char40aymqq.lambda-url.us-west-2.on.aws/")
 			saturnClient := http.Client{
 				Transport: &http.Transport{
@@ -49,7 +48,6 @@ func main1() int {
 			}
 
 			cb, err := caboose.NewCaboose(&caboose.Config{
-				OrchestratorEndpoint: *oe,
 				OrchestratorClient: &http.Client{
 					Timeout: 30 * time.Second,
 				},
