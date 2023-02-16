@@ -2,6 +2,7 @@ package caboose_test
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -36,6 +37,15 @@ func TestCabooseFailures(t *testing.T) {
 		}
 	}))
 
+	saturnClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+				ServerName:         "example.com",
+			},
+		},
+	}
+
 	ourl, _ := url.Parse(orch.URL)
 	c, err := caboose.NewCaboose(&caboose.Config{
 		OrchestratorEndpoint: ourl,
@@ -44,7 +54,7 @@ func TestCabooseFailures(t *testing.T) {
 		LoggingClient:        http.DefaultClient,
 		LoggingInterval:      time.Hour,
 
-		SaturnClient:             http.DefaultClient,
+		SaturnClient:             saturnClient,
 		DoValidation:             false,
 		PoolWeightChangeDebounce: time.Duration(1),
 		PoolRefresh:              time.Millisecond * 50,
