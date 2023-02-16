@@ -373,15 +373,14 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	}
 
 	resp, err := p.config.SaturnClient.Do(req)
+	fb = time.Now()
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	fb = time.Now()
 	if resp.StatusCode != http.StatusOK {
 		return nil, ErrBackendFailed
 	}
-
 
 	code = resp.StatusCode
 	proto = resp.Proto

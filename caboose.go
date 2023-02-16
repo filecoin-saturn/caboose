@@ -55,8 +55,8 @@ const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
 
 var ErrNotImplemented error = errors.New("not implemented")
-var ErrNoBackend error = errors.New("no available backend")
-var ErrBackendFailed error = errors.New("backend failed")
+var ErrNoBackend error = errors.New("no available strn backend")
+var ErrBackendFailed error = errors.New("strn backend failed")
 
 type Caboose struct {
 	config *Config
