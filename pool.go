@@ -377,11 +377,12 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 		return nil, err
 	}
 	defer resp.Body.Close()
+	fb = time.Now()
 	if resp.StatusCode != http.StatusOK {
 		return nil, ErrBackendFailed
 	}
 
-	fb = time.Now()
+
 	code = resp.StatusCode
 	proto = resp.Proto
 	respReq = resp.Request
