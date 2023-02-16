@@ -228,6 +228,9 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 
 	for i := 0; i < len(nodes); i++ {
 		blk, err = p.doFetch(ctx, nodes[i], c)
+		if err != nil {
+			goLogger.Debugw("fetch failed", "from", nodes[i], "of", c, "attempt", i, "error", err)
+		}
 		var idx int
 		var nm *Member
 
@@ -314,7 +317,7 @@ func (p *pool) updateWeightUnlocked(node string, updateF func(old int) int) (ind
 	return idx, nm
 }
 
-var saturnReqTmpl = "http://%s/ipfs/%s?format=raw"
+var saturnReqTmpl = "https://%s/ipfs/%s?format=raw"
 
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
 func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Block, e error) {
@@ -374,29 +377,37 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, ErrBackendFailed
+	}
 
 	fb = time.Now()
 	code = resp.StatusCode
 	proto = resp.Proto
 	respReq = resp.Request
 
-	// TODO: What if the Saturn node is malicious ? We should have an upper bound on how many bytes we read here.
-	rb, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	buf := make([]byte, maxBlockSize)
+	received, err = io.ReadFull(resp.Body, buf)
+	// ReadFull returns an EOF ONLY if no bytes were read.
+	if err == io.EOF {
+		return nil, ErrBackendFailed
 	}
-	received = len(rb)
+	// If we read less than max bytes, we are good here.
+	if received > 0 && received <= maxBlockSize {
+		buf = buf[:received]
+	} else {
+		return nil, ErrBackendFailed
+	}
 
 	if p.config.DoValidation {
-		nc, err := c.Prefix().Sum(rb)
+		nc, err := c.Prefix().Sum(buf)
 		if err != nil {
 			return nil, blocks.ErrWrongHash
 		}
 		if !nc.Equals(c) {
 			return nil, blocks.ErrWrongHash
 		}
-	} else if resp.StatusCode != http.StatusOK {
-		return nil, ErrNoBackend
 	}
-	return blocks.NewBlockWithCid(rb, c)
+
+	return blocks.NewBlockWithCid(buf, c)
 }

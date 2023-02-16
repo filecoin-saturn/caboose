@@ -51,9 +51,11 @@ const DefaultMaxRetries = 3
 const DefaultPoolFailureDownvoteDebounce = time.Second
 const DefaultPoolLowWatermark = 5
 const DefaultSaturnRequestTimeout = 19 * time.Second
+const maxBlockSize = 4194305 // 4 Mib + 1 byte
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available backend")
+var ErrBackendFailed error = errors.New("backend failed")
 
 type Caboose struct {
 	config *Config
