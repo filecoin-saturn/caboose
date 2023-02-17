@@ -238,9 +238,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 		if err == nil {
 			// we need to acquire the lock to update the member's weight in the pool.
 			// and now that we are here, we know we're gonna return and hit the defer before exiting this block.
-			p.lk.Lock()
-			defer p.lk.Unlock()
-
+			p.lk.RLock()
 			// Saturn fetch worked, we should try upvoting the member.
 			idx, nm = p.updateWeightUnlocked(nodes[i], func(old int) int {
 				// bump by 20 percent only if the current replication factor is less than 20.
@@ -253,8 +251,22 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 				}
 				return old
 			})
+			p.lk.RUnlock()
 
 			if idx != -1 && nm != nil && p.endpoints[idx].url == nm.url {
+				p.lk.Lock()
+				defer p.lk.Unlock()
+				// re-confirm index in critical section
+				idx = -1
+				for j, m := range p.endpoints {
+					if m.String() == nodes[i] {
+						idx = j
+					}
+				}
+				if idx == -1 {
+					continue
+				}
+
 				p.endpoints[idx] = nm
 				p.c.UpdateWithWeights(p.endpoints.ToWeights())
 			}
