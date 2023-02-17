@@ -389,13 +389,14 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, ErrBackendFailed
-	}
 
 	code = resp.StatusCode
 	proto = resp.Proto
 	respReq = resp.Request
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, ErrBackendFailed
+	}
 
 	buf := make([]byte, maxBlockSize)
 	received, err = io.ReadFull(resp.Body, buf)
