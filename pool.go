@@ -267,7 +267,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 					}
 				}
 				if idx == -1 {
-					continue
+					return
 				}
 
 				p.endpoints[idx] = nm
@@ -298,6 +298,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 			}
 		}
 		if idx == -1 {
+			p.lk.Unlock()
 			continue
 		}
 		if p.endpoints[idx].url == nm.url {
