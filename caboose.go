@@ -13,33 +13,50 @@ import (
 )
 
 type Config struct {
-	OrchestratorEndpoint url.URL
-	OrchestratorClient   *http.Client
+	// OrchestratorEndpoint is the URL of the Saturn orchestrator.
+	OrchestratorEndpoint *url.URL
+	// OrchestratorClient is the HTTP client to use when communicating with the Saturn orchestrator.
+	OrchestratorClient *http.Client
 
+	// LoggingEndpoint is the URL of the logging endpoint where we submit logs pertaining to our Saturn retrieval requests.
 	LoggingEndpoint url.URL
-	LoggingClient   *http.Client
+	// LoggingClient is the HTTP client to use when communicating with the logging endpoint.
+	LoggingClient *http.Client
+	// LoggingInterval is the interval at which we submit logs to the logging endpoint.
 	LoggingInterval time.Duration
 
-	Client       *http.Client
+	// SaturnClient is the HTTP client to use when retrieving content from the Saturn network.
+	SaturnClient *http.Client
 	ExtraHeaders *http.Header
 
-	DoValidation                bool
-	AffinityKey                 string
-	PoolRefresh                 time.Duration
-	PoolFailureDownvoteDebounce time.Duration
-	PoolMaxSize                 int
+	// DoValidation is used to determine if we should validate the blocks recieved from the Saturn network.
+	DoValidation bool
+	// If set, AffinityKey is used instead of the block cid as the key on the Saturn node pool
+	// to determine which Saturn node to retrieve the block from.
+	AffinityKey string
+	// PoolRefresh is the interval at which we refresh the pool of Saturn nodes.
+	PoolRefresh time.Duration
+
+	// PoolWeightChangeDebounce is the amount of time we wait between consecutive updates to the weight of a Saturn node
+	// in our pool after a retrieval success/failure.
+	PoolWeightChangeDebounce time.Duration
+
 	// trigger early refreshes when pool size drops below this low watermark
 	PoolLowWatermark int
-	MaxConcurrency   int
-	MaxRetries       int
+	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
+	MaxRetrievalAttempts int
 }
 
 const DefaultMaxRetries = 3
 const DefaultPoolFailureDownvoteDebounce = time.Second
 const DefaultPoolLowWatermark = 5
+const DefaultSaturnRequestTimeout = 19 * time.Second
+const maxBlockSize = 4194305 // 4 Mib + 1 byte
+const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
 
 var ErrNotImplemented error = errors.New("not implemented")
-var ErrNoBackend error = errors.New("no available backend")
+var ErrNoBackend error = errors.New("no available strn backend")
+var ErrBackendFailed error = errors.New("strn backend failed")
 
 type Caboose struct {
 	config *Config
@@ -54,17 +71,27 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 		logger: newLogger(config),
 	}
 	c.pool.logger = c.logger
-	if c.config.Client == nil {
-		c.config.Client = http.DefaultClient
+	if c.config.SaturnClient == nil {
+		c.config.SaturnClient = &http.Client{
+			Timeout: DefaultSaturnRequestTimeout,
+		}
 	}
-	if c.config.PoolFailureDownvoteDebounce == 0 {
-		c.config.PoolFailureDownvoteDebounce = DefaultPoolFailureDownvoteDebounce
+	if c.config.OrchestratorEndpoint == nil {
+		var err error
+		c.config.OrchestratorEndpoint, err = url.Parse(DefaultOrchestratorEndpoint)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if c.config.PoolWeightChangeDebounce == 0 {
+		c.config.PoolWeightChangeDebounce = DefaultPoolFailureDownvoteDebounce
 	}
 	if c.config.PoolLowWatermark == 0 {
 		c.config.PoolLowWatermark = DefaultPoolLowWatermark
 	}
-	if c.config.MaxRetries == 0 {
-		c.config.MaxRetries = DefaultMaxRetries
+	if c.config.MaxRetrievalAttempts == 0 {
+		c.config.MaxRetrievalAttempts = DefaultMaxRetries
 	}
 	return &c, nil
 }
@@ -74,16 +101,11 @@ func (c *Caboose) Close() {
 	c.logger.Close()
 }
 
+// Note: Caboose is NOT a persistent blockstore and does NOT have an in-memory cache. Every block read request will escape to the Saturn network.
+// Caching is left to the caller.
+
 func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
-	aff := ctx.Value(c.config.AffinityKey)
-	if aff != nil {
-		blk, err := c.pool.fetchWith(ctx, it, aff.(string))
-		if err != nil {
-			return false, err
-		}
-		return blk != nil, nil
-	}
-	blk, err := c.pool.fetchWith(ctx, it, "")
+	blk, err := c.pool.fetchWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
 		return false, err
 	}
@@ -91,15 +113,7 @@ func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
 }
 
 func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
-	aff := ctx.Value(c.config.AffinityKey)
-	if aff != nil {
-		blk, err := c.pool.fetchWith(ctx, it, aff.(string))
-		if err != nil {
-			return nil, err
-		}
-		return blk, nil
-	}
-	blk, err := c.pool.fetchWith(ctx, it, "")
+	blk, err := c.pool.fetchWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -108,19 +122,18 @@ func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
 
 // GetSize returns the CIDs mapped BlockSize
 func (c *Caboose) GetSize(ctx context.Context, it cid.Cid) (int, error) {
-	aff := ctx.Value(c.config.AffinityKey)
-	if aff != nil {
-		blk, err := c.pool.fetchWith(ctx, it, aff.(string))
-		if err != nil {
-			return 0, err
-		}
-		return len(blk.RawData()), nil
-	}
-	blk, err := c.pool.fetchWith(ctx, it, "")
+	blk, err := c.pool.fetchWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
 		return 0, err
 	}
 	return len(blk.RawData()), nil
+}
+
+func (c *Caboose) getAffinity(ctx context.Context) string {
+	if affC := ctx.Value(c.config.AffinityKey); affC != nil {
+		return affC.(string)
+	}
+	return ""
 }
 
 // HashOnRead specifies if every read block should be

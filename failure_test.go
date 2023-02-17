@@ -2,6 +2,7 @@ package caboose_test
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -17,11 +18,12 @@ import (
 )
 
 func TestCabooseFailures(t *testing.T) {
+
 	pool := make([]ep, 3)
 	purls := make([]string, 3)
 	for i := 0; i < len(pool); i++ {
 		pool[i].Setup()
-		purls[i] = strings.TrimPrefix(pool[i].server.URL, "http://")
+		purls[i] = strings.TrimPrefix(pool[i].server.URL, "https://")
 	}
 	gol := sync.Mutex{}
 	goodOrch := true
@@ -35,19 +37,28 @@ func TestCabooseFailures(t *testing.T) {
 		}
 	}))
 
+	saturnClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+				ServerName:         "example.com",
+			},
+		},
+	}
+
 	ourl, _ := url.Parse(orch.URL)
 	c, err := caboose.NewCaboose(&caboose.Config{
-		OrchestratorEndpoint: *ourl,
+		OrchestratorEndpoint: ourl,
 		OrchestratorClient:   http.DefaultClient,
 		LoggingEndpoint:      *ourl,
 		LoggingClient:        http.DefaultClient,
 		LoggingInterval:      time.Hour,
 
-		Client:                      http.DefaultClient,
-		DoValidation:                false,
-		PoolFailureDownvoteDebounce: time.Duration(1),
-		PoolRefresh:                 time.Millisecond * 50,
-		MaxRetries:                  2,
+		SaturnClient:             saturnClient,
+		DoValidation:             false,
+		PoolWeightChangeDebounce: time.Duration(1),
+		PoolRefresh:              time.Millisecond * 50,
+		MaxRetrievalAttempts:     2,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +156,7 @@ var testBlock = []byte("hello World")
 
 func (e *ep) Setup() {
 	e.valid = true
-	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	e.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.cnt++
 		if e.valid {
 			w.Write(testBlock)
