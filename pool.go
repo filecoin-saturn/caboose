@@ -88,18 +88,31 @@ func (m *Member) ReplicationFactor() int {
 	return m.replication
 }
 
-func (m *Member) UpdateWeight(debounce time.Duration, updateWeightF func(old int) int) (*Member, bool) {
+func (m *Member) UpdateWeight(debounce time.Duration, failure bool) (*Member, bool) {
 	// this is a best-effort. if there's a correlated failure we ignore the others, so do the try on best-effort.
 	if m.lk.TryLock() {
+		defer m.lk.Unlock()
 		if time.Since(m.lastUpdate) > debounce {
 			// make the down-voted member
 			nm := NewMember(m.url)
-			nm.replication = updateWeightF(m.replication)
-			nm.lastUpdate = time.Now()
-			m.lk.Unlock()
-			return nm, true
+			if failure {
+				nm.replication = m.replication / 2
+				return nm, true
+			} else {
+				// bump by 20 percent only if the current replication factor is less than 20.
+				if m.replication < defaultReplication {
+					updated := m.replication + 1
+					if updated > defaultReplication {
+						updated = defaultReplication
+					}
+					if updated != m.replication {
+						nm.replication = updated
+						return nm, true
+					}
+				}
+			}
+			return nm, false
 		}
-		m.lk.Unlock()
 	}
 	return nil, false
 }
@@ -240,17 +253,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 			// and now that we are here, we know we're gonna return and hit the defer before exiting this block.
 			p.lk.RLock()
 			// Saturn fetch worked, we should try upvoting the member.
-			idx, nm = p.updateWeightUnlocked(nodes[i], func(old int) int {
-				// bump by 20 percent only if the current replication factor is less than 20.
-				if old < defaultReplication {
-					updated := old + (old / 5)
-					if updated > defaultReplication {
-						updated = defaultReplication
-					}
-					return updated
-				}
-				return old
-			})
+			idx, nm = p.updateWeightUnlocked(nodes[i], false)
 			p.lk.RUnlock()
 
 			if idx != -1 && nm != nil && p.endpoints[idx].url == nm.url {
@@ -277,9 +280,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 
 		p.lk.RLock()
 		// Saturn fetch failed, we downvote the failing member and try the next one.
-		idx, nm = p.updateWeightUnlocked(nodes[i], func(old int) int {
-			return old / 2
-		})
+		idx, nm = p.updateWeightUnlocked(nodes[i], true)
 		p.lk.RUnlock()
 
 		// we weren't able to downvote the failing Saturn node, let's just retry the fetch with a new node.
@@ -325,13 +326,13 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	return
 }
 
-func (p *pool) updateWeightUnlocked(node string, updateF func(old int) int) (index int, member *Member) {
+func (p *pool) updateWeightUnlocked(node string, failure bool) (index int, member *Member) {
 	idx := -1
 	var nm *Member
 	var needUpdate bool
 	for j, m := range p.endpoints {
 		if m.String() == node {
-			if nm, needUpdate = m.UpdateWeight(p.config.PoolWeightChangeDebounce, updateF); needUpdate {
+			if nm, needUpdate = m.UpdateWeight(p.config.PoolWeightChangeDebounce, failure); needUpdate {
 				idx = j
 			}
 			break
