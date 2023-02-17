@@ -409,6 +409,8 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	if received > 0 && received <= maxBlockSize {
 		buf = buf[:received]
 	} else {
+		// drain remaining body bytes (e.g. if more than a block)
+		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil, ErrBackendFailed
 	}
 
