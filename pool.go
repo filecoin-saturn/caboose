@@ -276,6 +276,16 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 
 		// we need to take the lock as we're updating the list of pool endpoint members below.
 		p.lk.Lock()
+		// re-confirm index in critical section
+		idx = -1
+		for j, m := range p.endpoints {
+			if m.String() == nodes[i] {
+				idx = j
+			}
+		}
+		if idx == -1 {
+			continue
+		}
 		if p.endpoints[idx].url == nm.url {
 			// if the member has been downvoted to 0, we remove it from the pool.
 			// if after removing this member from the pool, the size of the pool falls below the low watermark,
