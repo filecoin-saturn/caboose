@@ -208,6 +208,8 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	for i := 0; i < len(nodes); i++ {
 		blk, err = p.doFetch(ctx, nodes[i], c)
 		if err != nil {
+			goLogger.Debugw("fetch failed", "from", nodes[i], "of", c, "attempt", i, "error", err)
+
 			p.lk.RLock()
 			idx := -1
 			var nm *Member
