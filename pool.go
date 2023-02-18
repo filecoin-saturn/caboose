@@ -2,8 +2,6 @@ package caboose
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,13 +11,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/buraksezer/consistent"
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
 	blocks "github.com/ipfs/go-libipfs/blocks"
+	"github.com/serialx/hashring"
 )
 
-// loadPool refreshes the set of endpoints to fetch cars from from the Orchestrator Endpoint
+// loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
+// Saturn Orchestrator.
 func (p *pool) loadPool() ([]string, error) {
 	if override := os.Getenv("CABOOSE_BACKEND_OVERRIDE"); len(override) > 0 {
 		return strings.Split(override, ","), nil
@@ -30,6 +29,7 @@ func (p *pool) loadPool() ([]string, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
 	responses := make([]string, 0)
 	if err := json.NewDecoder(resp.Body).Decode(&responses); err != nil {
 		goLogger.Warnw("failed to decode backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint.String())
@@ -40,39 +40,133 @@ func (p *pool) loadPool() ([]string, error) {
 }
 
 type pool struct {
-	config    *Config
-	endpoints []Member
-	logger    *logger
-	c         *consistent.Consistent
+	config *Config
+	logger *logger
+
+	started chan struct{} // started signals that we've already initialized the pool once with Saturn endpoints.
+	refresh chan struct{} // refresh is used to signal the need for doing a refresh of the Saturn endpoints pool.
+	done    chan struct{} // done is used to signal that we're shutting down the Saturn endpoints pool and don't need to refresh it anymore.
+
 	lk        sync.RWMutex
-	started   chan struct{}
-	done      chan struct{}
+	endpoints MemberList         // guarded by lk
+	c         *hashring.HashRing // guarded by lk
 }
 
-type Member string
+// MemberList is the list of Saturn endpoints that are currently members of the Caboose consistent hashing ring
+// that determines which Saturn endpoint to use to retrieve a given CID.
+type MemberList []*Member
 
-func (m Member) String() string {
-	return string(m)
+// ToWeights returns a map of Saturn endpoints to their weight on Caboose's consistent hashing ring.
+func (m MemberList) ToWeights() map[string]int {
+	ml := make(map[string]int, len(m))
+	for _, mm := range m {
+		ml[mm.url] = mm.replication
+	}
+	return ml
 }
 
-type hasher struct{}
+// Member is a Saturn endpoint that is currently a member of the Caboose consistent hashing ring.
+type Member struct {
+	lk sync.Mutex
 
-func (h hasher) Sum64(data []byte) uint64 {
-	// todo: can just prefix good multihashes, probably
-	sha := sha256.Sum256(data)
-	return binary.BigEndian.Uint64(sha[0:8])
+	url         string
+	lastUpdate  time.Time
+	replication int
+}
+
+var defaultReplication = 20
+
+func NewMember(addr string) *Member {
+	return &Member{url: addr, lk: sync.Mutex{}, lastUpdate: time.Now(), replication: defaultReplication}
+}
+
+func (m *Member) String() string {
+	return string(m.url)
+}
+
+func (m *Member) ReplicationFactor() int {
+	return m.replication
+}
+
+func (m *Member) UpdateWeight(debounce time.Duration, failure bool) (*Member, bool) {
+	// this is a best-effort. if there's a correlated failure we ignore the others, so do the try on best-effort.
+	if m.lk.TryLock() {
+		defer m.lk.Unlock()
+		if time.Since(m.lastUpdate) > debounce {
+			// make the down-voted member
+			nm := NewMember(m.url)
+			if failure {
+				nm.replication = m.replication / 2
+				return nm, true
+			} else {
+				// bump by 20 percent only if the current replication factor is less than 20.
+				if m.replication < defaultReplication {
+					updated := m.replication + 1
+					if updated > defaultReplication {
+						updated = defaultReplication
+					}
+					if updated != m.replication {
+						nm.replication = updated
+						return nm, true
+					}
+				}
+			}
+			return nm, false
+		}
+	}
+	return nil, false
 }
 
 func newPool(c *Config) *pool {
 	p := pool{
 		config:    c,
-		endpoints: []Member{},
+		endpoints: []*Member{},
 		c:         nil,
 		started:   make(chan struct{}),
+		refresh:   make(chan struct{}, 1),
 		done:      make(chan struct{}, 1),
 	}
 	go p.refreshPool()
 	return &p
+}
+
+func (p *pool) doRefresh() {
+	newEP, err := p.loadPool()
+	if err == nil {
+		p.lk.RLock()
+
+		// TODO: The orchestrator periodically prunes "bad" L1s based on a reputation system
+		// it owns and runs. We should probably just forget about the Saturn endpoints that were
+		// previously in the pool but are no longer being returned by the orchestrator. It's highly
+		// likely that the Orchestrator has deemed them to be non-functional/malicious.
+		// Let's just override the old pool with the new endpoints returned here.
+		oldMap := make(map[string]bool)
+		n := make([]*Member, 0, len(newEP))
+		for _, o := range p.endpoints {
+			oldMap[o.String()] = true
+			n = append(n, o)
+		}
+
+		p.lk.RUnlock()
+
+		for _, s := range newEP {
+			if _, ok := oldMap[s]; !ok {
+				n = append(n, NewMember(s))
+			}
+		}
+
+		p.lk.Lock()
+		p.endpoints = n
+		if p.c == nil {
+			p.c = hashring.NewWithWeights(p.endpoints.ToWeights())
+		} else {
+			p.c.UpdateWithWeights(p.endpoints.ToWeights())
+		}
+		p.lk.Unlock()
+		poolSizeMetric.Set(float64(len(n)))
+	} else {
+		poolErrorMetric.Add(1)
+	}
 }
 
 func (p *pool) refreshPool() {
@@ -81,65 +175,20 @@ func (p *pool) refreshPool() {
 	for {
 		select {
 		case <-t.C:
-			newEP, err := p.loadPool()
-			if err == nil {
-				toRemove := []string{}
-				toAdd := []string{}
+			p.doRefresh()
+			started.Do(func() {
+				close(p.started)
+			})
 
-				p.lk.RLock()
-				oldMap := make(map[string]bool)
-				for _, o := range p.endpoints {
-					oldMap[o.String()] = true
-					remains := false
-					for _, n := range newEP {
-						if n == o.String() {
-							remains = true
-							break
-						}
-					}
-					if !remains {
-						toRemove = append(toRemove, o.String())
-					}
-				}
-				p.lk.RUnlock()
+			t.Reset(p.config.PoolRefresh)
+		case <-p.refresh:
+			p.doRefresh()
+			started.Do(func() {
+				close(p.started)
+			})
 
-				n := make([]Member, 0, len(newEP))
-				for _, s := range newEP {
-					n = append(n, Member(s))
-					if _, ok := oldMap[s]; !ok {
-						toAdd = append(toAdd, s)
-					}
-				}
-
-				p.lk.Lock()
-				if p.c == nil {
-					ms := make([]consistent.Member, 0, len(toAdd))
-					for _, a := range toAdd {
-						ms = append(ms, Member(a))
-					}
-					p.c = consistent.New(ms, consistent.Config{
-						PartitionCount:    701,
-						ReplicationFactor: 20,
-						Load:              1.25,
-						Hasher:            hasher{},
-					})
-				} else {
-					for _, a := range toAdd {
-						p.c.Add(Member(a))
-					}
-					for _, r := range toRemove {
-						p.c.Remove(r)
-					}
-				}
-				p.endpoints = n
-				p.lk.Unlock()
-				poolSizeMetric.Set(float64(len(n)))
-				started.Do(func() {
-					close(p.started)
-				})
-			} else {
-				poolErrorMetric.Add(1)
-				fmt.Printf("error loading pool: %v\n", err)
+			if !t.Stop() {
+				<-t.C
 			}
 			t.Reset(p.config.PoolRefresh)
 		case <-p.done:
@@ -158,39 +207,147 @@ func (p *pool) Close() {
 }
 
 func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk blocks.Block, err error) {
+	// wait for pool to be initialised
 	<-p.started
 
-	left := p.config.MaxRetries
-	if left == 0 {
-		left = DefaultMaxRetries
+	left := p.config.MaxRetrievalAttempts
+	aff := with
+	if aff == "" {
+		aff = c.Hash().B58String()
 	}
 
-	for i := 0; i < left; i++ {
-		aff := with
-		if aff == "" {
-			aff = fmt.Sprintf("%d%s", i, c.Hash().B58String())
-		} else {
-			aff = fmt.Sprintf("%d%s", i, aff)
-		}
-		p.lk.RLock()
-		member := p.c.LocateKey([]byte(aff))
-		p.lk.RUnlock()
-		root := member.String()
+	p.lk.RLock()
+	if left > len(p.endpoints) {
+		left = len(p.endpoints)
+	}
 
-		blk, err = p.doFetch(ctx, root, c)
+	// if there are no endpoints in the consistent hashing ring, we submit a pool refresh request and fail this fetch.
+	if p.c == nil || p.c.Size() == 0 {
+		p.lk.RUnlock()
+		return nil, ErrNoBackend
+	}
+	nodes, ok := p.c.GetNodes(aff, left)
+	p.lk.RUnlock()
+
+	// if there are no endpoints in the consistent hashing ring for the given cid, we submit a pool refresh request and fail this fetch.
+	if !ok || len(nodes) == 0 {
+		select {
+		case p.refresh <- struct{}{}:
+		default:
+		}
+
+		return nil, ErrNoBackend
+	}
+
+	for i := 0; i < len(nodes); i++ {
+		blk, err = p.doFetch(ctx, nodes[i], c)
 		if err != nil {
-			goLogger.Debugw("fetch failed", "from", root, "of", c, "attempt", i, "error", err)
+			goLogger.Debugw("fetch failed", "from", nodes[i], "of", c, "attempt", i, "error", err)
+		}
+
+		var idx int
+		var nm *Member
+
+		if err == nil {
+			// we need to acquire the lock to update the member's weight in the pool.
+			// and now that we are here, we know we're gonna return and hit the defer before exiting this block.
+			p.lk.RLock()
+			// Saturn fetch worked, we should try upvoting the member.
+			idx, nm = p.updateWeightUnlocked(nodes[i], false)
+			p.lk.RUnlock()
+
+			if idx != -1 && nm != nil && p.endpoints[idx].url == nm.url {
+				p.lk.Lock()
+				defer p.lk.Unlock()
+				// re-confirm index in critical section
+				idx = -1
+				for j, m := range p.endpoints {
+					if m.String() == nodes[i] {
+						idx = j
+					}
+				}
+				if idx == -1 {
+					return
+				}
+
+				p.endpoints[idx] = nm
+				p.c.UpdateWithWeights(p.endpoints.ToWeights())
+			}
+
+			// Saturn fetch worked, we return the block.
+			return
+		}
+
+		p.lk.RLock()
+		// Saturn fetch failed, we downvote the failing member and try the next one.
+		idx, nm = p.updateWeightUnlocked(nodes[i], true)
+		p.lk.RUnlock()
+
+		// we weren't able to downvote the failing Saturn node, let's just retry the fetch with a new node.
+		if idx == -1 || nm == nil {
 			continue
 		}
-		return
+
+		// we need to take the lock as we're updating the list of pool endpoint members below.
+		p.lk.Lock()
+		// re-confirm index in critical section
+		idx = -1
+		for j, m := range p.endpoints {
+			if m.String() == nodes[i] {
+				idx = j
+			}
+		}
+		if idx == -1 {
+			p.lk.Unlock()
+			continue
+		}
+		if p.endpoints[idx].url == nm.url {
+			// if the member has been downvoted to 0, we remove it from the pool.
+			// if after removing this member from the pool, the size of the pool falls below the low watermark,
+			// we attempt a pool refresh.
+			if nm.replication == 0 {
+				p.c = p.c.RemoveNode(nm.url)
+				p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
+				if len(p.endpoints) < p.config.PoolLowWatermark {
+					select {
+					case p.refresh <- struct{}{}:
+					default:
+					}
+				}
+			} else {
+				// update the new weight of the member in the pool
+				p.endpoints[idx] = nm
+				p.c.UpdateWithWeights(p.endpoints.ToWeights())
+			}
+		}
+		p.lk.Unlock()
 	}
+
+	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
 	return
 }
 
-var tmpl = "http://%s/ipfs/%s?format=raw"
+func (p *pool) updateWeightUnlocked(node string, failure bool) (index int, member *Member) {
+	idx := -1
+	var nm *Member
+	var needUpdate bool
+	for j, m := range p.endpoints {
+		if m.String() == node {
+			if nm, needUpdate = m.UpdateWeight(p.config.PoolWeightChangeDebounce, failure); needUpdate {
+				idx = j
+			}
+			break
+		}
+	}
+	return idx, nm
+}
 
+var saturnReqTmpl = "https://%s/ipfs/%s?format=raw"
+
+// doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
 func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Block, e error) {
-	goLogger.Debugw("doing fetch", "from", from, "of", c)
+	requestId := uuid.NewString()
+	goLogger.Debugw("doing fetch", "from", from, "of", c, "requestId", requestId)
 	start := time.Now()
 	fb := time.Now()
 	code := 0
@@ -207,12 +364,12 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 		}
 		p.logger.queue <- log{
 			CacheHit:  false,
-			URL:       "",
+			URL:       from,
 			LocalTime: start,
 			// TODO: does this include header sizes?
 			NumBytesSent:    received,
 			RequestDuration: time.Since(start).Seconds(),
-			RequestID:       uuid.NewString(),
+			RequestID:       requestId,
 			HTTPStatusCode:  code,
 			HTTPProtocol:    proto,
 			TTFBMS:          int(fb.Sub(start).Milliseconds()),
@@ -223,7 +380,10 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 			UserAgent:     respReq.UserAgent(),
 		}
 	}()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(tmpl, from, c), nil)
+
+	reqCtx, cancel := context.WithTimeout(ctx, DefaultSaturnRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, fmt.Sprintf(saturnReqTmpl, from, c), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -237,23 +397,42 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 		}
 	}
 
-	resp, err := p.config.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
+	resp, err := p.config.SaturnClient.Do(req)
 	fb = time.Now()
+	if err != nil {
+		return nil, fmt.Errorf("http request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
 	code = resp.StatusCode
 	proto = resp.Proto
 	respReq = resp.Request
-	defer resp.Body.Close()
-	rb, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("http error from strn: %d", resp.StatusCode)
 	}
-	received = len(rb)
+
+	block, err := io.ReadAll(io.LimitReader(resp.Body, maxBlockSize))
+	received = len(block)
+
+	if err != nil {
+		switch {
+		case err == io.EOF && received >= maxBlockSize:
+			// we don't expect to see this error any time soon, but if IPFS
+			// ecosystem ever starts allowing bigger blocks, this message will save
+			// multiple people collective man-months in debugging ;-)
+			return nil, fmt.Errorf("strn responded with a block bigger than maxBlockSize=%d", maxBlockSize-1)
+		case err == io.EOF:
+			// This is fine :-)
+			// Zero-length block may be valid (example: bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku)
+			// We accept this as non-error and let it go over CID validation later.
+		default:
+			return nil, fmt.Errorf("unable to read strn response body: %w", err)
+		}
+	}
 
 	if p.config.DoValidation {
-		nc, err := c.Prefix().Sum(rb)
+		nc, err := c.Prefix().Sum(block)
 		if err != nil {
 			return nil, blocks.ErrWrongHash
 		}
@@ -261,5 +440,6 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 			return nil, blocks.ErrWrongHash
 		}
 	}
-	return blocks.NewBlockWithCid(rb, c)
+
+	return blocks.NewBlockWithCid(block, c)
 }
