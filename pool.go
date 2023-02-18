@@ -400,7 +400,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	resp, err := p.config.SaturnClient.Do(req)
 	fb = time.Now()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("http request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -409,27 +409,30 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	respReq = resp.Request
 
 	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil, ErrBackendFailed
+		return nil, fmt.Errorf("http error from strn: %d", resp.StatusCode)
 	}
 
-	buf := make([]byte, maxBlockSize)
-	received, err = io.ReadFull(resp.Body, buf)
-	// ReadFull returns an EOF ONLY if no bytes were read.
-	if err == io.EOF {
-		return nil, ErrBackendFailed
-	}
-	// If we read less than max bytes, we are good here.
-	if received > 0 && received <= maxBlockSize {
-		buf = buf[:received]
-	} else {
-		// drain remaining body bytes (e.g. if more than a block)
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil, ErrBackendFailed
+	block, err := io.ReadAll(io.LimitReader(resp.Body, maxBlockSize))
+	received = len(block)
+
+	if err != nil {
+		switch {
+		case err == io.EOF && received >= maxBlockSize:
+			// we don't expect to see this error any time soon, but if IPFS
+			// ecosystem ever starts allowing bigger blocks, this message will save
+			// multiple people collective man-months in debugging ;-)
+			return nil, fmt.Errorf("strn responded with a block bigger than maxBlockSize=%d", maxBlockSize-1)
+		case err == io.EOF:
+			// This is fine :-)
+			// Zero-length block may be valid (example: bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku)
+			// We accept this as non-error and let it go over CID validation later.
+		default:
+			return nil, fmt.Errorf("unable to read strn response body: %w", err)
+		}
 	}
 
 	if p.config.DoValidation {
-		nc, err := c.Prefix().Sum(buf)
+		nc, err := c.Prefix().Sum(block)
 		if err != nil {
 			return nil, blocks.ErrWrongHash
 		}
@@ -438,5 +441,5 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 		}
 	}
 
-	return blocks.NewBlockWithCid(buf, c)
+	return blocks.NewBlockWithCid(block, c)
 }
