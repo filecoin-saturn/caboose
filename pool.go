@@ -349,7 +349,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	requestId := uuid.NewString()
 	goLogger.Debugw("doing fetch", "from", from, "of", c, "requestId", requestId)
 	start := time.Now()
-	fb := time.Now()
+	fb := time.Unix(0, 0)
 	code := 0
 	proto := "unknown"
 	respReq := &http.Request{}
@@ -357,8 +357,10 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	defer func() {
 		goLogger.Debugw("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(fb.Sub(start).Milliseconds()), "duration", time.Since(start).Seconds())
 		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
-		if e == nil {
+		if fb.After(start) {
 			fetchLatencyMetric.Observe(float64(fb.Sub(start).Milliseconds()))
+		}
+		if received > 0 {
 			fetchSpeedMetric.Observe(float64(received) / time.Since(start).Seconds())
 			fetchSizeMetric.Observe(float64(received))
 		}
