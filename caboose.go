@@ -48,7 +48,7 @@ type Config struct {
 }
 
 const DefaultMaxRetries = 3
-const DefaultPoolFailureDownvoteDebounce = time.Second
+const DefaultPoolFailureDownvoteDebounce = 2 * time.Second
 const DefaultPoolLowWatermark = 5
 const DefaultSaturnRequestTimeout = 19 * time.Second
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
