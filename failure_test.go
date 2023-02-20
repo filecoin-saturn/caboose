@@ -58,7 +58,7 @@ func TestCabooseFailures(t *testing.T) {
 		DoValidation:             false,
 		PoolWeightChangeDebounce: time.Duration(1),
 		PoolRefresh:              time.Millisecond * 50,
-		MaxRetrievalAttempts:     2,
+		MaxRetrievalAttempts:     3,
 	})
 	if err != nil {
 		t.Fatal(err)
