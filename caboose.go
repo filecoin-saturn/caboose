@@ -58,6 +58,9 @@ var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available strn backend")
 var ErrBackendFailed error = errors.New("strn backend failed")
 
+// ErrTransient is returned when a transient error(timeouts, not found etc) occurs while fetching from the strn backend.
+var ErrTransient error = errors.New("transient error while fetching from strn backend")
+
 type Caboose struct {
 	config *Config
 	pool   *pool

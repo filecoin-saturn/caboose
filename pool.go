@@ -3,7 +3,11 @@ package caboose
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+
+	cache "github.com/patrickmn/go-cache"
+
 	"io"
 	"net/http"
 	"os"
@@ -44,7 +48,7 @@ type updateRingMembersReq struct {
 	done       chan struct{}
 }
 
-type getRingNodesForKeyReq struct {
+type getRingNodesReq struct {
 	key  string
 	n    int
 	resp chan getRingNodesResp
@@ -54,6 +58,17 @@ type getRingNodesResp struct {
 	nodes []string
 	ok    bool
 	err   error
+}
+
+type upvoteReq struct {
+	fetchKey string
+	node     string
+}
+
+type downVoteReq struct {
+	node     string
+	fetchKey string
+	fetchErr error
 }
 
 type pool struct {
@@ -72,13 +87,13 @@ type pool struct {
 	endpoints MemberList         // guarded by ringLoop
 	c         *hashring.HashRing // guarded by ringLoop
 
-	updateRingMembersCh  chan updateRingMembersReq
-	getRingNodesForKeyCh chan getRingNodesForKeyReq
-	upvoteNodeCh         chan string
-	downvoteNodeCh       chan string
+	updateRingMembersCh chan updateRingMembersReq
+	getRingNodesCh      chan getRingNodesReq
+	upvoteNodeCh        chan upvoteReq
+	downvoteNodeCh      chan downVoteReq
 }
 
-// MemberList is the list of Saturn endpoints that are currently nodes of the Caboose consistent hashing ring
+// MemberList is the list of Saturn endpoints that are currently members of the Caboose consistent hashing ring
 // that determines which Saturn endpoint to use to retrieve a given CID.
 type MemberList []*Member
 
@@ -94,8 +109,6 @@ func (m MemberList) ToWeights() map[string]int {
 
 // Member is a Saturn endpoint that is currently a member of the Caboose consistent hashing ring.
 type Member struct {
-	lk sync.Mutex
-
 	url         string
 	lastUpdate  time.Time
 	replication int
@@ -104,7 +117,7 @@ type Member struct {
 var defaultReplication = 20
 
 func NewMember(addr string) *Member {
-	return &Member{url: addr, lk: sync.Mutex{}, lastUpdate: time.Now(), replication: defaultReplication}
+	return &Member{url: addr, lastUpdate: time.Now(), replication: defaultReplication}
 }
 
 func (m *Member) ReplicationFactor() int {
@@ -121,12 +134,12 @@ func newPool(c *Config) *pool {
 		started: make(chan struct{}),
 		refresh: make(chan struct{}, 1),
 
-		endpoints:            []*Member{},
-		c:                    nil,
-		updateRingMembersCh:  make(chan updateRingMembersReq),
-		getRingNodesForKeyCh: make(chan getRingNodesForKeyReq),
-		upvoteNodeCh:         make(chan string, 256),
-		downvoteNodeCh:       make(chan string, 256),
+		endpoints:           []*Member{},
+		c:                   nil,
+		updateRingMembersCh: make(chan updateRingMembersReq),
+		getRingNodesCh:      make(chan getRingNodesReq),
+		upvoteNodeCh:        make(chan upvoteReq, 256),
+		downvoteNodeCh:      make(chan downVoteReq, 256),
 	}
 
 	p.wg.Add(1)
@@ -134,6 +147,7 @@ func newPool(c *Config) *pool {
 
 	p.wg.Add(1)
 	go p.ringLoop()
+
 	return &p
 }
 
@@ -195,13 +209,48 @@ func (p *pool) Close() {
 	})
 }
 
+type transientErrorVal struct {
+}
+
 func (p *pool) ringLoop() {
 	defer p.wg.Done()
+
+	successKeysCache := cache.New(5*time.Minute, 2*time.Minute)
+	transientErrorsCache := cache.New(5*time.Minute, 2*time.Minute)
+
+	downVote := func(node string, pct int) {
+		for i, m := range p.endpoints {
+			if m.url == node {
+				if time.Since(m.lastUpdate) > p.config.PoolWeightChangeDebounce {
+					m.lastUpdate = time.Now()
+
+					m.replication = m.replication * ((100 - pct) / 100)
+
+					if m.replication == 0 {
+						p.c = p.c.RemoveNode(m.url)
+						p.endpoints = append(p.endpoints[:i], p.endpoints[i+1:]...)
+						// trigger a refresh if we are below the low watermark. This is non-blocking, so okay to do it here.
+						if len(p.endpoints) < p.config.PoolLowWatermark {
+							select {
+							case p.refresh <- struct{}{}:
+							default:
+							}
+						}
+					} else {
+						p.c.UpdateWithWeights(p.endpoints.ToWeights())
+					}
+				}
+				break
+			}
+		}
+	}
+
 	for {
 		select {
 		case updateReq := <-p.updateRingMembersCh:
 			newMembers := updateReq.newMembers
-			// update the pool endpoints
+
+			// we ensure old endpoints are included in the new list
 			oldMap := make(map[string]bool)
 			n := make([]*Member, 0, len(newMembers))
 			for _, o := range p.endpoints {
@@ -215,17 +264,21 @@ func (p *pool) ringLoop() {
 				}
 			}
 
+			// we update the list of member endpoints and create/update the consistent hashing ring with the new members.
 			p.endpoints = n
 			if p.c == nil {
 				p.c = hashring.NewWithWeights(p.endpoints.ToWeights())
 			} else {
 				p.c.UpdateWithWeights(p.endpoints.ToWeights())
 			}
+
+			// update the pool size metric.
 			poolSizeMetric.Set(float64(len(n)))
 
+			// we signal to the upstream that the pool has been updated.
 			updateReq.done <- struct{}{}
 
-		case getRingMembersReq := <-p.getRingNodesForKeyCh:
+		case getRingMembersReq := <-p.getRingNodesCh:
 			if p.c == nil || p.c.Size() == 0 {
 				getRingMembersReq.resp <- getRingNodesResp{nodes: nil, ok: false, err: ErrNoBackend}
 				continue
@@ -239,7 +292,23 @@ func (p *pool) ringLoop() {
 			nodes, ok := p.c.GetNodes(key, n)
 			getRingMembersReq.resp <- getRingNodesResp{nodes: nodes, ok: ok}
 
-		case node := <-p.upvoteNodeCh:
+		case upvoteReq := <-p.upvoteNodeCh:
+			key := upvoteReq.fetchKey
+
+			// note that we were able to successfully fetch the key.
+			_ = successKeysCache.Add(upvoteReq.fetchKey, struct{}{}, cache.DefaultExpiration)
+			node := upvoteReq.node
+
+			// run through the recent fetch failures and downvote all nodes that failed to fetch the key.
+			vals, ok := transientErrorsCache.Get(key)
+			if ok {
+				nodes := vals.([]string)
+				for _, n := range nodes {
+					downVote(n, 50)
+				}
+				transientErrorsCache.Delete(key)
+			}
+
 			for _, m := range p.endpoints {
 				if m.url == node {
 					if time.Since(m.lastUpdate) > p.config.PoolWeightChangeDebounce {
@@ -261,30 +330,31 @@ func (p *pool) ringLoop() {
 				}
 			}
 
-		case node := <-p.downvoteNodeCh:
-			for i, m := range p.endpoints {
-				if m.url == node {
-					if time.Since(m.lastUpdate) > p.config.PoolWeightChangeDebounce {
-						m.lastUpdate = time.Now()
-						m.replication = m.replication / 2
+		case downVoteReq := <-p.downvoteNodeCh:
+			key := downVoteReq.fetchKey
+			err := downVoteReq.fetchErr
+			// reduce weight by pct percentage
+			pct := 50
 
-						if m.replication == 0 {
-							p.c = p.c.RemoveNode(m.url)
-							p.endpoints = append(p.endpoints[:i], p.endpoints[i+1:]...)
-							// trigger a refresh if we are below the low watermark. This is non-blocking, so okay to do it here.
-							if len(p.endpoints) < p.config.PoolLowWatermark {
-								select {
-								case p.refresh <- struct{}{}:
-								default:
-								}
-							}
-						} else {
-							p.c.UpdateWithWeights(p.endpoints.ToWeights())
-						}
+			if errors.Is(err, ErrTransient) {
+				// if we've NOT seen a successful fetch for this key in the recent past,
+				// we assume that this is indeed a transient error but we record it to downvote it if we see a successful
+				// fetch for the same key in the near future.
+				if _, has := successKeysCache.Get(key); !has {
+					vals, ok := transientErrorsCache.Get(key)
+					if ok {
+						nodes := vals.([]string)
+						nodes = append(nodes, downVoteReq.node)
+						transientErrorsCache.Set(key, nodes, cache.DefaultExpiration)
+					} else {
+						transientErrorsCache.Set(key, []string{downVoteReq.node}, cache.DefaultExpiration)
 					}
-					break
+
+					continue
 				}
 			}
+
+			downVote(downVoteReq.node, pct)
 
 		case <-p.ctx.Done():
 			return
@@ -293,19 +363,22 @@ func (p *pool) ringLoop() {
 }
 
 func (p *pool) getNodesForKey(key string, n int) ([]string, error) {
-	getRingMembersResp := make(chan getRingNodesResp, 1)
-	getRingMembersReq := getRingNodesForKeyReq{
+	resp := make(chan getRingNodesResp, 1)
+	getRingMembersReq := getRingNodesReq{
 		key:  key,
 		n:    n,
-		resp: getRingMembersResp,
+		resp: resp,
 	}
 
 	select {
-	case p.getRingNodesForKeyCh <- getRingMembersReq:
+	case p.getRingNodesCh <- getRingMembersReq:
 		select {
-		case resp := <-getRingMembersResp:
-			members, ok := resp.nodes, resp.ok
+		case resp := <-resp:
+			if resp.err != nil {
+				return nil, resp.err
+			}
 
+			members, ok := resp.nodes, resp.ok
 			// if there are no endpoints in the consistent hashing ring for the given cid, we submit a pool refresh request and fail this fetch.
 			if !ok || len(members) == 0 {
 				select {
@@ -348,7 +421,10 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blocks.Bl
 		// if there was no error fetching the block, we upvote the node and return the block.
 		if err == nil {
 			select {
-			case p.upvoteNodeCh <- nodes[i]:
+			case p.upvoteNodeCh <- upvoteReq{
+				node:     nodes[i],
+				fetchKey: aff,
+			}:
 			case <-p.ctx.Done():
 				return nil, p.ctx.Err()
 			}
@@ -358,7 +434,11 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blocks.Bl
 
 		// otherwise we downvote the node and re-attempt the fetch with the next one.
 		select {
-		case p.downvoteNodeCh <- nodes[i]:
+		case p.downvoteNodeCh <- downVoteReq{
+			node:     nodes[i],
+			fetchKey: aff,
+			fetchErr: err,
+		}:
 		case <-p.ctx.Done():
 			return nil, p.ctx.Err()
 		}
