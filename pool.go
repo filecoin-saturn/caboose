@@ -240,90 +240,97 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	}
 
 	for i := 0; i < len(nodes); i++ {
-		blk, err = p.doFetch(ctx, nodes[i], c)
-		if err != nil {
-			goLogger.Debugw("fetch failed", "from", nodes[i], "of", c, "attempt", i, "error", err)
-		}
-
-		var idx int
-		var nm *Member
-
+		blk, err = p.fetchAndUpdate(ctx, nodes[i], c)
 		if err == nil {
-			// we need to acquire the lock to update the member's weight in the pool.
-			// and now that we are here, we know we're gonna return and hit the defer before exiting this block.
-			p.lk.RLock()
-			// Saturn fetch worked, we should try upvoting the member.
-			idx, nm = p.updateWeightUnlocked(nodes[i], false)
-			p.lk.RUnlock()
-
-			if idx != -1 && nm != nil && p.endpoints[idx].url == nm.url {
-				p.lk.Lock()
-				defer p.lk.Unlock()
-				// re-confirm index in critical section
-				idx = -1
-				for j, m := range p.endpoints {
-					if m.String() == nodes[i] {
-						idx = j
-					}
-				}
-				if idx == -1 {
-					return
-				}
-
-				p.endpoints[idx] = nm
-				p.c.UpdateWithWeights(p.endpoints.ToWeights())
-			}
-
-			// Saturn fetch worked, we return the block.
 			return
 		}
-
-		p.lk.RLock()
-		// Saturn fetch failed, we downvote the failing member and try the next one.
-		idx, nm = p.updateWeightUnlocked(nodes[i], true)
-		p.lk.RUnlock()
-
-		// we weren't able to downvote the failing Saturn node, let's just retry the fetch with a new node.
-		if idx == -1 || nm == nil {
-			continue
-		}
-
-		// we need to take the lock as we're updating the list of pool endpoint members below.
-		p.lk.Lock()
-		// re-confirm index in critical section
-		idx = -1
-		for j, m := range p.endpoints {
-			if m.String() == nodes[i] {
-				idx = j
-			}
-		}
-		if idx == -1 {
-			p.lk.Unlock()
-			continue
-		}
-		if p.endpoints[idx].url == nm.url {
-			// if the member has been downvoted to 0, we remove it from the pool.
-			// if after removing this member from the pool, the size of the pool falls below the low watermark,
-			// we attempt a pool refresh.
-			if nm.replication == 0 {
-				p.c = p.c.RemoveNode(nm.url)
-				p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
-				if len(p.endpoints) < p.config.PoolLowWatermark {
-					select {
-					case p.refresh <- struct{}{}:
-					default:
-					}
-				}
-			} else {
-				// update the new weight of the member in the pool
-				p.endpoints[idx] = nm
-				p.c.UpdateWithWeights(p.endpoints.ToWeights())
-			}
-		}
-		p.lk.Unlock()
 	}
 
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
+	return
+}
+
+func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid) (blk blocks.Block, err error) {
+	blk, err = p.doFetch(ctx, node, c)
+	if err != nil {
+		goLogger.Debugw("fetch attempt failed", "from", node, "of", c, "error", err)
+	}
+
+	var idx int
+	var nm *Member
+
+	if err == nil {
+		// we need to acquire the lock to update the member's weight in the pool.
+		// and now that we are here, we know we're gonna return and hit the defer before exiting this block.
+		p.lk.RLock()
+		// Saturn fetch worked, we should try upvoting the member.
+		idx, nm = p.updateWeightUnlocked(node, false)
+		p.lk.RUnlock()
+
+		if idx != -1 && nm != nil && p.endpoints[idx].url == nm.url {
+			p.lk.Lock()
+			defer p.lk.Unlock()
+			// re-confirm index in critical section
+			idx = -1
+			for j, m := range p.endpoints {
+				if m.String() == node {
+					idx = j
+				}
+			}
+			if idx == -1 {
+				return
+			}
+
+			p.endpoints[idx] = nm
+			p.c.UpdateWithWeights(p.endpoints.ToWeights())
+		}
+
+		// Saturn fetch worked, we return the block.
+		return
+	}
+
+	p.lk.RLock()
+	// Saturn fetch failed, we downvote the failing member and try the next one.
+	idx, nm = p.updateWeightUnlocked(node, true)
+	p.lk.RUnlock()
+
+	// we weren't able to downvote the failing Saturn node, let's just retry the fetch with a new node.
+	if idx == -1 || nm == nil {
+		return
+	}
+
+	// we need to take the lock as we're updating the list of pool endpoint members below.
+	p.lk.Lock()
+	defer p.lk.Unlock()
+	// re-confirm index in critical section
+	idx = -1
+	for j, m := range p.endpoints {
+		if m.String() == node {
+			idx = j
+		}
+	}
+	if idx == -1 {
+		return
+	}
+	if p.endpoints[idx].url == nm.url {
+		// if the member has been downvoted to 0, we remove it from the pool.
+		// if after removing this member from the pool, the size of the pool falls below the low watermark,
+		// we attempt a pool refresh.
+		if nm.replication == 0 {
+			p.c = p.c.RemoveNode(nm.url)
+			p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
+			if len(p.endpoints) < p.config.PoolLowWatermark {
+				select {
+				case p.refresh <- struct{}{}:
+				default:
+				}
+			}
+		} else {
+			// update the new weight of the member in the pool
+			p.endpoints[idx] = nm
+			p.c.UpdateWithWeights(p.endpoints.ToWeights())
+		}
+	}
 	return
 }
 
