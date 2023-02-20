@@ -215,7 +215,7 @@ func (p *pool) ringLoop() {
 	successKeysCache := cache.New(5*time.Minute, 2*time.Minute)
 	transientErrorsCache := cache.New(5*time.Minute, 2*time.Minute)
 
-	downVote := func(node string, pct int) {
+	downVoteFnc := func(node string, pct int) {
 		for i, m := range p.endpoints {
 			if m.url == node {
 				if time.Since(m.lastUpdate) > p.config.PoolWeightChangeDebounce {
@@ -297,18 +297,30 @@ func (p *pool) ringLoop() {
 			successKeysCache.Set(upvoteReq.fetchKey, struct{}{}, cache.DefaultExpiration)
 			node := upvoteReq.node
 
-			// run through the recent fetch failures and downvote all nodes that failed to fetch this key.
+			// run through the recent fetch failures for this key and downvote all nodes that failed to fetch this key.
 			vals, ok := transientErrorsCache.Get(key)
 			if ok {
+				// seen allows de-dup of nodes present in `transientErrorsCache` as the same node
+				// could be present in it multiple times for failing to fetch the same content
+				// multiple times. However, in this case, we really should penalise it once
+				// as it's better to penalise heavily for failures across keys rather than penalise multiple times for the same key.
+				seen := make(map[string]struct{})
+
 				nodes := vals.([]string)
 				for _, n := range nodes {
-					downVote(n, 50)
+					if _, ok := seen[n]; !ok {
+						downVoteFnc(n, 50)
+					}
+					seen[n] = struct{}{}
 				}
 
 				// remove this key from the cache so we don't penalise the same nodes again for failing to fetch this content.
+				// yeah, we have debounce but this is a good safety net.
 				transientErrorsCache.Delete(key)
 			}
 
+			// upvote the node that successfully fetched the key.
+			change := false
 			for _, m := range p.endpoints {
 				if m.url == node {
 					if time.Since(m.lastUpdate) > p.config.PoolWeightChangeDebounce {
@@ -321,13 +333,17 @@ func (p *pool) ringLoop() {
 							}
 							if updated != m.replication {
 								m.replication = updated
+								change = true
 							}
 						}
 
-						p.c.UpdateWithWeights(p.endpoints.ToWeights())
 					}
 					break
 				}
+			}
+
+			if change {
+				p.c.UpdateWithWeights(p.endpoints.ToWeights())
 			}
 
 		case downVoteReq := <-p.downvoteNodeCh:
@@ -352,7 +368,7 @@ func (p *pool) ringLoop() {
 				}
 			}
 
-			downVote(downVoteReq.node, 50)
+			downVoteFnc(downVoteReq.node, 50)
 
 		case <-p.ctx.Done():
 			return
