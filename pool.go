@@ -39,24 +39,51 @@ func (p *pool) loadPool() ([]string, error) {
 	return responses, nil
 }
 
+type updateRingMembersReq struct {
+	newMembers []string
+	done       chan struct{}
+}
+
+type getRingNodesForKeyReq struct {
+	key  string
+	n    int
+	resp chan getRingNodesResp
+}
+
+type getRingNodesResp struct {
+	nodes []string
+	ok    bool
+	err   error
+}
+
 type pool struct {
+	closeOnce sync.Once
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+
 	config *Config
 	logger *logger
 
 	started chan struct{} // started signals that we've already initialized the pool once with Saturn endpoints.
 	refresh chan struct{} // refresh is used to signal the need for doing a refresh of the Saturn endpoints pool.
-	done    chan struct{} // done is used to signal that we're shutting down the Saturn endpoints pool and don't need to refresh it anymore.
 
-	lk        sync.RWMutex
-	endpoints MemberList         // guarded by lk
-	c         *hashring.HashRing // guarded by lk
+	// ringLoop vars
+	endpoints MemberList         // guarded by ringLoop
+	c         *hashring.HashRing // guarded by ringLoop
+
+	updateRingMembersCh  chan updateRingMembersReq
+	getRingNodesForKeyCh chan getRingNodesForKeyReq
+	upvoteNodeCh         chan string
+	downvoteNodeCh       chan string
 }
 
-// MemberList is the list of Saturn endpoints that are currently members of the Caboose consistent hashing ring
+// MemberList is the list of Saturn endpoints that are currently nodes of the Caboose consistent hashing ring
 // that determines which Saturn endpoint to use to retrieve a given CID.
 type MemberList []*Member
 
 // ToWeights returns a map of Saturn endpoints to their weight on Caboose's consistent hashing ring.
+// can ONLY be called from the ring event loop
 func (m MemberList) ToWeights() map[string]int {
 	ml := make(map[string]int, len(m))
 	for _, mm := range m {
@@ -80,96 +107,60 @@ func NewMember(addr string) *Member {
 	return &Member{url: addr, lk: sync.Mutex{}, lastUpdate: time.Now(), replication: defaultReplication}
 }
 
-func (m *Member) String() string {
-	return string(m.url)
-}
-
 func (m *Member) ReplicationFactor() int {
 	return m.replication
 }
 
-func (m *Member) UpdateWeight(debounce time.Duration, failure bool) (*Member, bool) {
-	// this is a best-effort. if there's a correlated failure we ignore the others, so do the try on best-effort.
-	if m.lk.TryLock() {
-		defer m.lk.Unlock()
-		if time.Since(m.lastUpdate) > debounce {
-			// make the down-voted member
-			nm := NewMember(m.url)
-			if failure {
-				nm.replication = m.replication / 2
-				return nm, true
-			} else {
-				// bump by 20 percent only if the current replication factor is less than 20.
-				if m.replication < defaultReplication {
-					updated := m.replication + 1
-					if updated > defaultReplication {
-						updated = defaultReplication
-					}
-					if updated != m.replication {
-						nm.replication = updated
-						return nm, true
-					}
-				}
-			}
-			return nm, false
-		}
-	}
-	return nil, false
-}
-
 func newPool(c *Config) *pool {
+	ctx, cancel := context.WithCancel(context.Background())
+
 	p := pool{
-		config:    c,
-		endpoints: []*Member{},
-		c:         nil,
-		started:   make(chan struct{}),
-		refresh:   make(chan struct{}, 1),
-		done:      make(chan struct{}, 1),
+		ctx:     ctx,
+		cancel:  cancel,
+		config:  c,
+		started: make(chan struct{}),
+		refresh: make(chan struct{}, 1),
+
+		endpoints:            []*Member{},
+		c:                    nil,
+		updateRingMembersCh:  make(chan updateRingMembersReq),
+		getRingNodesForKeyCh: make(chan getRingNodesForKeyReq),
+		upvoteNodeCh:         make(chan string, 256),
+		downvoteNodeCh:       make(chan string, 256),
 	}
+
+	p.wg.Add(1)
 	go p.refreshPool()
+
+	p.wg.Add(1)
+	go p.ringLoop()
 	return &p
 }
 
 func (p *pool) doRefresh() {
 	newEP, err := p.loadPool()
-	if err == nil {
-		p.lk.RLock()
-
-		// TODO: The orchestrator periodically prunes "bad" L1s based on a reputation system
-		// it owns and runs. We should probably just forget about the Saturn endpoints that were
-		// previously in the pool but are no longer being returned by the orchestrator. It's highly
-		// likely that the Orchestrator has deemed them to be non-functional/malicious.
-		// Let's just override the old pool with the new endpoints returned here.
-		oldMap := make(map[string]bool)
-		n := make([]*Member, 0, len(newEP))
-		for _, o := range p.endpoints {
-			oldMap[o.String()] = true
-			n = append(n, o)
-		}
-
-		p.lk.RUnlock()
-
-		for _, s := range newEP {
-			if _, ok := oldMap[s]; !ok {
-				n = append(n, NewMember(s))
-			}
-		}
-
-		p.lk.Lock()
-		p.endpoints = n
-		if p.c == nil {
-			p.c = hashring.NewWithWeights(p.endpoints.ToWeights())
-		} else {
-			p.c.UpdateWithWeights(p.endpoints.ToWeights())
-		}
-		p.lk.Unlock()
-		poolSizeMetric.Set(float64(len(n)))
-	} else {
+	if err != nil {
+		goLogger.Errorw("failed to load pool from orchestrator", "err", err)
 		poolErrorMetric.Add(1)
+		return
+	}
+
+	// send request to event loop to update the pool endpoints and wait for update to finish before returning
+	doneCh := make(chan struct{}, 1)
+	select {
+	case p.updateRingMembersCh <- updateRingMembersReq{newMembers: newEP, done: doneCh}:
+		select {
+		case <-doneCh:
+		case <-p.ctx.Done():
+			return
+		}
+	case <-p.ctx.Done():
+		return
 	}
 }
 
 func (p *pool) refreshPool() {
+	defer p.wg.Done()
 	t := time.NewTimer(0)
 	started := sync.Once{}
 	for {
@@ -191,22 +182,151 @@ func (p *pool) refreshPool() {
 				<-t.C
 			}
 			t.Reset(p.config.PoolRefresh)
-		case <-p.done:
+		case <-p.ctx.Done():
 			return
 		}
 	}
 }
 
 func (p *pool) Close() {
-	select {
-	case p.done <- struct{}{}:
-		return
-	default:
-		return
+	p.closeOnce.Do(func() {
+		p.cancel()
+		p.wg.Wait()
+	})
+}
+
+func (p *pool) ringLoop() {
+	defer p.wg.Done()
+	for {
+		select {
+		case updateReq := <-p.updateRingMembersCh:
+			newMembers := updateReq.newMembers
+			// update the pool endpoints
+			oldMap := make(map[string]bool)
+			n := make([]*Member, 0, len(newMembers))
+			for _, o := range p.endpoints {
+				oldMap[o.url] = true
+				n = append(n, o)
+			}
+
+			for _, s := range newMembers {
+				if _, ok := oldMap[s]; !ok {
+					n = append(n, NewMember(s))
+				}
+			}
+
+			p.endpoints = n
+			if p.c == nil {
+				p.c = hashring.NewWithWeights(p.endpoints.ToWeights())
+			} else {
+				p.c.UpdateWithWeights(p.endpoints.ToWeights())
+			}
+			poolSizeMetric.Set(float64(len(n)))
+
+			updateReq.done <- struct{}{}
+
+		case getRingMembersReq := <-p.getRingNodesForKeyCh:
+			if p.c == nil || p.c.Size() == 0 {
+				getRingMembersReq.resp <- getRingNodesResp{nodes: nil, ok: false, err: ErrNoBackend}
+				continue
+			}
+
+			key := getRingMembersReq.key
+			n := getRingMembersReq.n
+			if n > len(p.endpoints) {
+				n = len(p.endpoints)
+			}
+			nodes, ok := p.c.GetNodes(key, n)
+			getRingMembersReq.resp <- getRingNodesResp{nodes: nodes, ok: ok}
+
+		case node := <-p.upvoteNodeCh:
+			for _, m := range p.endpoints {
+				if m.url == node {
+					if time.Since(m.lastUpdate) > p.config.PoolWeightChangeDebounce {
+						m.lastUpdate = time.Now()
+
+						if m.replication < defaultReplication {
+							updated := m.replication + 1
+							if updated > defaultReplication {
+								updated = defaultReplication
+							}
+							if updated != m.replication {
+								m.replication = updated
+							}
+						}
+
+						p.c.UpdateWithWeights(p.endpoints.ToWeights())
+					}
+					break
+				}
+			}
+
+		case node := <-p.downvoteNodeCh:
+			for i, m := range p.endpoints {
+				if m.url == node {
+					if time.Since(m.lastUpdate) > p.config.PoolWeightChangeDebounce {
+						m.lastUpdate = time.Now()
+						m.replication = m.replication / 2
+
+						if m.replication == 0 {
+							p.c = p.c.RemoveNode(m.url)
+							p.endpoints = append(p.endpoints[:i], p.endpoints[i+1:]...)
+							// trigger a refresh if we are below the low watermark. This is non-blocking, so okay to do it here.
+							if len(p.endpoints) < p.config.PoolLowWatermark {
+								select {
+								case p.refresh <- struct{}{}:
+								default:
+								}
+							}
+						} else {
+							p.c.UpdateWithWeights(p.endpoints.ToWeights())
+						}
+					}
+					break
+				}
+			}
+
+		case <-p.ctx.Done():
+			return
+		}
 	}
 }
 
-func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk blocks.Block, err error) {
+func (p *pool) getNodesForKey(key string, n int) ([]string, error) {
+	getRingMembersResp := make(chan getRingNodesResp, 1)
+	getRingMembersReq := getRingNodesForKeyReq{
+		key:  key,
+		n:    n,
+		resp: getRingMembersResp,
+	}
+
+	select {
+	case p.getRingNodesForKeyCh <- getRingMembersReq:
+		select {
+		case resp := <-getRingMembersResp:
+			members, ok := resp.nodes, resp.ok
+
+			// if there are no endpoints in the consistent hashing ring for the given cid, we submit a pool refresh request and fail this fetch.
+			if !ok || len(members) == 0 {
+				select {
+				case p.refresh <- struct{}{}:
+				default:
+				}
+				return nil, ErrNoBackend
+			}
+
+			// return the nodes we found
+			return members, nil
+
+		case <-p.ctx.Done():
+			return nil, p.ctx.Err()
+		}
+	case <-p.ctx.Done():
+		return nil, p.ctx.Err()
+	}
+}
+
+func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blocks.Block, error) {
 	// wait for pool to be initialised
 	<-p.started
 
@@ -215,128 +335,37 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	if aff == "" {
 		aff = c.Hash().B58String()
 	}
-
-	p.lk.RLock()
-	if left > len(p.endpoints) {
-		left = len(p.endpoints)
+	nodes, err := p.getNodesForKey(aff, left)
+	if err != nil {
+		return nil, err
 	}
-
-	// if there are no endpoints in the consistent hashing ring, we submit a pool refresh request and fail this fetch.
-	if p.c == nil || p.c.Size() == 0 {
-		p.lk.RUnlock()
-		return nil, ErrNoBackend
-	}
-	nodes, ok := p.c.GetNodes(aff, left)
-	p.lk.RUnlock()
-
-	// if there are no endpoints in the consistent hashing ring for the given cid, we submit a pool refresh request and fail this fetch.
-	if !ok || len(nodes) == 0 {
-		select {
-		case p.refresh <- struct{}{}:
-		default:
-		}
-
-		return nil, ErrNoBackend
-	}
+	var lastErr error
 
 	for i := 0; i < len(nodes); i++ {
-		blk, err = p.doFetch(ctx, nodes[i], c, i)
+		blk, err := p.doFetch(ctx, nodes[i], c, i)
+		lastErr = err
 
-		var idx int
-		var nm *Member
-
+		// if there was no error fetching the block, we upvote the node and return the block.
 		if err == nil {
-			// we need to acquire the lock to update the member's weight in the pool.
-			// and now that we are here, we know we're gonna return and hit the defer before exiting this block.
-			p.lk.RLock()
-			// Saturn fetch worked, we should try upvoting the member.
-			idx, nm = p.updateWeightUnlocked(nodes[i], false)
-			p.lk.RUnlock()
-
-			if idx != -1 && nm != nil && p.endpoints[idx].url == nm.url {
-				p.lk.Lock()
-				defer p.lk.Unlock()
-				// re-confirm index in critical section
-				idx = -1
-				for j, m := range p.endpoints {
-					if m.String() == nodes[i] {
-						idx = j
-					}
-				}
-				if idx == -1 {
-					return
-				}
-
-				p.endpoints[idx] = nm
-				p.c.UpdateWithWeights(p.endpoints.ToWeights())
+			select {
+			case p.upvoteNodeCh <- nodes[i]:
+			case <-p.ctx.Done():
+				return nil, p.ctx.Err()
 			}
 
-			// Saturn fetch worked, we return the block.
-			return
+			return blk, nil
 		}
 
-		p.lk.RLock()
-		// Saturn fetch failed, we downvote the failing member and try the next one.
-		idx, nm = p.updateWeightUnlocked(nodes[i], true)
-		p.lk.RUnlock()
-
-		// we weren't able to downvote the failing Saturn node, let's just retry the fetch with a new node.
-		if idx == -1 || nm == nil {
-			continue
+		// otherwise we downvote the node and re-attempt the fetch with the next one.
+		select {
+		case p.downvoteNodeCh <- nodes[i]:
+		case <-p.ctx.Done():
+			return nil, p.ctx.Err()
 		}
-
-		// we need to take the lock as we're updating the list of pool endpoint members below.
-		p.lk.Lock()
-		// re-confirm index in critical section
-		idx = -1
-		for j, m := range p.endpoints {
-			if m.String() == nodes[i] {
-				idx = j
-			}
-		}
-		if idx == -1 {
-			p.lk.Unlock()
-			continue
-		}
-		if p.endpoints[idx].url == nm.url {
-			// if the member has been downvoted to 0, we remove it from the pool.
-			// if after removing this member from the pool, the size of the pool falls below the low watermark,
-			// we attempt a pool refresh.
-			if nm.replication == 0 {
-				p.c = p.c.RemoveNode(nm.url)
-				p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
-				if len(p.endpoints) < p.config.PoolLowWatermark {
-					select {
-					case p.refresh <- struct{}{}:
-					default:
-					}
-				}
-			} else {
-				// update the new weight of the member in the pool
-				p.endpoints[idx] = nm
-				p.c.UpdateWithWeights(p.endpoints.ToWeights())
-			}
-		}
-		p.lk.Unlock()
 	}
 
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
-	return
-}
-
-func (p *pool) updateWeightUnlocked(node string, failure bool) (index int, member *Member) {
-	idx := -1
-	var nm *Member
-	var needUpdate bool
-	for j, m := range p.endpoints {
-		if m.String() == node {
-			if nm, needUpdate = m.UpdateWeight(p.config.PoolWeightChangeDebounce, failure); needUpdate {
-				idx = j
-			}
-			break
-		}
-	}
-	return idx, nm
+	return nil, lastErr
 }
 
 var saturnReqTmpl = "https://%s/ipfs/%s?format=raw"
