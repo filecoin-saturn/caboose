@@ -302,7 +302,7 @@ func (p *pool) ringLoop() {
 			if ok {
 				nodes := vals.([]string)
 				for _, n := range nodes {
-					downVote(n, 20)
+					downVote(n, 50)
 				}
 
 				// remove this key from the cache so we don't penalise the same nodes again for failing to fetch this content.
