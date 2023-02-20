@@ -240,7 +240,8 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	}
 
 	for i := 0; i < len(nodes); i++ {
-		blk, err = p.fetchAndUpdate(ctx, nodes[i], c)
+		blk, err = p.fetchAndUpdate(ctx, nodes[i], c, i)
+
 		if err == nil {
 			return
 		}
@@ -250,10 +251,10 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	return
 }
 
-func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid) (blk blocks.Block, err error) {
-	blk, err = p.doFetch(ctx, node, c)
+func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int) (blk blocks.Block, err error) {
+	blk, err = p.doFetch(ctx, node, c, attempt)
 	if err != nil {
-		goLogger.Debugw("fetch attempt failed", "from", node, "of", c, "error", err)
+		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
 	}
 
 	var idx int
@@ -352,7 +353,7 @@ func (p *pool) updateWeightUnlocked(node string, failure bool) (index int, membe
 var saturnReqTmpl = "https://%s/ipfs/%s?format=raw"
 
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
-func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Block, e error) {
+func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, e error) {
 	requestId := uuid.NewString()
 	goLogger.Debugw("doing fetch", "from", from, "of", c, "requestId", requestId)
 	start := time.Now()
@@ -362,13 +363,15 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 	respReq := &http.Request{}
 	received := 0
 	defer func() {
-		goLogger.Debugw("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(fb.Sub(start).Milliseconds()), "duration", time.Since(start).Seconds())
+		ttfbMs := fb.Sub(start).Milliseconds()
+		durationSecs := time.Since(start).Seconds()
+		goLogger.Debugw("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(ttfbMs), "duration", durationSecs, "attempt", attempt, "error", e)
 		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
 		if fb.After(start) {
-			fetchLatencyMetric.Observe(float64(fb.Sub(start).Milliseconds()))
+			fetchLatencyMetric.Observe(float64(ttfbMs))
 		}
 		if received > 0 {
-			fetchSpeedMetric.Observe(float64(received) / time.Since(start).Seconds())
+			fetchSpeedMetric.Observe(float64(received) / durationSecs)
 			fetchSizeMetric.Observe(float64(received))
 		}
 		p.logger.queue <- log{
@@ -377,11 +380,11 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid) (b blocks.Bl
 			LocalTime: start,
 			// TODO: does this include header sizes?
 			NumBytesSent:    received,
-			RequestDuration: time.Since(start).Seconds(),
+			RequestDuration: durationSecs,
 			RequestID:       requestId,
 			HTTPStatusCode:  code,
 			HTTPProtocol:    proto,
-			TTFBMS:          int(fb.Sub(start).Milliseconds()),
+			TTFBMS:          int(ttfbMs),
 			// my address
 			ClientAddress: "",
 			Range:         "",
