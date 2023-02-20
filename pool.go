@@ -209,9 +209,6 @@ func (p *pool) Close() {
 	})
 }
 
-type transientErrorVal struct {
-}
-
 func (p *pool) ringLoop() {
 	defer p.wg.Done()
 
@@ -296,15 +293,16 @@ func (p *pool) ringLoop() {
 			key := upvoteReq.fetchKey
 
 			// note that we were able to successfully fetch the key.
-			_ = successKeysCache.Add(upvoteReq.fetchKey, struct{}{}, cache.DefaultExpiration)
+			// Set will replace the existing entry for this key with a new timer/expiration.
+			successKeysCache.Set(upvoteReq.fetchKey, struct{}{}, cache.DefaultExpiration)
 			node := upvoteReq.node
 
-			// run through the recent fetch failures and downvote all nodes that failed to fetch the key.
+			// run through the recent fetch failures and downvote all nodes that failed to fetch this key.
 			vals, ok := transientErrorsCache.Get(key)
 			if ok {
 				nodes := vals.([]string)
 				for _, n := range nodes {
-					downVote(n, 50)
+					downVote(n, 20)
 				}
 				transientErrorsCache.Delete(key)
 			}
@@ -333,12 +331,10 @@ func (p *pool) ringLoop() {
 		case downVoteReq := <-p.downvoteNodeCh:
 			key := downVoteReq.fetchKey
 			err := downVoteReq.fetchErr
-			// reduce weight by pct percentage
-			pct := 50
 
-			if errors.Is(err, ErrTransient) {
+			if errors.Is(err, ErrTransient) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				// if we've NOT seen a successful fetch for this key in the recent past,
-				// we assume that this is indeed a transient error but we record it to downvote it if we see a successful
+				// we assume that this is indeed a transient error but we record the transient failure to downvote this node if we see a successful
 				// fetch for the same key in the near future.
 				if _, has := successKeysCache.Get(key); !has {
 					vals, ok := transientErrorsCache.Get(key)
@@ -354,7 +350,7 @@ func (p *pool) ringLoop() {
 				}
 			}
 
-			downVote(downVoteReq.node, pct)
+			downVote(downVoteReq.node, 50)
 
 		case <-p.ctx.Done():
 			return
@@ -519,6 +515,10 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	respReq = resp.Request
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGatewayTimeout {
+			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrTransient)
+		}
+
 		return nil, fmt.Errorf("http error from strn: %d", resp.StatusCode)
 	}
 
