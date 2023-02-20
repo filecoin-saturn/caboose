@@ -304,6 +304,8 @@ func (p *pool) ringLoop() {
 				for _, n := range nodes {
 					downVote(n, 20)
 				}
+
+				// remove this key from the cache so we don't penalise the same nodes again for failing to fetch this content.
 				transientErrorsCache.Delete(key)
 			}
 
