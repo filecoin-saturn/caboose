@@ -57,6 +57,8 @@ const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?c
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available strn backend")
 var ErrBackendFailed error = errors.New("strn backend failed")
+var ErrContentNotFound error = errors.New("content not found")
+var ErrSaturnTimeout error = errors.New("strn backend timed out")
 
 type Caboose struct {
 	config *Config
