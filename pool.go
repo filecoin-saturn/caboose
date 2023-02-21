@@ -3,6 +3,7 @@ package caboose
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -314,7 +315,7 @@ func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attem
 	}
 
 	// If this is a NOT found or Timeout error, park the downvoting for now and see if other members are able to give us this content.
-	if err == ErrContentNotFound || err == ErrSaturnTimeout {
+	if errors.Is(err, ErrContentNotFound) || errors.Is(err, ErrSaturnTimeout) {
 		transientErrs[node] = struct{}{}
 		return
 	}
