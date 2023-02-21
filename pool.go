@@ -211,7 +211,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	// wait for pool to be initialised
 	<-p.started
 
-	transientErrs := make(map[string]struct{}, len(p.endpoints))
+	transientErrs := make(map[string]struct{})
 
 	left := p.config.MaxRetrievalAttempts
 	aff := with
@@ -336,7 +336,6 @@ func (p *pool) downvote(node string) {
 	}
 
 	p.replaceNodeToHaveWeight(nm)
-	return
 }
 
 func (p *pool) updateWeightUnlocked(node string, failure bool) (index int, member *Member) {

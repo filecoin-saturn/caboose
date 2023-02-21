@@ -100,6 +100,9 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 
 // GetMemberWeights is for testing ONLY
 func (c *Caboose) GetMemberWeights() map[string]int {
+	c.pool.lk.RLock()
+	defer c.pool.lk.RUnlock()
+
 	return c.pool.endpoints.ToWeights()
 }
 
