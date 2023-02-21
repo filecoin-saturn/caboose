@@ -23,7 +23,7 @@ var defaultCabooseWeight = 20
 
 func TestCabooseTransientFailures(t *testing.T) {
 	ctx := context.Background()
-	ch := BuildCabooseHarness(t, 3)
+	ch := BuildCabooseHarness(t, 3, 3)
 
 	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
 	ch.fetchAndAssertSuccess(t, ctx, testCid)
@@ -91,7 +91,7 @@ func TestCabooseTransientFailures(t *testing.T) {
 
 func TestCabooseFailures(t *testing.T) {
 	ctx := context.Background()
-	ch := BuildCabooseHarness(t, 3)
+	ch := BuildCabooseHarness(t, 3, 3)
 
 	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
 	ch.fetchAndAssertSuccess(t, ctx, testCid)
@@ -230,7 +230,7 @@ func (ch *CabooseHarness) startOrchestrator() {
 	ch.gol.Unlock()
 }
 
-func BuildCabooseHarness(t *testing.T, n int) *CabooseHarness {
+func BuildCabooseHarness(t *testing.T, n int, maxRetries int) *CabooseHarness {
 	ch := &CabooseHarness{}
 
 	ch.pool = make([]*ep, n)
@@ -272,7 +272,7 @@ func BuildCabooseHarness(t *testing.T, n int) *CabooseHarness {
 		DoValidation:             false,
 		PoolWeightChangeDebounce: time.Duration(1),
 		PoolRefresh:              time.Millisecond * 50,
-		MaxRetrievalAttempts:     3,
+		MaxRetrievalAttempts:     maxRetries,
 	})
 	require.NoError(t, err)
 
