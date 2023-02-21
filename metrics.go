@@ -17,6 +17,11 @@ var (
 		Help: "Number of active caboose peers",
 	})
 
+	poolHealthMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_health"),
+		Help: "Helath of the caboose pool",
+	}, []string{"weight"})
+
 	fetchResponseMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "fetch_errors"),
 		Help: "Errors fetching from Caboose Peers",
@@ -42,6 +47,7 @@ var (
 func init() {
 	CabooseMetrics.MustRegister(poolErrorMetric)
 	CabooseMetrics.MustRegister(poolSizeMetric)
+	CabooseMetrics.MustRegister(poolHealthMetric)
 	CabooseMetrics.MustRegister(fetchResponseMetric)
 	CabooseMetrics.MustRegister(fetchSpeedMetric)
 	CabooseMetrics.MustRegister(fetchLatencyMetric)
