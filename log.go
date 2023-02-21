@@ -3,6 +3,7 @@ package caboose
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -19,6 +20,7 @@ type logger struct {
 	client   *http.Client
 	endpoint url.URL
 	done     chan struct{}
+	jwt      string
 }
 
 func newLogger(c *Config) *logger {
@@ -28,6 +30,7 @@ func newLogger(c *Config) *logger {
 		client:   c.LoggingClient,
 		endpoint: c.LoggingEndpoint,
 		done:     make(chan struct{}),
+		jwt:      c.SaturnLoggerJWT,
 	}
 	go l.background()
 	return &l
@@ -59,7 +62,24 @@ func (l *logger) submit(logs []log) {
 	finalLogs := bytes.NewBuffer(nil)
 	enc := json.NewEncoder(finalLogs)
 	enc.Encode(logBatch{logs})
-	l.client.Post(l.endpoint.String(), "application/json", finalLogs)
+
+	req, err := http.NewRequest(http.MethodPost, l.endpoint.String(), finalLogs)
+	if err != nil {
+		goLogger.Errorw("failed to create http request to submit saturn logs", "err", err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", l.jwt))
+
+	resp, err := l.client.Do(req)
+	if err != nil {
+		goLogger.Errorw("failed to submit saturn logs", "err", err)
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		goLogger.Errorw("saturn logging endpoint did not return 200", "status", resp.StatusCode)
+	}
 }
 
 func (l *logger) Close() {
@@ -71,17 +91,19 @@ type logBatch struct {
 }
 
 type log struct {
-	CacheHit        bool      `json:"cacheHit"`
-	URL             string    `json:"url"`
-	LocalTime       time.Time `json:"localTime"`
-	NumBytesSent    int       `json:"numBytesSent"`
-	RequestDuration float64   `json:"requestDuration"` // in seconds
-	RequestID       string    `json:"requestId"`
-	HTTPStatusCode  int       `json:"httpStatusCode"`
-	HTTPProtocol    string    `json:"httpProtocol"`
-	TTFBMS          int       `json:"ttfbMs"`
-	ClientAddress   string    `json:"clientAddress"`
-	Range           string    `json:"range"`
-	Referrer        string    `json:"referrer"`
-	UserAgent       string    `json:"userAgent"`
+	CacheHit           bool      `json:"cacheHit"`
+	URL                string    `json:"url"`
+	StartTime          time.Time `json:"startTime"`
+	NumBytesSent       int       `json:"numBytesSent"`
+	RequestDurationSec float64   `json:"requestDurationSec"` // in seconds
+	RequestID          string    `json:"requestId"`
+	HTTPStatusCode     int       `json:"httpStatusCode"`
+	HTTPProtocol       string    `json:"httpProtocol"`
+	TTFBMS             int       `json:"ttfbMs"`
+	Range              string    `json:"range"`
+	Referrer           string    `json:"referrer"`
+	UserAgent          string    `json:"userAgent"`
+	NodeId             string    `json:"nodeId"`
+	IfNetworkError     string    `json:"ifNetworkError"`
+	NodeIpAddress      string    `json:"nodeIpAddress"`
 }
