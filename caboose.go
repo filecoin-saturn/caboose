@@ -98,6 +98,11 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 	return &c, nil
 }
 
+// GetMemberWeights is for testing ONLY
+func (c *Caboose) GetMemberWeights() map[string]int {
+	return c.pool.endpoints.ToWeights()
+}
+
 func (c *Caboose) Close() {
 	c.pool.Close()
 	c.logger.Close()
