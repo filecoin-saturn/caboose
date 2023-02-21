@@ -19,7 +19,7 @@ var (
 
 	poolHealthMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_health"),
-		Help: "Helath of the caboose pool",
+		Help: "Health of the caboose pool",
 	}, []string{"weight"})
 
 	fetchResponseMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
