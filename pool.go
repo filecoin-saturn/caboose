@@ -378,7 +378,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 			fetchSizeMetric.Observe(float64(received))
 		}
 
-		if respHeader != nil && len(respHeader) != 0 {
+		if respHeader != nil {
 			saturnNodeId = respHeader.Get(saturnNodeIdKey)
 			saturnTransferId = respHeader.Get(saturnTransferIdKey)
 
