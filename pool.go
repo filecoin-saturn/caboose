@@ -77,8 +77,8 @@ type Member struct {
 
 var defaultReplication = 20
 
-func NewMember(addr string) *Member {
-	return &Member{url: addr, lk: sync.Mutex{}, lastUpdate: time.Now(), replication: defaultReplication}
+func NewMember(addr string, lastUpdateTime time.Time) *Member {
+	return &Member{url: addr, lk: sync.Mutex{}, lastUpdate: lastUpdateTime, replication: defaultReplication}
 }
 
 func (m *Member) String() string {
@@ -95,7 +95,7 @@ func (m *Member) UpdateWeight(debounce time.Duration, failure bool) (*Member, bo
 		defer m.lk.Unlock()
 		if time.Since(m.lastUpdate) > debounce {
 			// make the down-voted member
-			nm := NewMember(m.url)
+			nm := NewMember(m.url, time.Now())
 			if failure {
 				nm.replication = m.replication / 2
 				return nm, true
@@ -127,8 +127,12 @@ func newPool(c *Config) *pool {
 		refresh:   make(chan struct{}, 1),
 		done:      make(chan struct{}, 1),
 	}
-	go p.refreshPool()
+
 	return &p
+}
+
+func (p *pool) Start() {
+	go p.refreshPool()
 }
 
 func (p *pool) doRefresh() {
@@ -152,7 +156,8 @@ func (p *pool) doRefresh() {
 
 		for _, s := range newEP {
 			if _, ok := oldMap[s]; !ok {
-				n = append(n, NewMember(s))
+				// we set last update time to zero so we do NOT hit debounce limits for this node immediately on creation.
+				n = append(n, NewMember(s, time.Time{}))
 			}
 		}
 
@@ -297,19 +302,8 @@ func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attem
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
 	}
 
-	var idx int
-	var nm *Member
-
 	if err == nil {
-		// Saturn fetch worked, we should try upvoting.
-		p.lk.RLock()
-		idx, nm = p.updateWeightUnlocked(node, false)
-		p.lk.RUnlock()
-
-		if idx != -1 && nm != nil {
-			p.replaceNodeToHaveWeight(nm)
-		}
-
+		p.upvote(node)
 		// Saturn fetch worked, we return the block.
 		return
 	}
@@ -323,6 +317,16 @@ func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attem
 	// Saturn fetch failed, we downvote the failing member.
 	p.downvote(node)
 	return
+}
+
+func (p *pool) upvote(node string) {
+	p.lk.RLock()
+	idx, nm := p.updateWeightUnlocked(node, false)
+	p.lk.RUnlock()
+
+	if idx != -1 && nm != nil {
+		p.replaceNodeToHaveWeight(nm)
+	}
 }
 
 func (p *pool) downvote(node string) {
