@@ -404,7 +404,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 		if e == nil && received > 0 {
 			fetchDurationPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
 		} else {
-			fetchDurationPeerFailureMetric.Observe(float64(time.Now().Sub(start).Milliseconds()))
+			fetchDurationPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
 		}
 
 		if received > 0 {
