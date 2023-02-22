@@ -58,7 +58,7 @@ const DefaultPoolRefreshInterval = 5 * time.Minute
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available strn backend")
 var ErrBackendFailed error = errors.New("strn backend failed")
-var ErrContentNotFound error = errors.New("content not found")
+var ErrContentProviderNotFound error = errors.New("strn failed to find content providers")
 var ErrSaturnTimeout error = errors.New("strn backend timed out")
 
 type Caboose struct {

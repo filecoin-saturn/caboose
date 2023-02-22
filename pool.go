@@ -216,7 +216,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	// wait for pool to be initialised
 	<-p.started
 
-	transientErrs := make(map[string]struct{})
+	transientErrs := make(map[string]error)
 
 	left := p.config.MaxRetrievalAttempts
 	aff := with
@@ -251,11 +251,17 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 		blk, err = p.fetchAndUpdate(ctx, nodes[i], c, i, transientErrs)
 
 		if err == nil {
-			// downvote all parked failed nodes as some other node was able to give us the required content here
-			for node := range transientErrs {
-				p.downvote(node)
+			// downvote all parked failed nodes as some other node was able to give us the required content here.
+			reqs := make([]weightUpdateReq, 0, len(transientErrs))
+			for node, err := range transientErrs {
+				goLogger.Debugw("downvoting node with transient err as fetch was subsequently successful", "node", node, "err", err)
+				reqs = append(reqs, weightUpdateReq{
+					node:    node,
+					failure: true,
+				})
 			}
 
+			p.updateWeightBatched(reqs)
 			return
 		}
 	}
@@ -281,6 +287,52 @@ func (p *pool) replaceNodeToHaveWeight(nm *Member) {
 		return
 	}
 
+	p.updatePoolWithNewWeightUnlocked(nm, idx)
+}
+
+func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int, transientErrs map[string]error) (blk blocks.Block, err error) {
+	blk, err = p.doFetch(ctx, node, c, attempt)
+	if err != nil {
+		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
+	}
+
+	if err == nil {
+		p.changeWeight(node, false)
+		// Saturn fetch worked, we return the block.
+		return
+	}
+
+	// If this is a NOT found or Timeout error, park the downvoting for now and see if other members are able to give us this content.
+	if errors.Is(err, ErrContentProviderNotFound) || errors.Is(err, ErrSaturnTimeout) {
+		transientErrs[node] = err
+		return
+	}
+
+	// Saturn fetch failed, we downvote the failing member.
+	p.changeWeight(node, true)
+	return
+}
+
+type weightUpdateReq struct {
+	node    string
+	failure bool
+}
+
+func (p *pool) updateWeightBatched(reqs []weightUpdateReq) {
+	p.lk.Lock()
+	defer p.lk.Unlock()
+
+	for _, req := range reqs {
+		idx, nm := p.updateWeightUnlocked(req.node, req.failure)
+		// we weren't able to change the weight.
+		if idx == -1 || nm == nil {
+			continue
+		}
+		p.updatePoolWithNewWeightUnlocked(nm, idx)
+	}
+}
+
+func (p *pool) updatePoolWithNewWeightUnlocked(nm *Member, idx int) {
 	if nm.replication == 0 {
 		p.c = p.c.RemoveNode(nm.url)
 		p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
@@ -296,45 +348,12 @@ func (p *pool) replaceNodeToHaveWeight(nm *Member) {
 	}
 }
 
-func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int, transientErrs map[string]struct{}) (blk blocks.Block, err error) {
-	blk, err = p.doFetch(ctx, node, c, attempt)
-	if err != nil {
-		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
-	}
-
-	if err == nil {
-		p.upvote(node)
-		// Saturn fetch worked, we return the block.
-		return
-	}
-
-	// If this is a NOT found or Timeout error, park the downvoting for now and see if other members are able to give us this content.
-	if errors.Is(err, ErrContentNotFound) || errors.Is(err, ErrSaturnTimeout) {
-		transientErrs[node] = struct{}{}
-		return
-	}
-
-	// Saturn fetch failed, we downvote the failing member.
-	p.downvote(node)
-	return
-}
-
-func (p *pool) upvote(node string) {
+func (p *pool) changeWeight(node string, failure bool) {
 	p.lk.RLock()
-	idx, nm := p.updateWeightUnlocked(node, false)
+	idx, nm := p.updateWeightUnlocked(node, failure)
 	p.lk.RUnlock()
 
-	if idx != -1 && nm != nil {
-		p.replaceNodeToHaveWeight(nm)
-	}
-}
-
-func (p *pool) downvote(node string) {
-	p.lk.RLock()
-	idx, nm := p.updateWeightUnlocked(node, true)
-	p.lk.RUnlock()
-
-	// we weren't able to downvote the node.
+	// we weren't able to change the weight.
 	if idx == -1 || nm == nil {
 		return
 	}
@@ -433,7 +452,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 		}
 
 		if resp.StatusCode == http.StatusNotFound {
-			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrContentNotFound)
+			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrContentProviderNotFound)
 		}
 
 		return nil, fmt.Errorf("http error from strn: %d", resp.StatusCode)

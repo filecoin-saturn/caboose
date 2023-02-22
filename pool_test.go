@@ -14,7 +14,7 @@ import (
 )
 
 func TestUpdateWeight(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 1*time.Nanosecond, 1*time.Nanosecond)
+	ph := BuildPoolHarness(t, 3, 0, 1*time.Nanosecond)
 	ph.StartAndWait(t)
 
 	// downvote first node
@@ -50,7 +50,7 @@ func TestUpdateWeightDebounce(t *testing.T) {
 }
 
 func TestReplaceNodeToHaveWeight(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 1*time.Nanosecond, 1*time.Second)
+	ph := BuildPoolHarness(t, 3, 0, 1*time.Second)
 	ph.StartAndWait(t)
 	ph.stopOrch(t)
 
@@ -80,6 +80,41 @@ func TestReplaceNodeToHaveWeight(t *testing.T) {
 	ph.startOrch(t)
 
 	ph.waitPoolReady(t)
+}
+
+func TestUpdateWeightBatched(t *testing.T) {
+	ph := BuildPoolHarness(t, 5, 0, 1*time.Second)
+	ph.StartAndWait(t)
+
+	// downvote, 0,2, & 4
+	var reqs []batchUpdateReq
+	for i := 0; i < 5; i = i + 2 {
+		reqs = append(reqs, batchUpdateReq{
+			node:     ph.eps[i],
+			failure:  true,
+			expected: 10,
+		})
+	}
+	ph.updateBatchedAndAssert(t, reqs)
+
+	// upvote, 0,2, & 3
+	reqs = []batchUpdateReq{}
+	reqs = append(reqs, batchUpdateReq{
+		node:     ph.eps[0],
+		failure:  false,
+		expected: 11,
+	}, batchUpdateReq{
+		node:     ph.eps[2],
+		failure:  false,
+		expected: 11,
+	}, batchUpdateReq{
+		node:     ph.eps[3],
+		failure:  false,
+		expected: 20,
+	})
+
+	ph.updateBatchedAndAssert(t, reqs)
+
 }
 
 type poolHarness struct {
@@ -119,13 +154,36 @@ func (ph *poolHarness) assertRemoved(t *testing.T, url string) {
 	}
 }
 
+type batchUpdateReq struct {
+	node     string
+	failure  bool
+	expected int
+}
+
+func (ph *poolHarness) updateBatchedAndAssert(t *testing.T, reqs []batchUpdateReq) {
+	var weightReqs []weightUpdateReq
+
+	for _, req := range reqs {
+		weightReqs = append(weightReqs, weightUpdateReq{
+			node:    req.node,
+			failure: req.failure,
+		})
+	}
+
+	ph.pool.updateWeightBatched(weightReqs)
+
+	for _, req := range reqs {
+		ph.assertWeight(t, req.node, req.expected)
+	}
+}
+
 func (ph *poolHarness) downvoteAndAssertDownvoted(t *testing.T, url string, expected int) {
-	ph.pool.downvote(url)
+	ph.pool.changeWeight(url, true)
 	ph.assertWeight(t, url, expected)
 }
 
 func (ph *poolHarness) upvoteAndAssertUpvoted(t *testing.T, url string, expected int) {
-	ph.pool.upvote(url)
+	ph.pool.changeWeight(url, false)
 	ph.assertWeight(t, url, expected)
 }
 
