@@ -3,7 +3,6 @@ package caboose
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -20,7 +19,6 @@ type logger struct {
 	client   *http.Client
 	endpoint url.URL
 	done     chan struct{}
-	jwt      string
 }
 
 func newLogger(c *Config) *logger {
@@ -30,7 +28,6 @@ func newLogger(c *Config) *logger {
 		client:   c.LoggingClient,
 		endpoint: c.LoggingEndpoint,
 		done:     make(chan struct{}),
-		jwt:      c.SaturnLoggerJWT,
 	}
 	go l.background()
 	return &l
@@ -70,15 +67,16 @@ func (l *logger) submit(logs []log) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", l.jwt))
 
 	resp, err := l.client.Do(req)
 	if err != nil {
 		goLogger.Errorw("failed to submit saturn logs", "err", err)
 		return
 	}
-	if resp.StatusCode != http.StatusOK {
-		goLogger.Errorw("saturn logging endpoint did not return 200", "status", resp.StatusCode)
+	if resp.StatusCode/100 != 2 {
+		goLogger.Errorw("saturn logging endpoint did not return 2xx", "status", resp.StatusCode)
+	} else {
+		goLogger.Debugw("saturn logging endpoint returned 2xx")
 	}
 }
 

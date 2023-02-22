@@ -56,10 +56,9 @@ func main1() int {
 				LoggingClient:   http.DefaultClient,
 				LoggingInterval: 5 * time.Second,
 
-				DoValidation:    true,
-				PoolRefresh:     5 * time.Minute,
-				SaturnClient:    &saturnClient,
-				SaturnLoggerJWT: "test",
+				DoValidation: true,
+				PoolRefresh:  5 * time.Minute,
+				SaturnClient: &saturnClient,
 			})
 			if err != nil {
 				return err

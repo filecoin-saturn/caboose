@@ -45,9 +45,6 @@ type Config struct {
 	PoolLowWatermark int
 	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
 	MaxRetrievalAttempts int
-
-	// SaturnLoggerJWT is the JWT Auth token to use when submitting logs to the Saturn logging endpoint.
-	SaturnLoggerJWT string
 }
 
 const DefaultMaxRetries = 3
@@ -68,16 +65,13 @@ type Caboose struct {
 }
 
 func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
-	if config.SaturnLoggerJWT == "" || len(config.SaturnLoggerJWT) == 0 {
-		return nil, errors.New("JWT token required for Saturn Logger")
-	}
-
 	c := Caboose{
 		config: config,
 		pool:   newPool(config),
 		logger: newLogger(config),
 	}
 	c.pool.logger = c.logger
+
 	if c.config.SaturnClient == nil {
 		c.config.SaturnClient = &http.Client{
 			Timeout: DefaultSaturnRequestTimeout,

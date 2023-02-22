@@ -430,7 +430,6 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	}
 
 	resp, err := p.config.SaturnClient.Do(req)
-	fb = time.Now()
 	if err != nil {
 		networkError = err.Error()
 		return nil, fmt.Errorf("http request failed: %w", err)
@@ -446,7 +445,8 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 		return nil, fmt.Errorf("http error from strn: %d", resp.StatusCode)
 	}
 
-	block, err := io.ReadAll(io.LimitReader(resp.Body, maxBlockSize))
+	block, ttfb, err := ReadAllWithTTFB(io.LimitReader(resp.Body, maxBlockSize))
+	fb = ttfb
 	received = len(block)
 
 	if err != nil {
@@ -476,4 +476,26 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	}
 
 	return blocks.NewBlockWithCid(block, c)
+}
+
+func ReadAllWithTTFB(r io.Reader) ([]byte, time.Time, error) {
+	b := make([]byte, 0, 512)
+	var ttfb time.Time
+	for {
+		if len(b) == cap(b) {
+			// Add more capacity (let append pick how much).
+			b = append(b, 0)[:len(b)]
+		}
+		n, err := r.Read(b[len(b):cap(b)])
+		b = b[:len(b)+n]
+		if ttfb.IsZero() {
+			ttfb = time.Now()
+		}
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			return b, ttfb, err
+		}
+	}
 }

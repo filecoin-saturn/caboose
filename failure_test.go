@@ -59,7 +59,6 @@ func TestCabooseFailures(t *testing.T) {
 		PoolWeightChangeDebounce: time.Duration(1),
 		PoolRefresh:              time.Millisecond * 50,
 		MaxRetrievalAttempts:     2,
-		SaturnLoggerJWT:          "rand",
 	})
 	if err != nil {
 		t.Fatal(err)
