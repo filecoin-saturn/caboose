@@ -22,20 +22,34 @@ var (
 		Help: "Errors fetching from Caboose Peers",
 	}, []string{"code"})
 
-	fetchSpeedMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_speed"),
-		Help:    "Speed observed during caboose fetches",
+	fetchSpeedPerBlockMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_speed_block"),
+		Help:    "Speed observed during caboose fetches for a block across multiple peers",
 		Buckets: prometheus.DefBuckets,
 	})
-	fetchLatencyMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_latency"),
-		Help:    "Latency observed during caboose fetches",
-		Buckets: prometheus.ExponentialBucketsRange(1, 10000, 10),
+
+	fetchSpeedPerPeerMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_speed_peer"),
+		Help:    "Speed observed during caboose fetches for fetching a block from a single peer",
+		Buckets: prometheus.DefBuckets,
 	})
+
 	fetchSizeMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_size"),
 		Help:    "Size in bytes of caboose fetches",
 		Buckets: prometheus.ExponentialBucketsRange(1, 4000000, 16),
+	})
+
+	fetchDurationPeerSuccessMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_peer_success"),
+		Help:    "Latency observed during successful caboose fetches from a single peer",
+		Buckets: prometheus.ExponentialBucketsRange(1, 10000, 10),
+	})
+
+	fetchDurationPeerFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_peer_failure"),
+		Help:    "Latency observed during failed caboose fetches from a single peer",
+		Buckets: prometheus.ExponentialBucketsRange(1, 10000, 10),
 	})
 )
 
@@ -43,7 +57,10 @@ func init() {
 	CabooseMetrics.MustRegister(poolErrorMetric)
 	CabooseMetrics.MustRegister(poolSizeMetric)
 	CabooseMetrics.MustRegister(fetchResponseMetric)
-	CabooseMetrics.MustRegister(fetchSpeedMetric)
-	CabooseMetrics.MustRegister(fetchLatencyMetric)
 	CabooseMetrics.MustRegister(fetchSizeMetric)
+
+	CabooseMetrics.MustRegister(fetchSpeedPerBlockMetric)
+	CabooseMetrics.MustRegister(fetchSpeedPerPeerMetric)
+	CabooseMetrics.MustRegister(fetchDurationPeerSuccessMetric)
+	CabooseMetrics.MustRegister(fetchDurationPeerFailureMetric)
 }
