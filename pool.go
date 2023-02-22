@@ -93,7 +93,7 @@ func (m *Member) UpdateWeight(debounce time.Duration, failure bool) (*Member, bo
 	// this is a best-effort. if there's a correlated failure we ignore the others, so do the try on best-effort.
 	if m.lk.TryLock() {
 		defer m.lk.Unlock()
-		if time.Since(m.lastUpdate) > debounce {
+		if debounce == 0 || time.Since(m.lastUpdate) > debounce {
 			// make the down-voted member
 			nm := NewMember(m.url, time.Now())
 			if failure {
