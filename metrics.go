@@ -51,6 +51,30 @@ var (
 		Help:    "Latency observed during failed caboose fetches from a single peer",
 		Buckets: prometheus.ExponentialBucketsRange(1, float64(DefaultSaturnRequestTimeout.Milliseconds()), 10),
 	})
+
+	fetchDurationBlockSuccessMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_block_success"),
+		Help:    "Latency observed during successful caboose fetches for a block",
+		Buckets: prometheus.ExponentialBucketsRange(1, float64(DefaultSaturnGlobalBlockFetchTimeout.Milliseconds()), 10),
+	})
+
+	fetchDurationBlockFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_block_failure"),
+		Help:    "Latency observed during failed caboose fetches for a block",
+		Buckets: prometheus.ExponentialBucketsRange(1, float64(DefaultSaturnGlobalBlockFetchTimeout.Milliseconds()), 10),
+	})
+
+	fetchTTFBPeerSuccessMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_ttfb_peer_success"),
+		Help:    "TTFB observed during a successful caboose fetch from a single peer",
+		Buckets: prometheus.ExponentialBucketsRange(1, float64(DefaultSaturnRequestTimeout.Milliseconds()), 10),
+	})
+
+	fetchTTFBPeerFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_ttfb_peer_failure"),
+		Help:    "TTFB observed during a failed caboose fetch from a single peer",
+		Buckets: prometheus.ExponentialBucketsRange(1, float64(DefaultSaturnRequestTimeout.Milliseconds()), 10),
+	})
 )
 
 func init() {
@@ -63,4 +87,8 @@ func init() {
 	CabooseMetrics.MustRegister(fetchSpeedPerPeerMetric)
 	CabooseMetrics.MustRegister(fetchDurationPeerSuccessMetric)
 	CabooseMetrics.MustRegister(fetchDurationPeerFailureMetric)
+	CabooseMetrics.MustRegister(fetchDurationBlockSuccessMetric)
+	CabooseMetrics.MustRegister(fetchDurationBlockFailureMetric)
+	CabooseMetrics.MustRegister(fetchTTFBPeerSuccessMetric)
+	CabooseMetrics.MustRegister(fetchTTFBPeerFailureMetric)
 }

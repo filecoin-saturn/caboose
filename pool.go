@@ -255,6 +255,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 		if err == nil {
 			durationMs := time.Since(blockFetchStart).Milliseconds()
 			fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
+			fetchDurationBlockSuccessMetric.Observe(float64(durationMs))
 
 			// downvote all parked failed nodes as some other node was able to give us the required content here.
 			reqs := make([]weightUpdateReq, 0, len(transientErrs))
@@ -270,6 +271,8 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 			return
 		}
 	}
+
+	fetchDurationBlockFailureMetric.Observe(float64(time.Since(blockFetchStart).Milliseconds()))
 
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
 	return
