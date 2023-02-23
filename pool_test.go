@@ -229,12 +229,6 @@ func (ph *poolHarness) stopOrch(t *testing.T) {
 	ph.goodOrch = false
 }
 
-func (ph *poolHarness) startOrch(t *testing.T) {
-	ph.gol.Lock()
-	defer ph.gol.Unlock()
-	ph.goodOrch = true
-}
-
 func BuildPoolHarness(t *testing.T, n int, debounce time.Duration, poolRefresh time.Duration, membershipDebounce time.Duration) *poolHarness {
 	ph := &poolHarness{goodOrch: true, n: n}
 
