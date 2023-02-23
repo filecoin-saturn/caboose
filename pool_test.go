@@ -62,7 +62,7 @@ func TestUpdateWeightWithMembershipDebounce(t *testing.T) {
 func TestUpdateWeightWithoutRefresh(t *testing.T) {
 	ph := BuildPoolHarness(t, 3, 0, 1*time.Nanosecond, 100*time.Millisecond)
 	ph.StartAndWait(t)
-	ph.startOrch(t)
+	ph.stopOrch(t)
 
 	// assert node is removed when it's weight drops to 0
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
@@ -70,6 +70,7 @@ func TestUpdateWeightWithoutRefresh(t *testing.T) {
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 2)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
 	ph.downvoteAndAssertRemoved(t, ph.eps[0])
+	ph.assertRingSize(t, 2)
 }
 
 func TestUpdateWeightDebounce(t *testing.T) {
