@@ -59,7 +59,25 @@ func (l *logger) submit(logs []log) {
 	finalLogs := bytes.NewBuffer(nil)
 	enc := json.NewEncoder(finalLogs)
 	enc.Encode(logBatch{logs})
-	l.client.Post(l.endpoint.String(), "application/json", finalLogs)
+
+	req, err := http.NewRequest(http.MethodPost, l.endpoint.String(), finalLogs)
+	if err != nil {
+		goLogger.Errorw("failed to create http request to submit saturn logs", "err", err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := l.client.Do(req)
+	if err != nil {
+		goLogger.Errorw("failed to submit saturn logs", "err", err)
+		return
+	}
+	if resp.StatusCode/100 != 2 {
+		goLogger.Errorw("saturn logging endpoint did not return 2xx", "status", resp.StatusCode)
+	} else {
+		goLogger.Debugw("saturn logging endpoint returned 2xx")
+	}
 }
 
 func (l *logger) Close() {
@@ -71,17 +89,19 @@ type logBatch struct {
 }
 
 type log struct {
-	CacheHit        bool      `json:"cacheHit"`
-	URL             string    `json:"url"`
-	LocalTime       time.Time `json:"localTime"`
-	NumBytesSent    int       `json:"numBytesSent"`
-	RequestDuration float64   `json:"requestDuration"` // in seconds
-	RequestID       string    `json:"requestId"`
-	HTTPStatusCode  int       `json:"httpStatusCode"`
-	HTTPProtocol    string    `json:"httpProtocol"`
-	TTFBMS          int       `json:"ttfbMs"`
-	ClientAddress   string    `json:"clientAddress"`
-	Range           string    `json:"range"`
-	Referrer        string    `json:"referrer"`
-	UserAgent       string    `json:"userAgent"`
+	CacheHit           bool      `json:"cacheHit"`
+	URL                string    `json:"url"`
+	StartTime          time.Time `json:"startTime"`
+	NumBytesSent       int       `json:"numBytesSent"`
+	RequestDurationSec float64   `json:"requestDurationSec"` // in seconds
+	RequestID          string    `json:"requestId"`
+	HTTPStatusCode     int       `json:"httpStatusCode"`
+	HTTPProtocol       string    `json:"httpProtocol"`
+	TTFBMS             int       `json:"ttfbMs"`
+	Range              string    `json:"range"`
+	Referrer           string    `json:"referrer"`
+	UserAgent          string    `json:"userAgent"`
+	NodeId             string    `json:"nodeId"`
+	IfNetworkError     string    `json:"ifNetworkError"`
+	NodeIpAddress      string    `json:"nodeIpAddress"`
 }
