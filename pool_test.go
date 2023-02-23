@@ -14,7 +14,7 @@ import (
 )
 
 func TestUpdateWeightWithRefresh(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 0, 1*time.Nanosecond, 100*time.Millisecond)
+	ph := BuildPoolHarness(t, 3, 0, 1*time.Second, 100*time.Millisecond)
 	ph.StartAndWait(t)
 
 	// downvote first node
@@ -46,7 +46,7 @@ func TestUpdateWeightWithRefresh(t *testing.T) {
 }
 
 func TestUpdateWeightWithMembershipDebounce(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 0, 1*time.Nanosecond, 1000*time.Second)
+	ph := BuildPoolHarness(t, 3, 0, 1*time.Second, 1000*time.Second)
 	ph.StartAndWait(t)
 
 	// assert node is removed when it's weight drops to 0 and not added back
@@ -60,7 +60,7 @@ func TestUpdateWeightWithMembershipDebounce(t *testing.T) {
 }
 
 func TestUpdateWeightWithoutRefresh(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 0, 1*time.Nanosecond, 100*time.Millisecond)
+	ph := BuildPoolHarness(t, 3, 0, 1*time.Second, 100*time.Millisecond)
 	ph.StartAndWait(t)
 	ph.stopOrch(t)
 
