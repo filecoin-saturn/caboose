@@ -14,7 +14,6 @@ require (
 	github.com/multiformats/go-multicodec v0.7.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/prometheus/client_golang v1.14.0
-	github.com/rogpeppe/go-internal v1.6.1
 	github.com/serialx/hashring v0.0.0-20200727003509-22c0c7ab6b1b
 	github.com/stretchr/testify v1.8.1
 	github.com/urfave/cli/v2 v2.24.2
