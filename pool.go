@@ -253,8 +253,8 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 		blk, err = p.fetchAndUpdate(ctx, nodes[i], c, i, transientErrs)
 
 		if err == nil {
-			durationSecs := time.Since(blockFetchStart).Seconds()
-			fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / durationSecs))
+			durationMs := time.Since(blockFetchStart).Milliseconds()
+			fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
 
 			// downvote all parked failed nodes as some other node was able to give us the required content here.
 			reqs := make([]weightUpdateReq, 0, len(transientErrs))
@@ -398,6 +398,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	defer func() {
 		ttfbMs := fb.Sub(start).Milliseconds()
 		durationSecs := time.Since(start).Seconds()
+		durationMs := time.Since(start).Milliseconds()
 		goLogger.Debugw("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(ttfbMs), "duration", durationSecs, "attempt", attempt, "error", e)
 		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
 
@@ -408,7 +409,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 		}
 
 		if received > 0 {
-			fetchSpeedPerPeerMetric.Observe(float64(received) / durationSecs)
+			fetchSpeedPerPeerMetric.Observe(float64(received) / float64(durationMs))
 			fetchSizeMetric.Observe(float64(received))
 		}
 		p.logger.queue <- log{
@@ -471,7 +472,6 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 
 	block, err := io.ReadAll(io.LimitReader(resp.Body, maxBlockSize))
 	received = len(block)
-	response_success_end = time.Now()
 
 	if err != nil {
 		switch {
@@ -498,6 +498,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 			return nil, blocks.ErrWrongHash
 		}
 	}
+	response_success_end = time.Now()
 
 	return blocks.NewBlockWithCid(block, c)
 }
