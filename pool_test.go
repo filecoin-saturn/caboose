@@ -46,7 +46,7 @@ func TestUpdateWeightWithRefresh(t *testing.T) {
 }
 
 func TestUpdateWeightWithMembershipDebounce(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 0, 1*time.Second, 1000*time.Second)
+	ph := BuildPoolHarness(t, 3, 0, 100*time.Second, 1000*time.Second)
 	ph.StartAndWait(t)
 
 	// assert node is removed when it's weight drops to 0 and not added back
@@ -60,7 +60,7 @@ func TestUpdateWeightWithMembershipDebounce(t *testing.T) {
 }
 
 func TestUpdateWeightWithoutRefresh(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 0, 1*time.Second, 100*time.Millisecond)
+	ph := BuildPoolHarness(t, 3, 0, 100*time.Second, 100*time.Millisecond)
 	ph.StartAndWait(t)
 	ph.stopOrch(t)
 
@@ -74,7 +74,7 @@ func TestUpdateWeightWithoutRefresh(t *testing.T) {
 }
 
 func TestUpdateWeightDebounce(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 1000*time.Second, 1*time.Nanosecond, 100*time.Millisecond)
+	ph := BuildPoolHarness(t, 3, 1000*time.Second, 100*time.Second, 100*time.Millisecond)
 	ph.StartAndWait(t)
 
 	// downvote first node
@@ -92,7 +92,7 @@ func TestUpdateWeightDebounce(t *testing.T) {
 }
 
 func TestUpdateWeightBatched(t *testing.T) {
-	ph := BuildPoolHarness(t, 5, 0, 1*time.Second, 100*time.Millisecond)
+	ph := BuildPoolHarness(t, 5, 0, 100*time.Second, 100*time.Millisecond)
 	ph.StartAndWait(t)
 
 	// downvote, 0,2, & 4
@@ -218,9 +218,10 @@ func (ph *poolHarness) waitPoolReady(t *testing.T) {
 	require.Eventually(t, func() bool {
 		ph.pool.lk.RLock()
 		defer ph.pool.lk.RUnlock()
+		fmt.Println("\n Endpoints are: ", ph.pool.endpoints, "")
 
 		return len(ph.pool.endpoints) == ph.n
-	}, 10*time.Second, 100*time.Millisecond)
+	}, 10*time.Second, 1*time.Second)
 }
 
 func (ph *poolHarness) stopOrch(t *testing.T) {
