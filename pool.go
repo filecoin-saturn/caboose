@@ -178,7 +178,6 @@ func (p *pool) doRefresh() {
 		poolSizeMetric.Set(float64(len(n)))
 
 		// periodic update of a pool health metric
-		p.lk.RLock()
 		byWeight := make(map[int]int)
 		for _, m := range p.endpoints {
 			if _, ok := byWeight[m.replication]; !ok {
@@ -190,7 +189,6 @@ func (p *pool) doRefresh() {
 		for weight, cnt := range byWeight {
 			poolHealthMetric.WithLabelValues(fmt.Sprintf("%d", weight)).Set(float64(cnt))
 		}
-		p.lk.RUnlock()
 	} else {
 		poolErrorMetric.Add(1)
 	}
