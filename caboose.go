@@ -41,6 +41,10 @@ type Config struct {
 	// in our pool after a retrieval success/failure.
 	PoolWeightChangeDebounce time.Duration
 
+	// PoolMembershipDebounce is the amount of time we wait after a saturn node is removed from the pool
+	// before we add it again to the pool.
+	PoolMembershipDebounce time.Duration
+
 	// trigger early refreshes when pool size drops below this low watermark
 	PoolLowWatermark int
 	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
@@ -49,6 +53,7 @@ type Config struct {
 
 const DefaultMaxRetries = 3
 const DefaultPoolFailureDownvoteDebounce = time.Second
+const DefaultPoolMembershipDebounce = 5 * time.Minute
 const DefaultPoolLowWatermark = 5
 const DefaultSaturnRequestTimeout = 19 * time.Second
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
@@ -93,6 +98,9 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 
 	if c.config.PoolWeightChangeDebounce == 0 {
 		c.config.PoolWeightChangeDebounce = DefaultPoolFailureDownvoteDebounce
+	}
+	if c.config.PoolMembershipDebounce == 0 {
+		c.config.PoolMembershipDebounce = DefaultPoolMembershipDebounce
 	}
 	if c.config.PoolLowWatermark == 0 {
 		c.config.PoolLowWatermark = DefaultPoolLowWatermark

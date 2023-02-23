@@ -13,8 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestUpdateWeight(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 0, 1*time.Nanosecond)
+func TestUpdateWeightWithRefresh(t *testing.T) {
+	ph := BuildPoolHarness(t, 3, 0, 1*time.Nanosecond, 100*time.Millisecond)
 	ph.StartAndWait(t)
 
 	// downvote first node
@@ -29,10 +29,51 @@ func TestUpdateWeight(t *testing.T) {
 	ph.upvoteAndAssertUpvoted(t, ph.eps[2], 20)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[2], 10)
 	ph.upvoteAndAssertUpvoted(t, ph.eps[2], 11)
+
+	// when now is downvoted to zero, it will be added back by a refresh with a weight of 20.
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 3)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
+	ph.pool.changeWeight(ph.eps[0], true)
+
+	require.Eventually(t, func() bool {
+		ph.pool.lk.RLock()
+		defer ph.pool.lk.RUnlock()
+		weights := ph.pool.endpoints.ToWeights()
+
+		return weights[ph.eps[0]] == 20 && weights[ph.eps[1]] == 20 && weights[ph.eps[2]] == 11
+
+	}, 10*time.Second, 100*time.Millisecond)
+}
+
+func TestUpdateWeightWithMembershipDebounce(t *testing.T) {
+	ph := BuildPoolHarness(t, 3, 0, 1*time.Nanosecond, 1000*time.Second)
+	ph.StartAndWait(t)
+
+	// assert node is removed when it's weight drops to 0 and not added back
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 5)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 2)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
+	time.Sleep(1 * time.Second)
+	ph.downvoteAndAssertRemoved(t, ph.eps[0])
+
+}
+
+func TestUpdateWeightWithoutRefresh(t *testing.T) {
+	ph := BuildPoolHarness(t, 3, 0, 1*time.Nanosecond, 100*time.Millisecond)
+	ph.StartAndWait(t)
+	ph.startOrch(t)
+
+	// assert node is removed when it's weight drops to 0
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 5)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 2)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
+	ph.downvoteAndAssertRemoved(t, ph.eps[0])
 }
 
 func TestUpdateWeightDebounce(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 1000*time.Second, 1*time.Nanosecond)
+	ph := BuildPoolHarness(t, 3, 1000*time.Second, 1*time.Nanosecond, 100*time.Millisecond)
 	ph.StartAndWait(t)
 
 	// downvote first node
@@ -49,41 +90,8 @@ func TestUpdateWeightDebounce(t *testing.T) {
 	}
 }
 
-func TestReplaceNodeToHaveWeight(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 0, 1*time.Second)
-	ph.StartAndWait(t)
-	ph.stopOrch(t)
-
-	// node is replace
-	ph.replaceAndAssert(t, ph.eps[0], 200)
-	ph.assertRingSize(t, 3)
-
-	// when weight is 0, node is removed
-	ph.removeAndAssertRemoved(t, ph.eps[1])
-	ph.assertRingSize(t, 2)
-
-	// when node isn't found, nothing changes.
-	nm := NewMember("random", time.Now())
-	ph.pool.replaceNodeToHaveWeight(nm)
-	ph.assertRingSize(t, 2)
-
-	// when number of endpoints drops below 0, a refresh is triggered.
-	ph.removeAndAssertRemoved(t, ph.eps[0])
-	ph.assertRingSize(t, 1)
-	ph.assertRingSize(t, 1)
-	ph.assertRingSize(t, 1)
-	ph.assertRingSize(t, 1)
-
-	ph.removeAndAssertRemoved(t, ph.eps[2])
-	ph.assertRingSize(t, 0)
-	// start the orchestrator so refresh can happen again
-	ph.startOrch(t)
-
-	ph.waitPoolReady(t)
-}
-
 func TestUpdateWeightBatched(t *testing.T) {
-	ph := BuildPoolHarness(t, 5, 0, 1*time.Second)
+	ph := BuildPoolHarness(t, 5, 0, 1*time.Second, 100*time.Millisecond)
 	ph.StartAndWait(t)
 
 	// downvote, 0,2, & 4
@@ -127,22 +135,6 @@ type poolHarness struct {
 	eps []string
 }
 
-func (ph *poolHarness) replaceAndAssert(t *testing.T, url string, newWeight int) {
-	nm := NewMember(url, time.Now())
-	nm.replication = newWeight
-	ph.pool.replaceNodeToHaveWeight(nm)
-
-	ph.assertWeight(t, url, newWeight)
-}
-
-func (ph *poolHarness) removeAndAssertRemoved(t *testing.T, url string) {
-	nm := NewMember(url, time.Now())
-	nm.replication = 0
-	ph.pool.replaceNodeToHaveWeight(nm)
-
-	ph.assertRemoved(t, url)
-}
-
 func (ph *poolHarness) assertRemoved(t *testing.T, url string) {
 	ph.pool.lk.RLock()
 	defer ph.pool.lk.RUnlock()
@@ -175,6 +167,11 @@ func (ph *poolHarness) updateBatchedAndAssert(t *testing.T, reqs []batchUpdateRe
 	for _, req := range reqs {
 		ph.assertWeight(t, req.node, req.expected)
 	}
+}
+
+func (ph *poolHarness) downvoteAndAssertRemoved(t *testing.T, url string) {
+	ph.pool.changeWeight(url, true)
+	ph.assertRemoved(t, url)
 }
 
 func (ph *poolHarness) downvoteAndAssertDownvoted(t *testing.T, url string, expected int) {
@@ -237,7 +234,7 @@ func (ph *poolHarness) startOrch(t *testing.T) {
 	ph.goodOrch = true
 }
 
-func BuildPoolHarness(t *testing.T, n int, debounce time.Duration, poolRefresh time.Duration) *poolHarness {
+func BuildPoolHarness(t *testing.T, n int, debounce time.Duration, poolRefresh time.Duration, membershipDebounce time.Duration) *poolHarness {
 	ph := &poolHarness{goodOrch: true, n: n}
 
 	purls := make([]string, n)
@@ -261,6 +258,7 @@ func BuildPoolHarness(t *testing.T, n int, debounce time.Duration, poolRefresh t
 		OrchestratorClient:       http.DefaultClient,
 		PoolWeightChangeDebounce: debounce,
 		PoolRefresh:              poolRefresh,
+		PoolMembershipDebounce:   membershipDebounce,
 	}
 	ph.pool = newPool(config)
 	ph.eps = purls
