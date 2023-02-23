@@ -84,5 +84,6 @@ func main1() int {
 		log.Println(err)
 		return 1
 	}
+	time.Sleep(5 * time.Second)
 	return 0
 }

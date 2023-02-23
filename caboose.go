@@ -79,6 +79,7 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 		logger: newLogger(config),
 	}
 	c.pool.logger = c.logger
+
 	if c.config.SaturnClient == nil {
 		c.config.SaturnClient = &http.Client{
 			Timeout: DefaultSaturnRequestTimeout,

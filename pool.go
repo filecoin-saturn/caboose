@@ -176,6 +176,21 @@ func (p *pool) doRefresh() {
 			p.c.UpdateWithWeights(p.endpoints.ToWeights())
 		}
 		poolSizeMetric.Set(float64(len(n)))
+
+		// periodic update of a pool health metric
+		p.lk.RLock()
+		byWeight := make(map[int]int)
+		for _, m := range p.endpoints {
+			if _, ok := byWeight[m.replication]; !ok {
+				byWeight[m.replication] = 0
+			}
+			byWeight[m.replication] += 1
+		}
+		poolHealthMetric.Reset()
+		for weight, cnt := range byWeight {
+			poolHealthMetric.WithLabelValues(fmt.Sprintf("%d", weight)).Set(float64(cnt))
+		}
+		p.lk.RUnlock()
 	} else {
 		poolErrorMetric.Add(1)
 	}
@@ -368,6 +383,13 @@ func (p *pool) updateWeightUnlocked(node string, failure bool) (index int, membe
 
 var saturnReqTmpl = "https://%s/ipfs/%s?format=raw"
 
+var (
+	saturnNodeIdKey     = "Saturn-Node-Id"
+	saturnTransferIdKey = "Saturn-Transfer-Id"
+	saturnCacheHitKey   = "Saturn-Cache-Status"
+	saturnCacheHit      = "HIT"
+)
+
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
 func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, e error) {
 	requestId := uuid.NewString()
@@ -378,6 +400,13 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	proto := "unknown"
 	respReq := &http.Request{}
 	received := 0
+	reqUrl := ""
+	var respHeader http.Header
+	saturnNodeId := ""
+	saturnTransferId := ""
+	isCacheHit := false
+	networkError := ""
+
 	defer func() {
 		ttfbMs := fb.Sub(start).Milliseconds()
 		durationSecs := time.Since(start).Seconds()
@@ -390,28 +419,45 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 			fetchSpeedMetric.Observe(float64(received) / durationSecs)
 			fetchSizeMetric.Observe(float64(received))
 		}
+
+		if respHeader != nil {
+			saturnNodeId = respHeader.Get(saturnNodeIdKey)
+			saturnTransferId = respHeader.Get(saturnTransferIdKey)
+
+			cacheHit := respHeader.Get(saturnCacheHitKey)
+			if cacheHit == saturnCacheHit {
+				isCacheHit = true
+			}
+
+			for k, v := range respHeader {
+				received = received + len(k) + len(v)
+			}
+		}
+
 		p.logger.queue <- log{
-			CacheHit:  false,
-			URL:       from,
-			LocalTime: start,
-			// TODO: does this include header sizes?
-			NumBytesSent:    received,
-			RequestDuration: durationSecs,
-			RequestID:       requestId,
-			HTTPStatusCode:  code,
-			HTTPProtocol:    proto,
-			TTFBMS:          int(ttfbMs),
+			CacheHit:           isCacheHit,
+			URL:                reqUrl,
+			StartTime:          start,
+			NumBytesSent:       received,
+			RequestDurationSec: durationSecs,
+			RequestID:          saturnTransferId,
+			HTTPStatusCode:     code,
+			HTTPProtocol:       proto,
+			TTFBMS:             int(ttfbMs),
 			// my address
-			ClientAddress: "",
-			Range:         "",
-			Referrer:      respReq.Referer(),
-			UserAgent:     respReq.UserAgent(),
+			Range:          "",
+			Referrer:       respReq.Referer(),
+			UserAgent:      respReq.UserAgent(),
+			NodeId:         saturnNodeId,
+			NodeIpAddress:  from,
+			IfNetworkError: networkError,
 		}
 	}()
 
 	reqCtx, cancel := context.WithTimeout(ctx, DefaultSaturnRequestTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, fmt.Sprintf(saturnReqTmpl, from, c), nil)
+	reqUrl = fmt.Sprintf(saturnReqTmpl, from, c)
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -426,10 +472,11 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	}
 
 	resp, err := p.config.SaturnClient.Do(req)
-	fb = time.Now()
 	if err != nil {
+		networkError = err.Error()
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
+	respHeader = resp.Header
 	defer resp.Body.Close()
 
 	code = resp.StatusCode
@@ -448,7 +495,8 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 		return nil, fmt.Errorf("http error from strn: %d", resp.StatusCode)
 	}
 
-	block, err := io.ReadAll(io.LimitReader(resp.Body, maxBlockSize))
+	block, ttfb, err := ReadAllWithTTFB(io.LimitReader(resp.Body, maxBlockSize))
+	fb = ttfb
 	received = len(block)
 
 	if err != nil {
@@ -478,4 +526,26 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	}
 
 	return blocks.NewBlockWithCid(block, c)
+}
+
+func ReadAllWithTTFB(r io.Reader) ([]byte, time.Time, error) {
+	b := make([]byte, 0, 512)
+	var ttfb time.Time
+	for {
+		if len(b) == cap(b) {
+			// Add more capacity (let append pick how much).
+			b = append(b, 0)[:len(b)]
+		}
+		n, err := r.Read(b[len(b):cap(b)])
+		b = b[:len(b)+n]
+		if ttfb.IsZero() {
+			ttfb = time.Now()
+		}
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			return b, ttfb, err
+		}
+	}
 }
