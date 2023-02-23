@@ -136,6 +136,9 @@ func TestCabooseFailures(t *testing.T) {
 
 	//steady state-ify
 	ch.runFetchesForRandCids(50)
+	require.Eventually(t, func() bool {
+		return ch.getHashRingSize() == 3
+	}, 10*time.Second, 100*time.Millisecond)
 	ch.fetchAndAssertSuccess(t, ctx, testCid)
 }
 
@@ -273,6 +276,7 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int) *CabooseHarness {
 		PoolWeightChangeDebounce: time.Duration(1),
 		PoolRefresh:              time.Millisecond * 50,
 		MaxRetrievalAttempts:     maxRetries,
+		PoolMembershipDebounce:   1,
 	})
 	require.NoError(t, err)
 
