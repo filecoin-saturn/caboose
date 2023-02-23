@@ -14,7 +14,7 @@ import (
 )
 
 func TestUpdateWeightWithRefresh(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 0, 1*time.Second, 100*time.Millisecond)
+	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0))
 	ph.StartAndWait(t)
 
 	// downvote first node
@@ -46,7 +46,7 @@ func TestUpdateWeightWithRefresh(t *testing.T) {
 }
 
 func TestUpdateWeightWithMembershipDebounce(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 0, 100*time.Second, 1000*time.Second)
+	ph := BuildPoolHarness(t, 3, WithMembershipDebounce(1000*time.Second), WithWeightChangeDebounce(0))
 	ph.StartAndWait(t)
 
 	// assert node is removed when it's weight drops to 0 and not added back
@@ -56,11 +56,10 @@ func TestUpdateWeightWithMembershipDebounce(t *testing.T) {
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
 	time.Sleep(1 * time.Second)
 	ph.downvoteAndAssertRemoved(t, ph.eps[0])
-
 }
 
 func TestUpdateWeightWithoutRefresh(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 0, 100*time.Second, 100*time.Millisecond)
+	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0))
 	ph.StartAndWait(t)
 	ph.stopOrch(t)
 
@@ -74,7 +73,7 @@ func TestUpdateWeightWithoutRefresh(t *testing.T) {
 }
 
 func TestUpdateWeightDebounce(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, 1000*time.Second, 100*time.Second, 100*time.Millisecond)
+	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(1000*time.Second))
 	ph.StartAndWait(t)
 
 	// downvote first node
@@ -92,7 +91,7 @@ func TestUpdateWeightDebounce(t *testing.T) {
 }
 
 func TestUpdateWeightBatched(t *testing.T) {
-	ph := BuildPoolHarness(t, 5, 0, 100*time.Second, 100*time.Millisecond)
+	ph := BuildPoolHarness(t, 5, WithWeightChangeDebounce(0))
 	ph.StartAndWait(t)
 
 	// downvote, 0,2, & 4
@@ -218,7 +217,6 @@ func (ph *poolHarness) waitPoolReady(t *testing.T) {
 	require.Eventually(t, func() bool {
 		ph.pool.lk.RLock()
 		defer ph.pool.lk.RUnlock()
-		fmt.Println("\n Endpoints are: ", ph.pool.endpoints, "")
 
 		return len(ph.pool.endpoints) == ph.n
 	}, 10*time.Second, 1*time.Second)
@@ -230,7 +228,27 @@ func (ph *poolHarness) stopOrch(t *testing.T) {
 	ph.goodOrch = false
 }
 
-func BuildPoolHarness(t *testing.T, n int, debounce time.Duration, poolRefresh time.Duration, membershipDebounce time.Duration) *poolHarness {
+type HarnessOption func(config *Config)
+
+func WithWeightChangeDebounce(debounce time.Duration) func(*Config) {
+	return func(config *Config) {
+		config.PoolWeightChangeDebounce = debounce
+	}
+}
+
+func WithPoolRefreshInterval(interval time.Duration) func(*Config) {
+	return func(config *Config) {
+		config.PoolRefresh = interval
+	}
+}
+
+func WithMembershipDebounce(debounce time.Duration) func(config *Config) {
+	return func(config *Config) {
+		config.PoolMembershipDebounce = debounce
+	}
+}
+
+func BuildPoolHarness(t *testing.T, n int, opts ...HarnessOption) *poolHarness {
 	ph := &poolHarness{goodOrch: true, n: n}
 
 	purls := make([]string, n)
@@ -252,10 +270,15 @@ func BuildPoolHarness(t *testing.T, n int, debounce time.Duration, poolRefresh t
 	config := &Config{
 		OrchestratorEndpoint:     ourl,
 		OrchestratorClient:       http.DefaultClient,
-		PoolWeightChangeDebounce: debounce,
-		PoolRefresh:              poolRefresh,
-		PoolMembershipDebounce:   membershipDebounce,
+		PoolWeightChangeDebounce: 100 * time.Millisecond,
+		PoolRefresh:              100 * time.Millisecond,
+		PoolMembershipDebounce:   100 * time.Millisecond,
 	}
+
+	for _, opt := range opts {
+		opt(config)
+	}
+
 	ph.pool = newPool(config)
 	ph.eps = purls
 
