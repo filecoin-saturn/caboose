@@ -424,12 +424,12 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
 
 		if e == nil && received > 0 {
-			fetchTTFBPeerSuccessMetric.Observe(float64(ttfbMs))
-			fetchDurationPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
-			fetchSpeedPerPeerMetric.Observe(float64(received) / float64(durationMs))
+			fetchTTFBPerBlockPerPeerSuccessMetric.Observe(float64(ttfbMs))
+			fetchDurationPerBlockPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
+			fetchSpeedPerBlockPerPeerMetric.Observe(float64(received) / float64(durationMs))
 		} else {
-			fetchTTFBPeerFailureMetric.Observe(float64(ttfbMs))
-			fetchDurationPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
+			fetchTTFBPerBlockPerPeerFailureMetric.Observe(float64(ttfbMs))
+			fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
 		}
 
 		if received > 0 {
