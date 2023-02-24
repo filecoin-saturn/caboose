@@ -504,7 +504,8 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
 		}
 
-		if resp.StatusCode == http.StatusNotFound {
+		// This should only be 502, but L1s were not translating 404 from Lassie, so we have to support both for now.
+		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadGateway {
 			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrContentProviderNotFound)
 		}
 
