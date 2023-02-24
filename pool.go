@@ -96,26 +96,20 @@ func (m *Member) UpdateWeight(debounce time.Duration, failure bool) (*Member, bo
 	// this is a best-effort. if there's a correlated failure we ignore the others, so do the try on best-effort.
 	if m.lk.TryLock() {
 		defer m.lk.Unlock()
-		if debounce == 0 || time.Since(m.lastUpdate) > debounce {
-			// make the down-voted member
-			nm := NewMember(m.url, time.Now())
-			if failure {
+		if failure {
+			if debounce == 0 || time.Since(m.lastUpdate) > debounce {
+				// make the down-voted member
+				nm := NewMember(m.url, time.Now())
 				nm.replication = m.replication / 2
 				return nm, true
-			} else {
-				// bump by 20 percent only if the current replication factor is less than 20.
-				if m.replication < defaultReplication {
-					updated := m.replication + 1
-					if updated > defaultReplication {
-						updated = defaultReplication
-					}
-					if updated != m.replication {
-						nm.replication = updated
-						return nm, true
-					}
-				}
 			}
-			return nm, false
+		} else {
+			if m.replication < defaultReplication && time.Since(m.lastUpdate) > debounce {
+				nm := NewMember(m.url, time.Now())
+				updated := m.replication + 1
+				nm.replication = updated
+				return nm, true
+			}
 		}
 	}
 	return nil, false
@@ -344,8 +338,9 @@ func (p *pool) updatePoolWithNewWeightUnlocked(nm *Member, idx int) {
 	if nm.replication == 0 {
 		p.c = p.c.RemoveNode(nm.url)
 		p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
+		// TODO: use cache once weight updates are tuned properly.
 		// we will not add this node back to the cache before the cool off period expires
-		p.removedTimeCache.Set(nm.url, struct{}{}, cache.DefaultExpiration)
+		//p.removedTimeCache.Set(nm.url, struct{}{}, cache.DefaultExpiration)
 		if len(p.endpoints) < p.config.PoolLowWatermark {
 			select {
 			case p.refresh <- struct{}{}:
