@@ -5,19 +5,16 @@ import (
 )
 
 var (
-	// TODO: should we avoid using these statics, and hardcode exact values,
-	// so we dont break Grafana if we ever change things like timeouts or max block size?
-
 	// Size buckets from 256 KiB (default chunk in Kubo) to 4MiB (maxBlockSize), 256 KiB  wide each
 	blockSizeHistogram = prometheus.LinearBuckets(262144, 262144, 16)
 
 	// TODO: Speed max bucket could use some further refinement,
 	// for now we don't expect speed being  bigger than transfering 4MiB (max block) in 500ms
-	speedHistogram = prometheus.ExponentialBucketsRange(1, maxBlockSize/500, 20)
+	speedHistogram = prometheus.ExponentialBucketsRange(1, 4194304/500, 20)
 
 	// Duration max bucket is informed by the timeouts per block and per peer request/retry
-	durationPerBlockHistogram        = prometheus.ExponentialBucketsRange(1, float64(DefaultSaturnGlobalBlockFetchTimeout.Milliseconds()), 10)
-	durationPerBlockPerPeerHistogram = prometheus.ExponentialBucketsRange(1, float64(DefaultSaturnRequestTimeout.Milliseconds()), 10)
+	durationPerBlockHistogram        = prometheus.ExponentialBucketsRange(1, 60000, 10)
+	durationPerBlockPerPeerHistogram = prometheus.ExponentialBucketsRange(1, 20000, 10)
 
 	CabooseMetrics = prometheus.NewRegistry()
 
