@@ -10,6 +10,8 @@ import (
 	"github.com/ipfs/go-cid"
 	ipfsblockstore "github.com/ipfs/go-ipfs-blockstore"
 	blocks "github.com/ipfs/go-libipfs/blocks"
+	gateway "github.com/ipfs/go-libipfs/gateway"
+	ipath "github.com/ipfs/interface-go-ipfs-core/path"
 )
 
 type Config struct {
@@ -31,9 +33,13 @@ type Config struct {
 
 	// DoValidation is used to determine if we should validate the blocks recieved from the Saturn network.
 	DoValidation bool
-	// If set, AffinityKey is used instead of the block cid as the key on the Saturn node pool
-	// to determine which Saturn node to retrieve the block from.
+
+	// If set, AffinityKey is used instead of the block CID as the key on the
+	// Saturn node pool to determine which Saturn node to retrieve the block from.
+	// NOTE: If gateway.ContentPathKey is present in request context,
+	// it will be used as AffinityKey automatically.
 	AffinityKey string
+
 	// PoolRefresh is the interval at which we refresh the pool of Saturn nodes.
 	PoolRefresh time.Duration
 
@@ -131,6 +137,25 @@ func (c *Caboose) GetSize(ctx context.Context, it cid.Cid) (int, error) {
 }
 
 func (c *Caboose) getAffinity(ctx context.Context) string {
+	// https://github.com/ipfs/bifrost-gateway/issues/53#issuecomment-1442732865
+	if affG := ctx.Value(gateway.ContentPathKey); affG != nil {
+		contentPath := affG.(ipath.Path).String()
+
+		// Using exact content path seems to work better for initial website loads
+		// because it groups all blocks related to the single file,
+		// but at the same time spreads files across multiple L1s
+		// which removes the risk of specific L1 becoming a cache hot spot for
+		// websites with huge DAG like /ipns/en.wikipedia-on-ipfs.org
+		return contentPath
+
+		/* TODO: if we ever want to revisit, and group per root CID of entire DAG:
+		const contentRootIdx = 2
+		if parts := strings.Split(contentPath, "/"); len(parts) > contentRootIdx {
+			// use top level contentRoot ('id' from /ipfs/id or /ipns/id) as affinity key
+			return parts[contentRootIdx]
+		}
+		*/
+	}
 	if affC := ctx.Value(c.config.AffinityKey); affC != nil {
 		return affC.(string)
 	}
