@@ -5,6 +5,7 @@ import (
 )
 
 var (
+
 	// Size buckets from 256 KiB (default chunk in Kubo) to 4MiB (maxBlockSize), 256 KiB  wide each
 	blockSizeHistogram = prometheus.LinearBuckets(262144, 262144, 16)
 
@@ -13,8 +14,8 @@ var (
 	speedHistogram = prometheus.ExponentialBucketsRange(1, 4194304/500, 20)
 
 	// Duration max bucket is informed by the timeouts per block and per peer request/retry
-	durationPerBlockHistogram        = prometheus.ExponentialBucketsRange(1, 60000, 10)
-	durationPerBlockPerPeerHistogram = prometheus.ExponentialBucketsRange(1, 20000, 10)
+	durationPerBlockHistogram        = prometheus.ExponentialBucketsRange(50, 60000, 10)
+	durationPerBlockPerPeerHistogram = prometheus.ExponentialBucketsRange(50, 20000, 10)
 
 	CabooseMetrics = prometheus.NewRegistry()
 
