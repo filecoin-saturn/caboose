@@ -33,7 +33,7 @@ type Config struct {
 	DoValidation bool
 	// If set, AffinityKey is used instead of the block cid as the key on the Saturn node pool
 	// to determine which Saturn node to retrieve the block from.
-	AffinityKey string
+	AffinityKey interface{}
 	// PoolRefresh is the interval at which we refresh the pool of Saturn nodes.
 	PoolRefresh time.Duration
 
