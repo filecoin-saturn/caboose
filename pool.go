@@ -189,6 +189,7 @@ func (p *pool) doRefresh() {
 		for weight, cnt := range byWeight {
 			poolHealthMetric.WithLabelValues(fmt.Sprintf("%d", weight)).Set(float64(cnt))
 		}
+
 	} else {
 		poolErrorMetric.Add(1)
 	}
@@ -266,10 +267,16 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 		return nil, ErrNoBackend
 	}
 
+	blockFetchStart := time.Now()
+
 	for i := 0; i < len(nodes); i++ {
 		blk, err = p.fetchAndUpdate(ctx, nodes[i], c, i, transientErrs)
 
 		if err == nil {
+			durationMs := time.Since(blockFetchStart).Milliseconds()
+			fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
+			fetchDurationBlockSuccessMetric.Observe(float64(durationMs))
+
 			// downvote all parked failed nodes as some other node was able to give us the required content here.
 			reqs := make([]weightUpdateReq, 0, len(transientErrs))
 			for node, err := range transientErrs {
@@ -284,6 +291,8 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 			return
 		}
 	}
+
+	fetchDurationBlockFailureMetric.Observe(float64(time.Since(blockFetchStart).Milliseconds()))
 
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
 	return
@@ -393,6 +402,8 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	requestId := uuid.NewString()
 	goLogger.Debugw("doing fetch", "from", from, "of", c, "requestId", requestId)
 	start := time.Now()
+	response_success_end := time.Now()
+
 	fb := time.Unix(0, 0)
 	code := 0
 	proto := "unknown"
@@ -408,13 +419,20 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	defer func() {
 		ttfbMs := fb.Sub(start).Milliseconds()
 		durationSecs := time.Since(start).Seconds()
+		durationMs := time.Since(start).Milliseconds()
 		goLogger.Debugw("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(ttfbMs), "duration", durationSecs, "attempt", attempt, "error", e)
 		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
-		if fb.After(start) {
-			fetchLatencyMetric.Observe(float64(ttfbMs))
+
+		if e == nil && received > 0 {
+			fetchTTFBPerBlockPerPeerSuccessMetric.Observe(float64(ttfbMs))
+			fetchDurationPerBlockPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
+			fetchSpeedPerBlockPerPeerMetric.Observe(float64(received) / float64(durationMs))
+		} else {
+			fetchTTFBPerBlockPerPeerFailureMetric.Observe(float64(ttfbMs))
+			fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
 		}
+
 		if received > 0 {
-			fetchSpeedMetric.Observe(float64(received) / durationSecs)
 			fetchSizeMetric.Observe(float64(received))
 		}
 
@@ -522,6 +540,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 			return nil, blocks.ErrWrongHash
 		}
 	}
+	response_success_end = time.Now()
 
 	return blocks.NewBlockWithCid(block, c)
 }
