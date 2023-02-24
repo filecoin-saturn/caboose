@@ -47,6 +47,10 @@ type Config struct {
 	// in our pool after a retrieval success/failure.
 	PoolWeightChangeDebounce time.Duration
 
+	// PoolMembershipDebounce is the amount of time we wait after a saturn node is removed from the pool
+	// before we add it again to the pool.
+	PoolMembershipDebounce time.Duration
+
 	// trigger early refreshes when pool size drops below this low watermark
 	PoolLowWatermark int
 	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
@@ -55,14 +59,19 @@ type Config struct {
 
 const DefaultMaxRetries = 3
 const DefaultPoolFailureDownvoteDebounce = time.Second
+const DefaultPoolMembershipDebounce = 5 * time.Minute
 const DefaultPoolLowWatermark = 5
 const DefaultSaturnRequestTimeout = 19 * time.Second
+const DefaultSaturnGlobalBlockFetchTimeout = 60 * time.Second
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
+const DefaultPoolRefreshInterval = 5 * time.Minute
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available strn backend")
 var ErrBackendFailed error = errors.New("strn backend failed")
+var ErrContentProviderNotFound error = errors.New("strn failed to find content providers")
+var ErrSaturnTimeout error = errors.New("strn backend timed out")
 
 type Caboose struct {
 	config *Config
@@ -91,8 +100,15 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 		}
 	}
 
+	if c.config.PoolRefresh == 0 {
+		c.config.PoolRefresh = DefaultPoolRefreshInterval
+	}
+
 	if c.config.PoolWeightChangeDebounce == 0 {
 		c.config.PoolWeightChangeDebounce = DefaultPoolFailureDownvoteDebounce
+	}
+	if c.config.PoolMembershipDebounce == 0 {
+		c.config.PoolMembershipDebounce = DefaultPoolMembershipDebounce
 	}
 	if c.config.PoolLowWatermark == 0 {
 		c.config.PoolLowWatermark = DefaultPoolLowWatermark
@@ -100,7 +116,19 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 	if c.config.MaxRetrievalAttempts == 0 {
 		c.config.MaxRetrievalAttempts = DefaultMaxRetries
 	}
+
+	// start the pool
+	c.pool.Start()
+
 	return &c, nil
+}
+
+// GetMemberWeights is for testing ONLY
+func (c *Caboose) GetMemberWeights() map[string]int {
+	c.pool.lk.RLock()
+	defer c.pool.lk.RUnlock()
+
+	return c.pool.endpoints.ToWeights()
 }
 
 func (c *Caboose) Close() {

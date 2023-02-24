@@ -3,6 +3,7 @@ package caboose
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/patrickmn/go-cache"
 
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
@@ -47,9 +50,10 @@ type pool struct {
 	refresh chan struct{} // refresh is used to signal the need for doing a refresh of the Saturn endpoints pool.
 	done    chan struct{} // done is used to signal that we're shutting down the Saturn endpoints pool and don't need to refresh it anymore.
 
-	lk        sync.RWMutex
-	endpoints MemberList         // guarded by lk
-	c         *hashring.HashRing // guarded by lk
+	lk               sync.RWMutex
+	endpoints        MemberList         // guarded by lk
+	c                *hashring.HashRing // guarded by lk
+	removedTimeCache *cache.Cache       // guarded by lk
 }
 
 // MemberList is the list of Saturn endpoints that are currently members of the Caboose consistent hashing ring
@@ -76,8 +80,8 @@ type Member struct {
 
 var defaultReplication = 20
 
-func NewMember(addr string) *Member {
-	return &Member{url: addr, lk: sync.Mutex{}, lastUpdate: time.Now(), replication: defaultReplication}
+func NewMember(addr string, lastUpdateTime time.Time) *Member {
+	return &Member{url: addr, lk: sync.Mutex{}, lastUpdate: lastUpdateTime, replication: defaultReplication}
 }
 
 func (m *Member) String() string {
@@ -92,9 +96,9 @@ func (m *Member) UpdateWeight(debounce time.Duration, failure bool) (*Member, bo
 	// this is a best-effort. if there's a correlated failure we ignore the others, so do the try on best-effort.
 	if m.lk.TryLock() {
 		defer m.lk.Unlock()
-		if time.Since(m.lastUpdate) > debounce {
+		if debounce == 0 || time.Since(m.lastUpdate) > debounce {
 			// make the down-voted member
-			nm := NewMember(m.url)
+			nm := NewMember(m.url, time.Now())
 			if failure {
 				nm.replication = m.replication / 2
 				return nm, true
@@ -119,21 +123,27 @@ func (m *Member) UpdateWeight(debounce time.Duration, failure bool) (*Member, bo
 
 func newPool(c *Config) *pool {
 	p := pool{
-		config:    c,
-		endpoints: []*Member{},
-		c:         nil,
-		started:   make(chan struct{}),
-		refresh:   make(chan struct{}, 1),
-		done:      make(chan struct{}, 1),
+		config:           c,
+		endpoints:        []*Member{},
+		c:                nil,
+		started:          make(chan struct{}),
+		refresh:          make(chan struct{}, 1),
+		done:             make(chan struct{}, 1),
+		removedTimeCache: cache.New(c.PoolMembershipDebounce, 10*time.Second),
 	}
-	go p.refreshPool()
+
 	return &p
+}
+
+func (p *pool) Start() {
+	go p.refreshPool()
 }
 
 func (p *pool) doRefresh() {
 	newEP, err := p.loadPool()
 	if err == nil {
-		p.lk.RLock()
+		p.lk.Lock()
+		defer p.lk.Unlock()
 
 		// TODO: The orchestrator periodically prunes "bad" L1s based on a reputation system
 		// it owns and runs. We should probably just forget about the Saturn endpoints that were
@@ -147,26 +157,27 @@ func (p *pool) doRefresh() {
 			n = append(n, o)
 		}
 
-		p.lk.RUnlock()
-
 		for _, s := range newEP {
+			// do not add a node back to the pool if it was removed recently.
+			if _, ok := p.removedTimeCache.Get(s); ok {
+				continue
+			}
+
 			if _, ok := oldMap[s]; !ok {
-				n = append(n, NewMember(s))
+				// we set last update time to zero so we do NOT hit debounce limits for this node immediately on creation.
+				n = append(n, NewMember(s, time.Time{}))
 			}
 		}
 
-		p.lk.Lock()
 		p.endpoints = n
 		if p.c == nil {
 			p.c = hashring.NewWithWeights(p.endpoints.ToWeights())
 		} else {
 			p.c.UpdateWithWeights(p.endpoints.ToWeights())
 		}
-		p.lk.Unlock()
 		poolSizeMetric.Set(float64(len(n)))
 
 		// periodic update of a pool health metric
-		p.lk.RLock()
 		byWeight := make(map[int]int)
 		for _, m := range p.endpoints {
 			if _, ok := byWeight[m.replication]; !ok {
@@ -178,7 +189,7 @@ func (p *pool) doRefresh() {
 		for weight, cnt := range byWeight {
 			poolHealthMetric.WithLabelValues(fmt.Sprintf("%d", weight)).Set(float64(cnt))
 		}
-		p.lk.RUnlock()
+
 	} else {
 		poolErrorMetric.Add(1)
 	}
@@ -225,6 +236,8 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	// wait for pool to be initialised
 	<-p.started
 
+	transientErrs := make(map[string]error)
+
 	left := p.config.MaxRetrievalAttempts
 	aff := with
 	if aff == "" {
@@ -254,89 +267,110 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 		return nil, ErrNoBackend
 	}
 
-	for i := 0; i < len(nodes); i++ {
-		blk, err = p.doFetch(ctx, nodes[i], c, i)
+	blockFetchStart := time.Now()
 
-		var idx int
-		var nm *Member
+	for i := 0; i < len(nodes); i++ {
+		blk, err = p.fetchAndUpdate(ctx, nodes[i], c, i, transientErrs)
 
 		if err == nil {
-			// we need to acquire the lock to update the member's weight in the pool.
-			// and now that we are here, we know we're gonna return and hit the defer before exiting this block.
-			p.lk.RLock()
-			// Saturn fetch worked, we should try upvoting the member.
-			idx, nm = p.updateWeightUnlocked(nodes[i], false)
-			p.lk.RUnlock()
+			durationMs := time.Since(blockFetchStart).Milliseconds()
+			fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
+			fetchDurationBlockSuccessMetric.Observe(float64(durationMs))
 
-			if idx != -1 && nm != nil && p.endpoints[idx].url == nm.url {
-				p.lk.Lock()
-				defer p.lk.Unlock()
-				// re-confirm index in critical section
-				idx = -1
-				for j, m := range p.endpoints {
-					if m.String() == nodes[i] {
-						idx = j
-					}
-				}
-				if idx == -1 {
-					return
-				}
-
-				p.endpoints[idx] = nm
-				p.c.UpdateWithWeights(p.endpoints.ToWeights())
+			// downvote all parked failed nodes as some other node was able to give us the required content here.
+			reqs := make([]weightUpdateReq, 0, len(transientErrs))
+			for node, err := range transientErrs {
+				goLogger.Debugw("downvoting node with transient err as fetch was subsequently successful", "node", node, "err", err)
+				reqs = append(reqs, weightUpdateReq{
+					node:    node,
+					failure: true,
+				})
 			}
 
-			// Saturn fetch worked, we return the block.
+			p.updateWeightBatched(reqs)
 			return
 		}
-
-		p.lk.RLock()
-		// Saturn fetch failed, we downvote the failing member and try the next one.
-		idx, nm = p.updateWeightUnlocked(nodes[i], true)
-		p.lk.RUnlock()
-
-		// we weren't able to downvote the failing Saturn node, let's just retry the fetch with a new node.
-		if idx == -1 || nm == nil {
-			continue
-		}
-
-		// we need to take the lock as we're updating the list of pool endpoint members below.
-		p.lk.Lock()
-		// re-confirm index in critical section
-		idx = -1
-		for j, m := range p.endpoints {
-			if m.String() == nodes[i] {
-				idx = j
-			}
-		}
-		if idx == -1 {
-			p.lk.Unlock()
-			continue
-		}
-		if p.endpoints[idx].url == nm.url {
-			// if the member has been downvoted to 0, we remove it from the pool.
-			// if after removing this member from the pool, the size of the pool falls below the low watermark,
-			// we attempt a pool refresh.
-			if nm.replication == 0 {
-				p.c = p.c.RemoveNode(nm.url)
-				p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
-				if len(p.endpoints) < p.config.PoolLowWatermark {
-					select {
-					case p.refresh <- struct{}{}:
-					default:
-					}
-				}
-			} else {
-				// update the new weight of the member in the pool
-				p.endpoints[idx] = nm
-				p.c.UpdateWithWeights(p.endpoints.ToWeights())
-			}
-		}
-		p.lk.Unlock()
 	}
+
+	fetchDurationBlockFailureMetric.Observe(float64(time.Since(blockFetchStart).Milliseconds()))
 
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
 	return
+}
+
+func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int, transientErrs map[string]error) (blk blocks.Block, err error) {
+	blk, err = p.doFetch(ctx, node, c, attempt)
+	if err != nil {
+		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
+	}
+
+	if err == nil {
+		p.changeWeight(node, false)
+		// Saturn fetch worked, we return the block.
+		return
+	}
+
+	// If this is a NOT found or Timeout error, park the downvoting for now and see if other members are able to give us this content.
+	if errors.Is(err, ErrContentProviderNotFound) || errors.Is(err, ErrSaturnTimeout) {
+		transientErrs[node] = err
+		return
+	}
+
+	// Saturn fetch failed, we downvote the failing member.
+	p.changeWeight(node, true)
+	return
+}
+
+type weightUpdateReq struct {
+	node    string
+	failure bool
+}
+
+func (p *pool) updateWeightBatched(reqs []weightUpdateReq) {
+	p.lk.Lock()
+	defer p.lk.Unlock()
+
+	for _, req := range reqs {
+		idx, nm := p.updateWeightUnlocked(req.node, req.failure)
+		// we weren't able to change the weight.
+		if idx == -1 || nm == nil {
+			continue
+		}
+		p.updatePoolWithNewWeightUnlocked(nm, idx)
+	}
+}
+
+func (p *pool) updatePoolWithNewWeightUnlocked(nm *Member, idx int) {
+	if nm.replication == 0 {
+		p.c = p.c.RemoveNode(nm.url)
+		p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
+		// we will not add this node back to the cache before the cool off period expires
+		p.removedTimeCache.Set(nm.url, struct{}{}, cache.DefaultExpiration)
+		if len(p.endpoints) < p.config.PoolLowWatermark {
+			select {
+			case p.refresh <- struct{}{}:
+			default:
+			}
+		}
+	} else {
+		p.endpoints[idx] = nm
+		p.c.UpdateWithWeights(p.endpoints.ToWeights())
+	}
+}
+
+// returns the updated weight mapping for tests
+func (p *pool) changeWeight(node string, failure bool) {
+	p.lk.Lock()
+	defer p.lk.Unlock()
+
+	idx, nm := p.updateWeightUnlocked(node, failure)
+
+	// we weren't able to change the weight.
+	if idx == -1 || nm == nil {
+		return
+	}
+
+	p.updatePoolWithNewWeightUnlocked(nm, idx)
 }
 
 func (p *pool) updateWeightUnlocked(node string, failure bool) (index int, member *Member) {
@@ -368,6 +402,8 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	requestId := uuid.NewString()
 	goLogger.Debugw("doing fetch", "from", from, "of", c, "requestId", requestId)
 	start := time.Now()
+	response_success_end := time.Now()
+
 	fb := time.Unix(0, 0)
 	code := 0
 	proto := "unknown"
@@ -383,13 +419,20 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	defer func() {
 		ttfbMs := fb.Sub(start).Milliseconds()
 		durationSecs := time.Since(start).Seconds()
+		durationMs := time.Since(start).Milliseconds()
 		goLogger.Debugw("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(ttfbMs), "duration", durationSecs, "attempt", attempt, "error", e)
 		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
-		if fb.After(start) {
-			fetchLatencyMetric.Observe(float64(ttfbMs))
+
+		if e == nil && received > 0 {
+			fetchTTFBPerBlockPerPeerSuccessMetric.Observe(float64(ttfbMs))
+			fetchDurationPerBlockPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
+			fetchSpeedPerBlockPerPeerMetric.Observe(float64(received) / float64(durationMs))
+		} else {
+			fetchTTFBPerBlockPerPeerFailureMetric.Observe(float64(ttfbMs))
+			fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
 		}
+
 		if received > 0 {
-			fetchSpeedMetric.Observe(float64(received) / durationSecs)
 			fetchSizeMetric.Observe(float64(received))
 		}
 
@@ -457,6 +500,14 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	respReq = resp.Request
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusGatewayTimeout {
+			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
+		}
+
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrContentProviderNotFound)
+		}
+
 		return nil, fmt.Errorf("http error from strn: %d", resp.StatusCode)
 	}
 
@@ -489,6 +540,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 			return nil, blocks.ErrWrongHash
 		}
 	}
+	response_success_end = time.Now()
 
 	return blocks.NewBlockWithCid(block, c)
 }
