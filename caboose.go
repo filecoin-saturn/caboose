@@ -3,6 +3,7 @@ package caboose
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -73,13 +74,24 @@ var ErrBackendFailed error = errors.New("strn backend failed")
 var ErrContentProviderNotFound error = errors.New("strn failed to find content providers")
 var ErrSaturnTimeout error = errors.New("strn backend timed out")
 
+type ErrPartialResponse struct {
+	error
+	StillNeed []string
+}
+
 type Caboose struct {
 	config *Config
 	pool   *pool
 	logger *logger
 }
 
-func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
+// DataCallback allows for extensible validation of path-retrieved data.
+type DataCallback func(io.Reader) error
+
+// NewCaboose sets up a caboose fetcher.
+// Note: Caboose is NOT a persistent blockstore and does NOT have an in-memory cache.
+// Every request will result in a remote network request.
+func NewCaboose(config *Config) (*Caboose, error) {
 	c := Caboose{
 		config: config,
 		pool:   newPool(config),
@@ -123,6 +135,9 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 	return &c, nil
 }
 
+// Caboose is a blockstore.
+var _ ipfsblockstore.Blockstore = (*Caboose)(nil)
+
 // GetMemberWeights is for testing ONLY
 func (c *Caboose) GetMemberWeights() map[string]int {
 	c.pool.lk.RLock()
@@ -136,11 +151,13 @@ func (c *Caboose) Close() {
 	c.logger.Close()
 }
 
-// Note: Caboose is NOT a persistent blockstore and does NOT have an in-memory cache. Every block read request will escape to the Saturn network.
-// Caching is left to the caller.
+// Fetch allows fetching car archives by a path of the form `/ipfs/<cid>[/path/to/file]`
+func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error {
+	return c.pool.fetchResourceWith(ctx, path, cb, c.getAffinity(ctx))
+}
 
 func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
-	blk, err := c.pool.fetchWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
 		return false, err
 	}
@@ -148,7 +165,7 @@ func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
 }
 
 func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
-	blk, err := c.pool.fetchWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +174,7 @@ func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
 
 // GetSize returns the CIDs mapped BlockSize
 func (c *Caboose) GetSize(ctx context.Context, it cid.Cid) (int, error) {
-	blk, err := c.pool.fetchWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
 		return 0, err
 	}

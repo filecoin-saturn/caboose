@@ -280,7 +280,7 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int) *CabooseHarness {
 	})
 	require.NoError(t, err)
 
-	ch.c = bs.(*caboose.Caboose)
+	ch.c = bs
 	return ch
 }
 

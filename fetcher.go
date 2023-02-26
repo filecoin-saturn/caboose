@@ -61,7 +61,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	return
 }
 
-func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb func(io.Reader) error) (err error) {
+func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (err error) {
 	requestId := uuid.NewString()
 	goLogger.Debugw("doing fetch", "from", from, "of", resource, "mime", mime, "requestId", requestId)
 	start := time.Now()

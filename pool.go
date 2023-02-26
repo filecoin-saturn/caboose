@@ -229,7 +229,7 @@ func (p *pool) Close() {
 	}
 }
 
-func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk blocks.Block, err error) {
+func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk blocks.Block, err error) {
 	// wait for pool to be initialised
 	<-p.started
 
@@ -267,7 +267,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	blockFetchStart := time.Now()
 
 	for i := 0; i < len(nodes); i++ {
-		blk, err = p.fetchAndUpdate(ctx, nodes[i], c, i, transientErrs)
+		blk, err = p.fetchBlockAndUpdate(ctx, nodes[i], c, i, transientErrs)
 
 		if err == nil {
 			durationMs := time.Since(blockFetchStart).Milliseconds()
@@ -295,7 +295,75 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	return
 }
 
-func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int, transientErrs map[string]error) (blk blocks.Block, err error) {
+func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallback, with string) (err error) {
+	// wait for pool to be initialised
+	<-p.started
+
+	transientErrs := make(map[string]error)
+
+	left := p.config.MaxRetrievalAttempts
+	aff := with
+	if aff == "" {
+		aff = path
+	}
+
+	p.lk.RLock()
+	if left > len(p.endpoints) {
+		left = len(p.endpoints)
+	}
+
+	// if there are no endpoints in the consistent hashing ring, we submit a pool refresh request and fail this fetch.
+	if p.c == nil || p.c.Size() == 0 {
+		p.lk.RUnlock()
+		return ErrNoBackend
+	}
+	nodes, ok := p.c.GetNodes(aff, left)
+	p.lk.RUnlock()
+
+	// if there are no endpoints in the consistent hashing ring for the given cid, we submit a pool refresh request and fail this fetch.
+	if !ok || len(nodes) == 0 {
+		select {
+		case p.refresh <- struct{}{}:
+		default:
+		}
+
+		return ErrNoBackend
+	}
+
+	carFetchStart := time.Now()
+
+	for i := 0; i < len(nodes); i++ {
+		err = p.fetchResourceAndUpdate(ctx, nodes[i], path, i, cb, transientErrs)
+
+		// TODO: keep queue of neededp paths for better handling of ErrPartialResponse failures.
+		if err == nil {
+			durationMs := time.Since(carFetchStart).Milliseconds()
+			// TODO: how to account for total retrieved data
+			//fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
+			fetchDurationCarSuccessMetric.Observe(float64(durationMs))
+
+			// downvote all parked failed nodes as some other node was able to give us the required content here.
+			reqs := make([]weightUpdateReq, 0, len(transientErrs))
+			for node, err := range transientErrs {
+				goLogger.Debugw("downvoting node with transient err as fetch was subsequently successful", "node", node, "err", err)
+				reqs = append(reqs, weightUpdateReq{
+					node:    node,
+					failure: true,
+				})
+			}
+
+			p.updateWeightBatched(reqs)
+			return
+		}
+	}
+
+	fetchDurationCarFailureMetric.Observe(float64(time.Since(carFetchStart).Milliseconds()))
+
+	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
+	return
+}
+
+func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int, transientErrs map[string]error) (blk blocks.Block, err error) {
 	blk, err = p.doFetch(ctx, node, c, attempt)
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
@@ -309,6 +377,29 @@ func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attem
 
 	// If this is a NOT found or Timeout error, park the downvoting for now and see if other members are able to give us this content.
 	if errors.Is(err, ErrContentProviderNotFound) || errors.Is(err, ErrSaturnTimeout) {
+		transientErrs[node] = err
+		return
+	}
+
+	// Saturn fetch failed, we downvote the failing member.
+	p.changeWeight(node, true)
+	return
+}
+
+func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path string, attempt int, cb DataCallback, transientErrs map[string]error) (err error) {
+	err = p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
+	if err != nil {
+		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", path, "error", err)
+	}
+
+	if err == nil {
+		p.changeWeight(node, false)
+		// Saturn fetch worked, we return the block.
+		return
+	}
+
+	// If this is a NOT found or Timeout error, park the downvoting for now and see if other members are able to give us this content.
+	if errors.Is(err, ErrContentProviderNotFound) || errors.Is(err, ErrSaturnTimeout) || errors.Is(err, ErrPartialResponse{}) {
 		transientErrs[node] = err
 		return
 	}
