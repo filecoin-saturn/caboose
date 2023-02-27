@@ -65,7 +65,7 @@ type Config struct {
 	// before we start making retrieval attempts for it.
 	CidCoolDownDuration time.Duration
 
-	// NBackupNodes is the number of backup nodes we will cache if a pool refresh isn't enough to have enough members in the pool.
+	// NBackupNodes is the number of backup nodes we will cache in order to restore the pool if a pool refresh alone isn't enough to restore it.
 	NBackupNodes int
 }
 
