@@ -3,6 +3,7 @@ package caboose
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -55,6 +56,14 @@ type Config struct {
 	PoolLowWatermark int
 	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
 	MaxRetrievalAttempts int
+
+	// MaxCidFailuresBeforeCoolDown is the maximum number of cid retrieval failures across the pool we will tolerate before we
+	// add the cid to the cool down cache.
+	MaxCidFailuresBeforeCoolDown int
+
+	// CidCoolDownDuration is duration of time a cid will stay in the cool down cache
+	// before we start making retrieval attempts for it.
+	CidCoolDownDuration time.Duration
 }
 
 const DefaultMaxRetries = 3
@@ -66,12 +75,23 @@ const DefaultSaturnGlobalBlockFetchTimeout = 60 * time.Second
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
 const DefaultPoolRefreshInterval = 5 * time.Minute
+const DefaultMaxCidFailures = 3
+const DefaultCidCoolDownDuration = 10 * time.Minute
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available strn backend")
 var ErrBackendFailed error = errors.New("strn backend failed")
 var ErrContentProviderNotFound error = errors.New("strn failed to find content providers")
 var ErrSaturnTimeout error = errors.New("strn backend timed out")
+
+type ErrCidCoolDown struct {
+	Cid          cid.Cid
+	RetryAfterMs int64
+}
+
+func (e *ErrCidCoolDown) Error() string {
+	return fmt.Sprintf("multiple retrieval failures seen for cid %s, please retry after %d milliseconds", e.Cid, e.RetryAfterMs)
+}
 
 type Caboose struct {
 	config *Config
@@ -80,6 +100,13 @@ type Caboose struct {
 }
 
 func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
+	if config.CidCoolDownDuration == 0 {
+		config.CidCoolDownDuration = DefaultCidCoolDownDuration
+	}
+	if config.MaxCidFailuresBeforeCoolDown == 0 {
+		config.MaxCidFailuresBeforeCoolDown = DefaultMaxCidFailures
+	}
+
 	c := Caboose{
 		config: config,
 		pool:   newPool(config),

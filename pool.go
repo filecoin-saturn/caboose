@@ -50,6 +50,10 @@ type pool struct {
 	refresh chan struct{} // refresh is used to signal the need for doing a refresh of the Saturn endpoints pool.
 	done    chan struct{} // done is used to signal that we're shutting down the Saturn endpoints pool and don't need to refresh it anymore.
 
+	cidLk            sync.RWMutex
+	cidFailureCache  *cache.Cache // guarded by cidLk
+	cidCoolDownCache *cache.Cache // guarded by cidLk
+
 	lk               sync.RWMutex
 	endpoints        MemberList         // guarded by lk
 	c                *hashring.HashRing // guarded by lk
@@ -130,6 +134,9 @@ func newPool(c *Config) *pool {
 		refresh:          make(chan struct{}, 1),
 		done:             make(chan struct{}, 1),
 		removedTimeCache: cache.New(c.PoolMembershipDebounce, 10*time.Second),
+
+		cidCoolDownCache: cache.New(c.CidCoolDownDuration, 1*time.Minute),
+		cidFailureCache:  cache.New(c.CidCoolDownDuration, 1*time.Minute),
 	}
 
 	return &p
@@ -236,6 +243,19 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	// wait for pool to be initialised
 	<-p.started
 
+	// if the cid is in the cool down cache, we fail the request.
+	p.cidLk.RLock()
+	if at, ok := p.cidCoolDownCache.Get(c.String()); ok {
+		p.cidLk.RUnlock()
+
+		expireAt := at.(time.Time)
+		return nil, &ErrCidCoolDown{
+			Cid:          c,
+			RetryAfterMs: time.Until(expireAt).Milliseconds(),
+		}
+	}
+	p.cidLk.RUnlock()
+
 	transientErrs := make(map[string]error)
 
 	left := p.config.MaxRetrievalAttempts
@@ -294,8 +314,39 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 
 	fetchDurationBlockFailureMetric.Observe(float64(time.Since(blockFetchStart).Milliseconds()))
 
+	p.updateCidCoolDown(c)
+	
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
 	return
+}
+
+// record the failure in the cid failure cache and
+// if the number of cid fetch failures has crossed a certain threshold, add the cid to a cool down cache.
+func (p *pool) updateCidCoolDown(c cid.Cid) {
+	p.cidLk.Lock()
+	defer p.cidLk.Unlock()
+
+	expireAt := time.Now().Add(p.config.CidCoolDownDuration)
+	key := c.String()
+
+	if p.config.MaxCidFailuresBeforeCoolDown == 1 {
+		p.cidCoolDownCache.Set(key, expireAt, time.Until(expireAt)+100)
+		return
+	}
+
+	v, ok := p.cidFailureCache.Get(key)
+	if !ok {
+		p.cidFailureCache.Set(key, 1, cache.DefaultExpiration)
+		return
+	}
+
+	count := v.(int)
+	if p.config.MaxCidFailuresBeforeCoolDown == 1 || count+1 == p.config.MaxCidFailuresBeforeCoolDown {
+		p.cidCoolDownCache.Set(key, expireAt, time.Until(expireAt)+100)
+		p.cidFailureCache.Delete(key)
+	} else {
+		p.cidFailureCache.Set(key, count+1, cache.DefaultExpiration)
+	}
 }
 
 func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int, transientErrs map[string]error) (blk blocks.Block, err error) {

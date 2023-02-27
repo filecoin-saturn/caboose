@@ -2,12 +2,8 @@ package caboose_test
 
 import (
 	"context"
-	"crypto/tls"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -97,12 +93,12 @@ func TestCabooseFailures(t *testing.T) {
 	ch.fetchAndAssertSuccess(t, ctx, testCid)
 
 	// fail primary
-	ch.failedNodesAndAssertFetch(t, func(e *ep) bool {
+	ch.failNodesAndAssertFetch(t, func(e *ep) bool {
 		return e.cnt > 0 && e.valid
 	}, 2, testCid)
 
 	// fail primary and secondary.
-	ch.failedNodesAndAssertFetch(t, func(e *ep) bool {
+	ch.failNodesAndAssertFetch(t, func(e *ep) bool {
 		return e.cnt > 0 && e.valid
 	}, 1, testCid)
 
@@ -157,6 +153,21 @@ func (ch *CabooseHarness) runFetchesForRandCids(n int) {
 	}
 }
 
+func (ch *CabooseHarness) fetchAndAssertCoolDownError(t *testing.T, ctx context.Context, cid cid.Cid) {
+	_, err := ch.c.Get(ctx, cid)
+	require.Error(t, err)
+	coolDownErr, ok := err.(*caboose.ErrCidCoolDown)
+	require.True(t, ok)
+	require.EqualValues(t, cid, coolDownErr.Cid)
+	require.NotZero(t, coolDownErr.RetryAfterMs)
+}
+
+func (ch *CabooseHarness) fetchAndAssertFailure(t *testing.T, ctx context.Context, testCid cid.Cid, contains string) {
+	_, err := ch.c.Get(ctx, testCid)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), contains)
+}
+
 func (ch *CabooseHarness) fetchAndAssertSuccess(t *testing.T, ctx context.Context, c cid.Cid) {
 	blk, err := ch.c.Get(ctx, c)
 	require.NoError(t, err)
@@ -189,7 +200,7 @@ func (ch *CabooseHarness) recoverNodes(t *testing.T, selectorF func(ep *ep) bool
 	}
 }
 
-func (ch *CabooseHarness) failedNodesAndAssertFetch(t *testing.T, selectorF func(ep *ep) bool, nAlive int, cid cid.Cid) {
+func (ch *CabooseHarness) failNodesAndAssertFetch(t *testing.T, selectorF func(ep *ep) bool, nAlive int, cid cid.Cid) {
 	ch.failNodes(t, selectorF)
 	require.EqualValues(t, nAlive, ch.nNodesAlive())
 	ch.fetchAndAssertSuccess(t, context.Background(), cid)
@@ -231,57 +242,6 @@ func (ch *CabooseHarness) startOrchestrator() {
 	ch.gol.Lock()
 	ch.goodOrch = true
 	ch.gol.Unlock()
-}
-
-func BuildCabooseHarness(t *testing.T, n int, maxRetries int) *CabooseHarness {
-	ch := &CabooseHarness{}
-
-	ch.pool = make([]*ep, n)
-	purls := make([]string, n)
-	for i := 0; i < len(ch.pool); i++ {
-		ch.pool[i] = &ep{}
-		ch.pool[i].Setup()
-		purls[i] = strings.TrimPrefix(ch.pool[i].server.URL, "https://")
-	}
-	ch.goodOrch = true
-	orch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ch.gol.Lock()
-		defer ch.gol.Unlock()
-		if ch.goodOrch {
-			json.NewEncoder(w).Encode(purls)
-		} else {
-			json.NewEncoder(w).Encode([]string{})
-		}
-	}))
-
-	saturnClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-				ServerName:         "example.com",
-			},
-		},
-	}
-
-	ourl, _ := url.Parse(orch.URL)
-	bs, err := caboose.NewCaboose(&caboose.Config{
-		OrchestratorEndpoint: ourl,
-		OrchestratorClient:   http.DefaultClient,
-		LoggingEndpoint:      *ourl,
-		LoggingClient:        http.DefaultClient,
-		LoggingInterval:      time.Hour,
-
-		SaturnClient:             saturnClient,
-		DoValidation:             false,
-		PoolWeightChangeDebounce: time.Duration(1),
-		PoolRefresh:              time.Millisecond * 50,
-		MaxRetrievalAttempts:     maxRetries,
-		PoolMembershipDebounce:   1,
-	})
-	require.NoError(t, err)
-
-	ch.c = bs.(*caboose.Caboose)
-	return ch
 }
 
 type ep struct {
