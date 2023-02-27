@@ -189,14 +189,25 @@ func (p *pool) doRefresh() {
 			}
 		}
 
-		if len(n) < p.config.PoolLowWatermark {
-			goLogger.Warnw("pool refresh", "msg", "pool size below min threshold after refresh; "+
+		if len(n) < p.config.NBackupNodes {
+			goLogger.Warnw("pool refresh", "msg", "pool size below min required after refresh; "+
 				"using known and high ranked nodes as backup to restore pool")
 			for _, o := range p.rankedNodes.Keys() {
 				node := o.(string)
 				if _, ok := inPool[node]; !ok {
+					inPool[node] = true
 					n = append(n, NewMember(node, time.Time{}))
 					goLogger.Debugw("pool refresh", "msg", "restored backup node to pool", "node", node)
+				}
+			}
+		}
+
+		// we still don't have enough members even after using the backup -> use the members we got from the
+		// orchestrator without applying membership debounce as a LAST RESORT
+		if len(n) < p.config.NBackupNodes {
+			for _, s := range newEP {
+				if _, ok := inPool[s]; !ok {
+					n = append(n, NewMember(s, time.Time{}))
 				}
 			}
 		}

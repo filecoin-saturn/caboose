@@ -55,6 +55,11 @@ func TestCidCoolDown(t *testing.T) {
 func TestNodesBackup(t *testing.T) {
 	ctx := context.Background()
 	ch := BuildCabooseHarness(t, 3, 3, WithMembershipCoolDown(100*time.Hour))
+	require.Eventually(t, func() bool {
+		return ch.getHashRingSize() == 3
+	}, 10*time.Second, 500*time.Millisecond)
+	// stop the orchestrator so we never get nodes from the orchestrator
+	ch.stopOrchestrator()
 
 	// one node should get added to the backup list on a successful fetch
 	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
