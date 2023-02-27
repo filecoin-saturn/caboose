@@ -81,7 +81,6 @@ const DefaultPoolRefreshInterval = 5 * time.Minute
 const DefaultMaxCidFailures = 3
 const DefaultCidCoolDownDuration = 10 * time.Minute
 const DefaultNBackupNodes = 20
-const DefaultMinNodesInPoolAfterRefresh = 20
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available strn backend")
