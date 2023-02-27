@@ -315,7 +315,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	fetchDurationBlockFailureMetric.Observe(float64(time.Since(blockFetchStart).Milliseconds()))
 
 	p.updateCidCoolDown(c)
-	
+
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
 	return
 }
