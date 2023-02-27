@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru"
+
 	"github.com/patrickmn/go-cache"
 
 	"github.com/google/uuid"
@@ -54,10 +56,12 @@ type pool struct {
 	cidFailureCache  *cache.Cache // guarded by cidLk
 	cidCoolDownCache *cache.Cache // guarded by cidLk
 
-	lk               sync.RWMutex
-	endpoints        MemberList         // guarded by lk
-	c                *hashring.HashRing // guarded by lk
-	removedTimeCache *cache.Cache       // guarded by lk
+	lk                      sync.RWMutex
+	endpoints               MemberList         // guarded by lk
+	c                       *hashring.HashRing // guarded by lk
+	membershipCoolDownCache *cache.Cache       // guarded by lk
+
+	rankedNodes *lru.TwoQueueCache
 }
 
 // MemberList is the list of Saturn endpoints that are currently members of the Caboose consistent hashing ring
@@ -125,21 +129,27 @@ func (m *Member) UpdateWeight(debounce time.Duration, failure bool) (*Member, bo
 	return nil, false
 }
 
-func newPool(c *Config) *pool {
+func newPool(c *Config) (*pool, error) {
 	p := pool{
-		config:           c,
-		endpoints:        []*Member{},
-		c:                nil,
-		started:          make(chan struct{}),
-		refresh:          make(chan struct{}, 1),
-		done:             make(chan struct{}, 1),
-		removedTimeCache: cache.New(c.PoolMembershipDebounce, 10*time.Second),
+		config:                  c,
+		endpoints:               []*Member{},
+		c:                       nil,
+		started:                 make(chan struct{}),
+		refresh:                 make(chan struct{}, 1),
+		done:                    make(chan struct{}, 1),
+		membershipCoolDownCache: cache.New(c.PoolMembershipDebounce, 10*time.Second),
 
 		cidCoolDownCache: cache.New(c.CidCoolDownDuration, 1*time.Minute),
 		cidFailureCache:  cache.New(c.CidCoolDownDuration, 1*time.Minute),
 	}
+	var err error
 
-	return &p
+	p.rankedNodes, err = lru.New2Q(c.NBackupNodes)
+	if err != nil {
+		return nil, err
+	}
+
+	return &p, nil
 }
 
 func (p *pool) Start() {
@@ -158,21 +168,36 @@ func (p *pool) doRefresh() {
 		// likely that the Orchestrator has deemed them to be non-functional/malicious.
 		// Let's just override the old pool with the new endpoints returned here.
 		oldMap := make(map[string]bool)
+		inPool := make(map[string]bool)
 		n := make([]*Member, 0, len(newEP))
 		for _, o := range p.endpoints {
 			oldMap[o.String()] = true
+			inPool[o.String()] = true
 			n = append(n, o)
 		}
 
 		for _, s := range newEP {
-			// do not add a node back to the pool if it was removed recently.
-			if _, ok := p.removedTimeCache.Get(s); ok {
+			// do not add a node back to the pool if it was removed recently and we have more than 10 peers in the pool.
+			if _, ok := p.membershipCoolDownCache.Get(s); ok {
 				continue
 			}
 
 			if _, ok := oldMap[s]; !ok {
 				// we set last update time to zero so we do NOT hit debounce limits for this node immediately on creation.
 				n = append(n, NewMember(s, time.Time{}))
+				inPool[s] = true
+			}
+		}
+
+		if len(n) < p.config.PoolLowWatermark {
+			goLogger.Warnw("pool refresh", "msg", "pool size below min threshold after refresh; "+
+				"using known and high ranked nodes as backup to restore pool")
+			for _, o := range p.rankedNodes.Keys() {
+				node := o.(string)
+				if _, ok := inPool[node]; !ok {
+					n = append(n, NewMember(node, time.Time{}))
+					goLogger.Debugw("pool refresh", "msg", "restored backup node to pool", "node", node)
+				}
 			}
 		}
 
@@ -293,6 +318,8 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 		blk, err = p.fetchAndUpdate(ctx, nodes[i], c, i, transientErrs)
 
 		if err == nil {
+			p.rankedNodes.Add(nodes[i], struct{}{})
+
 			durationMs := time.Since(blockFetchStart).Milliseconds()
 			fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
 			fetchDurationBlockSuccessMetric.Observe(float64(durationMs))
@@ -396,7 +423,7 @@ func (p *pool) updatePoolWithNewWeightUnlocked(nm *Member, idx int) {
 		p.c = p.c.RemoveNode(nm.url)
 		p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
 		// we will not add this node back to the cache before the cool off period expires
-		p.removedTimeCache.Set(nm.url, struct{}{}, cache.DefaultExpiration)
+		p.membershipCoolDownCache.Set(nm.url, struct{}{}, cache.DefaultExpiration)
 		if len(p.endpoints) < p.config.PoolLowWatermark {
 			select {
 			case p.refresh <- struct{}{}:

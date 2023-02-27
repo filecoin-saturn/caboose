@@ -64,12 +64,15 @@ type Config struct {
 	// CidCoolDownDuration is duration of time a cid will stay in the cool down cache
 	// before we start making retrieval attempts for it.
 	CidCoolDownDuration time.Duration
+
+	// NBackupNodes is the number of backup nodes we will cache if a pool refresh isn't enough to have enough members in the pool.
+	NBackupNodes int
 }
 
 const DefaultMaxRetries = 3
 const DefaultPoolFailureDownvoteDebounce = time.Second
 const DefaultPoolMembershipDebounce = 5 * time.Minute
-const DefaultPoolLowWatermark = 5
+const DefaultPoolLowWatermark = 3
 const DefaultSaturnRequestTimeout = 19 * time.Second
 const DefaultSaturnGlobalBlockFetchTimeout = 60 * time.Second
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
@@ -77,6 +80,7 @@ const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?c
 const DefaultPoolRefreshInterval = 5 * time.Minute
 const DefaultMaxCidFailures = 3
 const DefaultCidCoolDownDuration = 10 * time.Minute
+const DefaultNBackupNodes = 10
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available strn backend")
@@ -107,11 +111,19 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 		config.MaxCidFailuresBeforeCoolDown = DefaultMaxCidFailures
 	}
 
+	if config.NBackupNodes == 0 {
+		config.NBackupNodes = DefaultNBackupNodes
+	}
+
 	c := Caboose{
 		config: config,
-		pool:   newPool(config),
 		logger: newLogger(config),
 	}
+	pool, err := newPool(config)
+	if err != nil {
+		return nil, err
+	}
+	c.pool = pool
 	c.pool.logger = c.logger
 
 	if c.config.SaturnClient == nil {

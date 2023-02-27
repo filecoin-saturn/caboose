@@ -273,13 +273,16 @@ func BuildPoolHarness(t *testing.T, n int, opts ...HarnessOption) *poolHarness {
 		PoolWeightChangeDebounce: 100 * time.Millisecond,
 		PoolRefresh:              100 * time.Millisecond,
 		PoolMembershipDebounce:   100 * time.Millisecond,
+		NBackupNodes:             4,
 	}
 
 	for _, opt := range opts {
 		opt(config)
 	}
 
-	ph.pool = newPool(config)
+	var err error
+	ph.pool, err = newPool(config)
+	require.NoError(t, err)
 	ph.eps = purls
 
 	return ph

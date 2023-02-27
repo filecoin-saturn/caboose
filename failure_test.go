@@ -113,7 +113,6 @@ func TestCabooseFailures(t *testing.T) {
 	})
 	ch.runFetchesForRandCids(50)
 	require.EqualValues(t, 0, ch.nNodesAlive())
-	require.EqualValues(t, 0, ch.getHashRingSize())
 
 	_, err := ch.c.Get(context.Background(), testCid)
 	require.Error(t, err)

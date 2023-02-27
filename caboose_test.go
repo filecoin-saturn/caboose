@@ -52,6 +52,33 @@ func TestCidCoolDown(t *testing.T) {
 	}, 10*time.Second, 500*time.Millisecond)
 }
 
+func TestNodesBackup(t *testing.T) {
+	ctx := context.Background()
+	ch := BuildCabooseHarness(t, 3, 3, WithMembershipCoolDown(100*time.Hour))
+
+	// one node should get added to the backup list on a successful fetch
+	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
+	ch.fetchAndAssertSuccess(t, ctx, testCid)
+
+	// invalidate node we just fetched from
+	ch.failNodes(t, func(e *ep) bool {
+		return e.cnt > 0
+	})
+	// one more fetch so we have two backup nodes.
+	ch.fetchAndAssertSuccess(t, ctx, testCid)
+
+	// Invalidate all servers
+	ch.failNodes(t, func(e *ep) bool {
+		return true
+	})
+	ch.runFetchesForRandCids(50)
+
+	// we still have two backup nodes in the pool
+	require.Eventually(t, func() bool {
+		return ch.getHashRingSize() == 2
+	}, 10*time.Second, 500*time.Millisecond)
+}
+
 type HarnessOption func(config *caboose.Config)
 
 func WithMaxCidFailuresBeforeCoolDown(max int) func(config *caboose.Config) {
@@ -63,6 +90,12 @@ func WithMaxCidFailuresBeforeCoolDown(max int) func(config *caboose.Config) {
 func WithCidCoolDownDuration(duration time.Duration) func(config *caboose.Config) {
 	return func(config *caboose.Config) {
 		config.CidCoolDownDuration = duration
+	}
+}
+
+func WithMembershipCoolDown(duration time.Duration) func(config *caboose.Config) {
+	return func(config *caboose.Config) {
+		config.PoolMembershipDebounce = duration
 	}
 }
 
