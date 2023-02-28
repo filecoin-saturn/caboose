@@ -178,7 +178,7 @@ func (ph *poolHarness) updateBatchedAndAssert(t *testing.T, reqs []batchUpdateRe
 		})
 	}
 
-	ph.pool.updateWeightBatched(weightReqs)
+	ph.pool.changeWeightBatched(weightReqs)
 
 	for _, req := range reqs {
 		ph.assertWeight(t, req.node, req.expected)

@@ -106,6 +106,7 @@ func (m *Member) UpdateWeight(debounce time.Duration, failure bool) (*Member, bo
 			// make the down-voted member
 			nm := NewMember(m.url, time.Now())
 			if failure {
+				// reduce weight by 20%
 				nm.replication = (m.replication * 80) / 100
 				return nm, true
 			} else {
@@ -136,7 +137,7 @@ func newPool(c *Config) *pool {
 		done:             make(chan struct{}, 1),
 		removedTimeCache: cache.New(c.PoolMembershipDebounce, 10*time.Second),
 		coolOffCount:     make(map[string]int),
-		coolOffCache:     cache.New(c.TooManyReqsCoolOff, cache.DefaultExpiration),
+		coolOffCache:     cache.New(c.SaturnNodeCoolOff, cache.DefaultExpiration),
 	}
 
 	return &p
@@ -261,17 +262,19 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 			fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
 			fetchDurationBlockSuccessMetric.Observe(float64(durationMs))
 
-			// downvote all parked failed nodes as some other node was able to give us the required content here.
+			// try and downvote nodes that returned transient errors because we got the content from elsewhere
+			// but only if they continue this behaviour even after a grace cool off period.
 			reqs := make([]weightUpdateReq, 0, len(transientErrs))
 			for node, err := range transientErrs {
 				goLogger.Debugw("downvoting node with transient err as fetch was subsequently successful", "node", node, "err", err)
 				reqs = append(reqs, weightUpdateReq{
 					node:    node,
 					failure: true,
+					coolOff: true,
 				})
 			}
 
-			p.updateWeightBatched(reqs)
+			p.changeWeightBatched(reqs)
 			return
 		}
 	}
@@ -349,7 +352,6 @@ func (p *pool) getNodesToFetch(c cid.Cid, with string) ([]string, error) {
 
 	// if we still don't have enough nodes, just return the initial set of nodes we got without considering cool off.
 	return nodes, nil
-
 }
 
 func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int, transientErrs map[string]error) (blk blocks.Block, err error) {
@@ -383,20 +385,7 @@ func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attem
 type weightUpdateReq struct {
 	node    string
 	failure bool
-}
-
-func (p *pool) updateWeightBatched(reqs []weightUpdateReq) {
-	p.lk.Lock()
-	defer p.lk.Unlock()
-
-	for _, req := range reqs {
-		idx, nm := p.updateWeightUnlocked(req.node, req.failure)
-		// we weren't able to change the weight.
-		if idx == -1 || nm == nil {
-			continue
-		}
-		p.updatePoolWithNewWeightUnlocked(nm, idx)
-	}
+	coolOff bool
 }
 
 func (p *pool) updatePoolWithNewWeightUnlocked(nm *Member, idx int) {
@@ -420,17 +409,24 @@ func (p *pool) updatePoolWithNewWeightUnlocked(nm *Member, idx int) {
 	}
 }
 
+func (p *pool) isCoolOffUnlocked(node string) bool {
+	p.coolOffCache.Set(node, struct{}{}, cache.DefaultExpiration)
+	val := p.coolOffCount[node]
+	p.coolOffCount[node] = val + 1
+	if (val + 1) <= p.config.MaxCoolOffAttempts {
+		return true
+	}
+	return false
+}
+
 // returns the updated weight mapping for tests
 func (p *pool) changeWeight(node string, failure bool, coolOff bool) {
 	p.lk.Lock()
 	defer p.lk.Unlock()
 
-	// reduce weight if we've repeatedly seen a 429 for this node; otherwise, cool off requests to it for a while and try again.
+	// reduce weight if we've repeatedly seen a cool off request for this node; otherwise, cool off requests to it for a while and try again.
 	if coolOff {
-		p.coolOffCache.Set(node, struct{}{}, cache.DefaultExpiration)
-		val := p.coolOffCount[node]
-		p.coolOffCount[node] = val + 1
-		if (val + 1) <= MaxNCoolOff {
+		if ok := p.isCoolOffUnlocked(node); ok {
 			return
 		}
 	}
@@ -445,7 +441,34 @@ func (p *pool) changeWeight(node string, failure bool, coolOff bool) {
 	p.updatePoolWithNewWeightUnlocked(nm, idx)
 }
 
+func (p *pool) changeWeightBatched(reqs []weightUpdateReq) {
+	p.lk.Lock()
+	defer p.lk.Unlock()
+
+	for _, req := range reqs {
+		// reduce weight if we've repeatedly seen a cool off request for this node; otherwise, cool off requests to it for a while and try again.
+		if req.coolOff {
+			if ok := p.isCoolOffUnlocked(req.node); ok {
+				continue
+			}
+		}
+
+		idx, nm := p.updateWeightUnlocked(req.node, req.failure)
+		// we weren't able to change the weight.
+		if idx == -1 || nm == nil {
+			continue
+		}
+		p.updatePoolWithNewWeightUnlocked(nm, idx)
+	}
+}
+
 func (p *pool) updateWeightUnlocked(node string, failure bool) (index int, member *Member) {
+	// Remove node from cool off cache if we observed a successful fetch.
+	if !failure {
+		p.coolOffCache.Delete(node)
+		delete(p.coolOffCount, node)
+	}
+
 	idx := -1
 	var nm *Member
 	var needUpdate bool
