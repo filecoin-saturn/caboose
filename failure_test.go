@@ -163,6 +163,15 @@ func (ch *CabooseHarness) fetchAndAssertSuccess(t *testing.T, ctx context.Contex
 	require.NotEmpty(t, blk)
 }
 
+func (ch *CabooseHarness) failNodesWith429(t *testing.T, selectorF func(ep *ep) bool) {
+	for _, n := range ch.pool {
+		if selectorF(n) {
+			n.valid = false
+			n.tooManyReqsErr = true
+		}
+	}
+}
+
 func (ch *CabooseHarness) failNodesWithTransientErr(t *testing.T, selectorF func(ep *ep) bool) {
 	for _, n := range ch.pool {
 		if selectorF(n) {
@@ -285,10 +294,11 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int) *CabooseHarness {
 }
 
 type ep struct {
-	server       *httptest.Server
-	valid        bool
-	cnt          int
-	transientErr bool
+	server         *httptest.Server
+	valid          bool
+	cnt            int
+	tooManyReqsErr bool
+	transientErr   bool
 }
 
 var testBlock = []byte("hello World")
@@ -302,6 +312,9 @@ func (e *ep) Setup() {
 		} else if e.transientErr {
 			w.WriteHeader(http.StatusGatewayTimeout)
 			w.Write([]byte("504"))
+		} else if e.tooManyReqsErr {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte("429"))
 		} else {
 			w.WriteHeader(503)
 			w.Write([]byte("503"))

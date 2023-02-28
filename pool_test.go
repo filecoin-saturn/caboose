@@ -18,30 +18,35 @@ func TestUpdateWeightWithRefresh(t *testing.T) {
 	ph.StartAndWait(t)
 
 	// downvote first node
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 16)
 
-	// downvote second node again
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 5)
+	// downvote first node again
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 12)
 
 	// upvote node
-	ph.upvoteAndAssertUpvoted(t, ph.eps[0], 6)
+	ph.upvoteAndAssertUpvoted(t, ph.eps[0], 13)
+
 	ph.upvoteAndAssertUpvoted(t, ph.eps[1], 20)
 	ph.upvoteAndAssertUpvoted(t, ph.eps[2], 20)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[2], 10)
-	ph.upvoteAndAssertUpvoted(t, ph.eps[2], 11)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[2], 16)
+	ph.upvoteAndAssertUpvoted(t, ph.eps[2], 17)
 
-	// when now is downvoted to zero, it will be added back by a refresh with a weight of 20.
+	// when node is downvoted to zero, it will be added back by a refresh with a weight of 20.
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 8)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 6)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 4)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 3)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 2)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
-	ph.pool.changeWeight(ph.eps[0], true)
+	ph.pool.changeWeight(ph.eps[0], true, false)
 
+	// node is added back with a lower weight as it had recently been removed
 	require.Eventually(t, func() bool {
 		ph.pool.lk.RLock()
 		defer ph.pool.lk.RUnlock()
 		weights := ph.pool.endpoints.ToWeights()
-
-		return weights[ph.eps[0]] == 20 && weights[ph.eps[1]] == 20 && weights[ph.eps[2]] == 11
-
+		return weights[ph.eps[0]] == 10 && weights[ph.eps[1]] == 20 && weights[ph.eps[2]] == 17
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
@@ -50,10 +55,16 @@ func TestUpdateWeightWithMembershipDebounce(t *testing.T) {
 	ph.StartAndWait(t)
 
 	// assert node is removed when it's weight drops to 0 and not added back
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 16)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 12)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 9)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 7)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 5)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 4)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 3)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 2)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
+
 	time.Sleep(1 * time.Second)
 	ph.downvoteAndAssertRemoved(t, ph.eps[0])
 }
@@ -64,8 +75,13 @@ func TestUpdateWeightWithoutRefresh(t *testing.T) {
 	ph.stopOrch(t)
 
 	// assert node is removed when it's weight drops to 0
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 16)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 12)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 9)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 7)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 5)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 4)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 3)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 2)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
 	ph.downvoteAndAssertRemoved(t, ph.eps[0])
@@ -77,16 +93,16 @@ func TestUpdateWeightDebounce(t *testing.T) {
 	ph.StartAndWait(t)
 
 	// downvote first node
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 16)
 
 	// downvoting a thousand times does NOT change weight
 	for i := 0; i < 1000; i++ {
-		ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
+		ph.downvoteAndAssertDownvoted(t, ph.eps[0], 16)
 	}
 
 	// or upvoting
 	for i := 0; i < 1000; i++ {
-		ph.upvoteAndAssertUpvoted(t, ph.eps[0], 10)
+		ph.upvoteAndAssertUpvoted(t, ph.eps[0], 16)
 	}
 }
 
@@ -100,7 +116,7 @@ func TestUpdateWeightBatched(t *testing.T) {
 		reqs = append(reqs, batchUpdateReq{
 			node:     ph.eps[i],
 			failure:  true,
-			expected: 10,
+			expected: 16,
 		})
 	}
 	ph.updateBatchedAndAssert(t, reqs)
@@ -110,11 +126,11 @@ func TestUpdateWeightBatched(t *testing.T) {
 	reqs = append(reqs, batchUpdateReq{
 		node:     ph.eps[0],
 		failure:  false,
-		expected: 11,
+		expected: 17,
 	}, batchUpdateReq{
 		node:     ph.eps[2],
 		failure:  false,
-		expected: 11,
+		expected: 17,
 	}, batchUpdateReq{
 		node:     ph.eps[3],
 		failure:  false,
@@ -170,17 +186,17 @@ func (ph *poolHarness) updateBatchedAndAssert(t *testing.T, reqs []batchUpdateRe
 }
 
 func (ph *poolHarness) downvoteAndAssertRemoved(t *testing.T, url string) {
-	ph.pool.changeWeight(url, true)
+	ph.pool.changeWeight(url, true, false)
 	ph.assertRemoved(t, url)
 }
 
 func (ph *poolHarness) downvoteAndAssertDownvoted(t *testing.T, url string, expected int) {
-	ph.pool.changeWeight(url, true)
+	ph.pool.changeWeight(url, true, false)
 	ph.assertWeight(t, url, expected)
 }
 
 func (ph *poolHarness) upvoteAndAssertUpvoted(t *testing.T, url string, expected int) {
-	ph.pool.changeWeight(url, false)
+	ph.pool.changeWeight(url, false, false)
 	ph.assertWeight(t, url, expected)
 }
 
