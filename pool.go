@@ -413,10 +413,7 @@ func (p *pool) isCoolOffUnlocked(node string) bool {
 	p.coolOffCache.Set(node, struct{}{}, cache.DefaultExpiration)
 	val := p.coolOffCount[node]
 	p.coolOffCount[node] = val + 1
-	if (val + 1) <= p.config.MaxCoolOffAttempts {
-		return true
-	}
-	return false
+	return (val + 1) <= p.config.MaxNCoolOff
 }
 
 // returns the updated weight mapping for tests
@@ -439,6 +436,12 @@ func (p *pool) changeWeight(node string, failure bool, coolOff bool) {
 	}
 
 	p.updatePoolWithNewWeightUnlocked(nm, idx)
+
+	// Remove node from cool off cache if we observed a successful fetch.
+	if !failure {
+		p.coolOffCache.Delete(node)
+		delete(p.coolOffCount, node)
+	}
 }
 
 func (p *pool) changeWeightBatched(reqs []weightUpdateReq) {
@@ -459,16 +462,16 @@ func (p *pool) changeWeightBatched(reqs []weightUpdateReq) {
 			continue
 		}
 		p.updatePoolWithNewWeightUnlocked(nm, idx)
+
+		// Remove node from cool off cache if we observed a successful fetch.
+		if !req.failure {
+			p.coolOffCache.Delete(req.node)
+			delete(p.coolOffCount, req.node)
+		}
 	}
 }
 
 func (p *pool) updateWeightUnlocked(node string, failure bool) (index int, member *Member) {
-	// Remove node from cool off cache if we observed a successful fetch.
-	if !failure {
-		p.coolOffCache.Delete(node)
-		delete(p.coolOffCount, node)
-	}
-
 	idx := -1
 	var nm *Member
 	var needUpdate bool

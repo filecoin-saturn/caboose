@@ -56,11 +56,11 @@ type Config struct {
 	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
 	MaxRetrievalAttempts int
 
-	// SaturnNodeCoolOff is the cool of duration for a saturn node once we determine that we shouldn't be sending requests to it for a while
+	// SaturnNodeCoolOff is the cool off duration for a saturn node once we determine that we shouldn't be sending requests to it for a while.
 	SaturnNodeCoolOff time.Duration
 
-	// MaxCoolOffAttempts is the number of times we will cool off a node before downvoting it.
-	MaxCoolOffAttempts int
+	// MaxNCoolOff is the number of times we will cool off a node before downvoting it.
+	MaxNCoolOff int
 }
 
 const DefaultMaxRetries = 3
@@ -72,7 +72,7 @@ const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
 const DefaultPoolRefreshInterval = 5 * time.Minute
 const DefaultSaturnNodeCoolOff = 5 * time.Minute
-const DefaultMaxCoolOffAttempts = 3
+const DefaultMaxNCoolOff = 3
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available strn backend")
@@ -92,8 +92,8 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 		config.SaturnNodeCoolOff = DefaultSaturnNodeCoolOff
 	}
 
-	if config.MaxCoolOffAttempts == 0 {
-		config.MaxCoolOffAttempts = DefaultMaxCoolOffAttempts
+	if config.MaxNCoolOff == 0 {
+		config.MaxNCoolOff = DefaultMaxNCoolOff
 	}
 
 	c := Caboose{
