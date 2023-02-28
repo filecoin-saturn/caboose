@@ -163,15 +163,6 @@ func (ch *CabooseHarness) fetchAndAssertSuccess(t *testing.T, ctx context.Contex
 	require.NotEmpty(t, blk)
 }
 
-func (ch *CabooseHarness) failNodesWith429(t *testing.T, selectorF func(ep *ep) bool) {
-	for _, n := range ch.pool {
-		if selectorF(n) {
-			n.valid = false
-			n.tooManyReqsErr = true
-		}
-	}
-}
-
 func (ch *CabooseHarness) failNodesWithTransientErr(t *testing.T, selectorF func(ep *ep) bool) {
 	for _, n := range ch.pool {
 		if selectorF(n) {

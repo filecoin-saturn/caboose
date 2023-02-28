@@ -169,6 +169,7 @@ func (p *pool) doRefresh() {
 			// add back node with lower weight if it was removed recently.
 			if _, ok := p.removedTimeCache.Get(s); ok {
 				if _, ok := oldMap[s]; !ok {
+					p.removedTimeCache.Delete(s)
 					n = append(n, NewMemberWithWeight(s, defaultReplication/2, time.Time{}))
 					continue
 				}

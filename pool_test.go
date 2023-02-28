@@ -31,7 +31,7 @@ func TestUpdateWeightWithRefresh(t *testing.T) {
 	ph.downvoteAndAssertDownvoted(t, ph.eps[2], 16)
 	ph.upvoteAndAssertUpvoted(t, ph.eps[2], 17)
 
-	// when node is downvoted to zero, it will be added back by a refresh with a weight of 20.
+	// when node is downvoted to zero, it will be added back by a refresh with a weight of 10 as it has been removed recently.
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 8)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 6)
@@ -64,9 +64,15 @@ func TestUpdateWeightWithMembershipDebounce(t *testing.T) {
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 3)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 2)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
+	ph.pool.changeWeight(ph.eps[0], true, false)
 
-	time.Sleep(1 * time.Second)
-	ph.downvoteAndAssertRemoved(t, ph.eps[0])
+	// node is added back but with half the weight as it has been marked for membership debounce
+	require.Eventually(t, func() bool {
+		ph.pool.lk.RLock()
+		defer ph.pool.lk.RUnlock()
+		weights := ph.pool.endpoints.ToWeights()
+		return weights[ph.eps[0]] == 10
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func TestUpdateWeightWithoutRefresh(t *testing.T) {
@@ -138,7 +144,6 @@ func TestUpdateWeightBatched(t *testing.T) {
 	})
 
 	ph.updateBatchedAndAssert(t, reqs)
-
 }
 
 type poolHarness struct {
