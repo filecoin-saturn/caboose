@@ -417,13 +417,14 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	networkError := ""
 
 	defer func() {
-		ttfbMs := fb.Sub(start).Milliseconds()
+		var ttfbMs int64
 		durationSecs := time.Since(start).Seconds()
 		durationMs := time.Since(start).Milliseconds()
 		goLogger.Debugw("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(ttfbMs), "duration", durationSecs, "attempt", attempt, "error", e)
 		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
 
 		if e == nil && received > 0 {
+			ttfbMs = fb.Sub(start).Milliseconds()
 			fetchTTFBPerBlockPerPeerSuccessMetric.Observe(float64(ttfbMs))
 			fetchDurationPerBlockPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
 			fetchSpeedPerBlockPerPeerMetric.Observe(float64(received) / float64(durationMs))
