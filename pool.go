@@ -54,6 +54,10 @@ type pool struct {
 	endpoints        MemberList         // guarded by lk
 	c                *hashring.HashRing // guarded by lk
 	removedTimeCache *cache.Cache       // guarded by lk
+
+	coolOffMu    sync.RWMutex
+	coolOffCount map[string]int // guarded by coolOffMu
+	coolOffCache *cache.Cache   // guarded by coolOffMu
 }
 
 // MemberList is the list of Saturn endpoints that are currently members of the Caboose consistent hashing ring
@@ -130,6 +134,8 @@ func newPool(c *Config) *pool {
 		refresh:          make(chan struct{}, 1),
 		done:             make(chan struct{}, 1),
 		removedTimeCache: cache.New(c.PoolMembershipDebounce, 10*time.Second),
+		coolOffCount:     make(map[string]int),
+		coolOffCache:     cache.New(c.TooManyReqsCoolOff, cache.DefaultExpiration),
 	}
 
 	return &p
@@ -238,7 +244,11 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 
 	transientErrs := make(map[string]error)
 
-	left := p.config.MaxRetrievalAttempts
+	p.coolOffMu.RLock()
+	cl := len(p.coolOffCache.Items())
+	p.coolOffMu.RUnlock()
+
+	left := p.config.MaxRetrievalAttempts + cl
 	aff := with
 	if aff == "" {
 		aff = c.Hash().B58String()
@@ -254,11 +264,11 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 		p.lk.RUnlock()
 		return nil, ErrNoBackend
 	}
-	nodes, ok := p.c.GetNodes(aff, left)
+	allNodes, ok := p.c.GetNodes(aff, left)
 	p.lk.RUnlock()
 
 	// if there are no endpoints in the consistent hashing ring for the given cid, we submit a pool refresh request and fail this fetch.
-	if !ok || len(nodes) == 0 {
+	if !ok || len(allNodes) == 0 {
 		select {
 		case p.refresh <- struct{}{}:
 		default:
@@ -268,6 +278,13 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	}
 
 	blockFetchStart := time.Now()
+
+	var nodes []string
+	for _, node := range allNodes {
+		if _, ok := p.coolOffCache.Get(node); !ok {
+			nodes = append(nodes, node)
+		}
+	}
 
 	for i := 0; i < len(nodes); i++ {
 		blk, err = p.fetchAndUpdate(ctx, nodes[i], c, i, transientErrs)
@@ -316,6 +333,19 @@ func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attem
 		return
 	}
 
+	p.coolOffMu.Lock()
+	// reduce weight if we've repeatedly seen a 429 for this node; otherwise, cool off requests to it for a while and try again.
+	if errors.Is(err, ErrSaturnTooManyRequests) {
+		p.coolOffCache.Set(node, struct{}{}, cache.DefaultExpiration)
+		val := p.coolOffCount[node]
+		p.coolOffCount[node] = val + 1
+		if (val + 1) <= MaxNCoolOff {
+			p.coolOffMu.Unlock()
+			return
+		}
+	}
+	p.coolOffMu.Unlock()
+
 	// Saturn fetch failed, we downvote the failing member.
 	p.changeWeight(node, true)
 	return
@@ -342,6 +372,11 @@ func (p *pool) updateWeightBatched(reqs []weightUpdateReq) {
 
 func (p *pool) updatePoolWithNewWeightUnlocked(nm *Member, idx int) {
 	if nm.replication == 0 {
+		p.coolOffMu.Lock()
+		delete(p.coolOffCount, nm.url)
+		p.coolOffCache.Delete(nm.url)
+		p.coolOffMu.Unlock()
+
 		p.c = p.c.RemoveNode(nm.url)
 		p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
 		// we will not add this node back to the cache before the cool off period expires
@@ -500,6 +535,9 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	respReq = resp.Request
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTooManyRequests)
+		}
 		if resp.StatusCode == http.StatusGatewayTimeout {
 			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
 		}

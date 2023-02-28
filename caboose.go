@@ -55,6 +55,9 @@ type Config struct {
 	PoolLowWatermark int
 	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
 	MaxRetrievalAttempts int
+
+	// TooManyReqsCoolOff is the cool of duration for a saturn node once it returns a 429
+	TooManyReqsCoolOff time.Duration
 }
 
 const DefaultMaxRetries = 3
@@ -66,12 +69,15 @@ const DefaultSaturnGlobalBlockFetchTimeout = 60 * time.Second
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
 const DefaultPoolRefreshInterval = 5 * time.Minute
+const DefaultTooManyReqsCoolOff = 5 * time.Minute
+const MaxNCoolOff = 3
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available strn backend")
 var ErrBackendFailed error = errors.New("strn backend failed")
 var ErrContentProviderNotFound error = errors.New("strn failed to find content providers")
 var ErrSaturnTimeout error = errors.New("strn backend timed out")
+var ErrSaturnTooManyRequests error = errors.New("strn backend returned too many requests error; 429")
 
 type Caboose struct {
 	config *Config
@@ -80,6 +86,9 @@ type Caboose struct {
 }
 
 func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
+	if config.TooManyReqsCoolOff == 0 {
+		config.TooManyReqsCoolOff = DefaultTooManyReqsCoolOff
+	}
 	c := Caboose{
 		config: config,
 		pool:   newPool(config),
