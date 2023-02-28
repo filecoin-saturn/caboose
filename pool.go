@@ -315,7 +315,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	fetchDurationBlockFailureMetric.Observe(float64(time.Since(blockFetchStart).Milliseconds()))
 
 	p.updateCidCoolDown(c)
-	
+
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
 	return
 }
@@ -468,13 +468,14 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	networkError := ""
 
 	defer func() {
-		ttfbMs := fb.Sub(start).Milliseconds()
+		var ttfbMs int64
 		durationSecs := time.Since(start).Seconds()
 		durationMs := time.Since(start).Milliseconds()
 		goLogger.Debugw("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(ttfbMs), "duration", durationSecs, "attempt", attempt, "error", e)
 		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
 
 		if e == nil && received > 0 {
+			ttfbMs = fb.Sub(start).Milliseconds()
 			fetchTTFBPerBlockPerPeerSuccessMetric.Observe(float64(ttfbMs))
 			fetchDurationPerBlockPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
 			fetchSpeedPerBlockPerPeerMetric.Observe(float64(received) / float64(durationMs))
@@ -573,12 +574,14 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 			// we don't expect to see this error any time soon, but if IPFS
 			// ecosystem ever starts allowing bigger blocks, this message will save
 			// multiple people collective man-months in debugging ;-)
+			networkError = fmt.Sprintf("strn responded with a block bigger than maxBlockSize=%d", maxBlockSize-1)
 			return nil, fmt.Errorf("strn responded with a block bigger than maxBlockSize=%d", maxBlockSize-1)
 		case err == io.EOF:
 			// This is fine :-)
 			// Zero-length block may be valid (example: bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku)
 			// We accept this as non-error and let it go over CID validation later.
 		default:
+			networkError = fmt.Sprintf("unable to read strn response body: %s", err.Error())
 			return nil, fmt.Errorf("unable to read strn response body: %w", err)
 		}
 	}
