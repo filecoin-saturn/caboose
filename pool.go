@@ -180,7 +180,6 @@ func (p *pool) doRefresh() {
 			newNodeWeight = 1
 		}
 		if len(p.endpoints) == 0 {
-			goLogger.Errorw("POOL 0")
 			newNodeWeight = maxWeight
 			removedNodeWeight = maxWeight
 		}
