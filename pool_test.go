@@ -211,7 +211,7 @@ func (ph *poolHarness) assertWeight(t *testing.T, url string, expected int) {
 
 	for i := range ph.pool.endpoints {
 		if ph.pool.endpoints[i].url == url {
-			require.EqualValues(t, expected, ph.pool.endpoints[i].replication)
+			require.EqualValues(t, expected, ph.pool.endpoints[i].weight)
 			return
 		}
 	}

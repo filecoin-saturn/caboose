@@ -73,16 +73,21 @@ type Config struct {
 }
 
 const DefaultMaxRetries = 3
-const DefaultPoolFailureDownvoteDebounce = 30 * time.Second
-const DefaultPoolMembershipDebounce = 10 * time.Minute
+const DefaultPoolFailureDownvoteDebounce = 1 * time.Minute
+const DefaultPoolMembershipDebounce = 3 * DefaultPoolRefreshInterval
 const DefaultPoolLowWatermark = 5
 const DefaultSaturnRequestTimeout = 19 * time.Second
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
 const DefaultPoolRefreshInterval = 5 * time.Minute
 
+// we cool off sending requests to Saturn for a cid for a certain duration
+// if we've seen a certain number of failures for it already in a given duration.
 const DefaultMaxCidFailures = 3
-const DefaultCidCoolDownDuration = 10 * time.Minute
+const DefaultCidCoolDownDuration = 5 * time.Minute
+
+// we cool off sending requests to a Saturn node if it returns transient errors rather than immediately downvoting it;
+// however, only upto a certain max number of cool-offs.
 const DefaultSaturnNodeCoolOff = 5 * time.Minute
 const DefaultMaxNCoolOff = 3
 
