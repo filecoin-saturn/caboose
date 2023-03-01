@@ -88,11 +88,19 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 		if err == nil && received > 0 {
 			fetchTTFBPerBlockPerPeerSuccessMetric.Observe(float64(ttfbMs))
-			fetchDurationPerBlockPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
+			if mime == "application/vnd.ipld.raw" {
+				fetchDurationPerBlockPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
+			} else {
+				fetchDurationPerCarPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
+			}
 			fetchSpeedPerBlockPerPeerMetric.Observe(float64(received) / float64(durationMs))
 		} else {
 			fetchTTFBPerBlockPerPeerFailureMetric.Observe(float64(ttfbMs))
-			fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
+			if mime == "application/vnd.ipld.raw" {
+				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
+			} else {
+				fetchDurationPerCarPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
+			}
 		}
 
 		if received > 0 {
