@@ -86,7 +86,7 @@ type Caboose struct {
 }
 
 // DataCallback allows for extensible validation of path-retrieved data.
-type DataCallback func(io.Reader) error
+type DataCallback func(resource string, reader io.Reader) error
 
 // NewCaboose sets up a caboose fetcher.
 // Note: Caboose is NOT a persistent blockstore and does NOT have an in-memory cache.

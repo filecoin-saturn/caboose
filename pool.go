@@ -332,28 +332,54 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 
 	carFetchStart := time.Now()
 
+	pq := []string{path}
 	for i := 0; i < len(nodes); i++ {
-		err = p.fetchResourceAndUpdate(ctx, nodes[i], path, i, cb, transientErrs)
+		err = p.fetchResourceAndUpdate(ctx, nodes[i], pq[0], i, cb, transientErrs)
 
-		// TODO: keep queue of neededp paths for better handling of ErrPartialResponse failures.
 		if err == nil {
-			durationMs := time.Since(carFetchStart).Milliseconds()
-			// TODO: how to account for total retrieved data
-			//fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
-			fetchDurationCarSuccessMetric.Observe(float64(durationMs))
+			pq = pq[1:]
+			if len(pq) == 0 {
+				durationMs := time.Since(carFetchStart).Milliseconds()
+				// TODO: how to account for total retrieved data
+				//fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
+				fetchDurationCarSuccessMetric.Observe(float64(durationMs))
 
-			// downvote all parked failed nodes as some other node was able to give us the required content here.
-			reqs := make([]weightUpdateReq, 0, len(transientErrs))
-			for node, err := range transientErrs {
-				goLogger.Debugw("downvoting node with transient err as fetch was subsequently successful", "node", node, "err", err)
-				reqs = append(reqs, weightUpdateReq{
-					node:    node,
-					failure: true,
-				})
+				// downvote all parked failed nodes as some other node was able to give us the required content here.
+				reqs := make([]weightUpdateReq, 0, len(transientErrs))
+				for node, err := range transientErrs {
+					goLogger.Debugw("downvoting node with transient err as fetch was subsequently successful", "node", node, "err", err)
+					reqs = append(reqs, weightUpdateReq{
+						node:    node,
+						failure: true,
+					})
+				}
+
+				p.updateWeightBatched(reqs)
+				return
+			} else {
+				// TODO: potentially worth doing something smarter here based on what the current state
+				// of permanent vs temporary errors is.
+
+				// for now: reset i on partials so we also give them a chance to retry.
+				i = 0
 			}
+		} else if errors.Is(err, ErrPartialResponse{}) {
+			epe, ok := err.(ErrPartialResponse)
+			if !ok {
+				continue
+			}
+			if len(epe.StillNeed) == 0 {
+				// the error was ErrPartial, but no additional needs were specified treat as
+				// any other transient error.
+				continue
+			}
+			pq = pq[1:]
+			pq = append(pq, epe.StillNeed...)
+			// TODO: potentially worth doing something smarter here based on what the current state
+			// of permanent vs temporary errors is.
 
-			p.updateWeightBatched(reqs)
-			return
+			// for now: reset i on partials so we also give them a chance to retry.
+			i = 0
 		}
 	}
 

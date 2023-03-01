@@ -25,7 +25,7 @@ var (
 func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, e error) {
 	reqUrl := fmt.Sprintf(saturnReqTmpl, c)
 
-	e = p.fetchResource(ctx, from, reqUrl, "application/vnd.ipld.raw", attempt, func(r io.Reader) error {
+	e = p.fetchResource(ctx, from, reqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {
 		block, err := io.ReadAll(io.LimitReader(r, maxBlockSize))
 		if err != nil {
 			switch {
@@ -178,7 +178,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	wrapped := TrackingReader{resp.Body, time.Time{}, 0}
-	err = cb(&wrapped)
+	err = cb(resource, &wrapped)
 
 	fb = wrapped.firstByte
 	received = wrapped.len
