@@ -3,6 +3,7 @@ package caboose
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -56,6 +57,14 @@ type Config struct {
 	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
 	MaxRetrievalAttempts int
 
+	// MaxCidFailuresBeforeCoolDown is the maximum number of cid retrieval failures across the pool we will tolerate before we
+	// add the cid to the cool down cache.
+	MaxCidFailuresBeforeCoolDown int
+
+	// CidCoolDownDuration is duration of time a cid will stay in the cool down cache
+	// before we start making retrieval attempts for it.
+	CidCoolDownDuration time.Duration
+
 	// SaturnNodeCoolOff is the cool off duration for a saturn node once we determine that we shouldn't be sending requests to it for a while.
 	SaturnNodeCoolOff time.Duration
 
@@ -71,6 +80,9 @@ const DefaultSaturnRequestTimeout = 19 * time.Second
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
 const DefaultPoolRefreshInterval = 5 * time.Minute
+
+const DefaultMaxCidFailures = 3
+const DefaultCidCoolDownDuration = 10 * time.Minute
 const DefaultSaturnNodeCoolOff = 5 * time.Minute
 const DefaultMaxNCoolOff = 3
 
@@ -81,6 +93,15 @@ var ErrContentProviderNotFound error = errors.New("strn failed to find content p
 var ErrSaturnTimeout error = errors.New("strn backend timed out")
 var ErrSaturnTooManyRequests error = errors.New("strn backend returned `too many requests` error; 429")
 
+type ErrCidCoolDown struct {
+	Cid          cid.Cid
+	RetryAfterMs int64
+}
+
+func (e *ErrCidCoolDown) Error() string {
+	return fmt.Sprintf("multiple retrieval failures seen for cid %s, please retry after %d milliseconds", e.Cid, e.RetryAfterMs)
+}
+
 type Caboose struct {
 	config *Config
 	pool   *pool
@@ -88,6 +109,14 @@ type Caboose struct {
 }
 
 func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
+
+	if config.CidCoolDownDuration == 0 {
+		config.CidCoolDownDuration = DefaultCidCoolDownDuration
+	}
+	if config.MaxCidFailuresBeforeCoolDown == 0 {
+		config.MaxCidFailuresBeforeCoolDown = DefaultMaxCidFailures
+	}
+
 	if config.SaturnNodeCoolOff == 0 {
 		config.SaturnNodeCoolOff = DefaultSaturnNodeCoolOff
 	}
