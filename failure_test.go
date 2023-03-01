@@ -245,10 +245,11 @@ func (ch *CabooseHarness) startOrchestrator() {
 }
 
 type ep struct {
-	server       *httptest.Server
-	valid        bool
-	cnt          int
-	transientErr bool
+	server         *httptest.Server
+	valid          bool
+	cnt            int
+	tooManyReqsErr bool
+	transientErr   bool
 }
 
 var testBlock = []byte("hello World")
@@ -262,6 +263,9 @@ func (e *ep) Setup() {
 		} else if e.transientErr {
 			w.WriteHeader(http.StatusGatewayTimeout)
 			w.Write([]byte("504"))
+		} else if e.tooManyReqsErr {
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte("429"))
 		} else {
 			w.WriteHeader(503)
 			w.Write([]byte("503"))

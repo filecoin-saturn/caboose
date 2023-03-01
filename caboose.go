@@ -64,25 +64,34 @@ type Config struct {
 	// CidCoolDownDuration is duration of time a cid will stay in the cool down cache
 	// before we start making retrieval attempts for it.
 	CidCoolDownDuration time.Duration
+
+	// SaturnNodeCoolOff is the cool off duration for a saturn node once we determine that we shouldn't be sending requests to it for a while.
+	SaturnNodeCoolOff time.Duration
+
+	// MaxNCoolOff is the number of times we will cool off a node before downvoting it.
+	MaxNCoolOff int
 }
 
 const DefaultMaxRetries = 3
-const DefaultPoolFailureDownvoteDebounce = time.Second
-const DefaultPoolMembershipDebounce = 5 * time.Minute
+const DefaultPoolFailureDownvoteDebounce = 30 * time.Second
+const DefaultPoolMembershipDebounce = 10 * time.Minute
 const DefaultPoolLowWatermark = 5
 const DefaultSaturnRequestTimeout = 19 * time.Second
-const DefaultSaturnGlobalBlockFetchTimeout = 60 * time.Second
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
 const DefaultPoolRefreshInterval = 5 * time.Minute
+
 const DefaultMaxCidFailures = 3
 const DefaultCidCoolDownDuration = 10 * time.Minute
+const DefaultSaturnNodeCoolOff = 5 * time.Minute
+const DefaultMaxNCoolOff = 3
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available strn backend")
 var ErrBackendFailed error = errors.New("strn backend failed")
 var ErrContentProviderNotFound error = errors.New("strn failed to find content providers")
 var ErrSaturnTimeout error = errors.New("strn backend timed out")
+var ErrSaturnTooManyRequests error = errors.New("strn backend returned `too many requests` error; 429")
 
 type ErrCidCoolDown struct {
 	Cid          cid.Cid
@@ -100,11 +109,19 @@ type Caboose struct {
 }
 
 func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
+
 	if config.CidCoolDownDuration == 0 {
 		config.CidCoolDownDuration = DefaultCidCoolDownDuration
 	}
 	if config.MaxCidFailuresBeforeCoolDown == 0 {
 		config.MaxCidFailuresBeforeCoolDown = DefaultMaxCidFailures
+
+	if config.SaturnNodeCoolOff == 0 {
+		config.SaturnNodeCoolOff = DefaultSaturnNodeCoolOff
+	}
+
+	if config.MaxNCoolOff == 0 {
+		config.MaxNCoolOff = DefaultMaxNCoolOff
 	}
 
 	c := Caboose{
