@@ -13,11 +13,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/patrickmn/go-cache"
-
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
 	blocks "github.com/ipfs/go-libipfs/blocks"
+	"github.com/patrickmn/go-cache"
 	"github.com/serialx/hashring"
 )
 
@@ -299,7 +298,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 
 	coolOffTransientsF := func() {
 		reqs := make([]weightUpdateReq, 0, len(transientErrs))
-		for node, _ := range transientErrs {
+		for node := range transientErrs {
 			reqs = append(reqs, weightUpdateReq{
 				node:    node,
 				failure: true,
