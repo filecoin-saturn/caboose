@@ -143,9 +143,9 @@ func newPool(c *Config) *pool {
 
 		cidCoolDownCache: cache.New(c.CidCoolDownDuration, 1*time.Minute),
 		cidFailureCache:  cache.New(c.CidCoolDownDuration, 1*time.Minute),
-		
-    coolOffCount:     make(map[string]int),
-		coolOffCache:     cache.New(c.SaturnNodeCoolOff, cache.DefaultExpiration),
+
+		coolOffCount: make(map[string]int),
+		coolOffCache: cache.New(c.SaturnNodeCoolOff, cache.DefaultExpiration),
 	}
 
 	return &p
@@ -308,7 +308,6 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
 	return
 }
-
 
 // record the failure in the cid failure cache and
 // if the number of cid fetch failures has crossed a certain threshold, add the cid to a cool down cache.

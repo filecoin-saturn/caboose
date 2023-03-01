@@ -115,6 +115,7 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 	}
 	if config.MaxCidFailuresBeforeCoolDown == 0 {
 		config.MaxCidFailuresBeforeCoolDown = DefaultMaxCidFailures
+	}
 
 	if config.SaturnNodeCoolOff == 0 {
 		config.SaturnNodeCoolOff = DefaultSaturnNodeCoolOff
