@@ -367,6 +367,7 @@ func (p *pool) getNodesToFetch(c cid.Cid, with string) ([]string, error) {
 	defer p.lk.RUnlock()
 
 	refreshFnc := func() {
+		goLogger.Warn("not enough endpoints in the consistent hashing ring during a fetch; submitting a pool refresh request")
 		select {
 		case p.refresh <- struct{}{}:
 		default:
@@ -409,8 +410,7 @@ func (p *pool) getNodesToFetch(c cid.Cid, with string) ([]string, error) {
 		return withoutCoolOff, nil
 	}
 
-	// trigger a refresh and try to fetch more nodes
-	refreshFnc()
+	// try to fetch more nodes
 	allNodes, ok := p.c.GetNodes(aff, len(p.endpoints))
 	if !ok {
 		return nil, ErrNoBackend
@@ -475,7 +475,9 @@ func (p *pool) updatePoolWithNewWeightUnlocked(nm *Member, idx int) {
 		p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
 		// we will not add this node back to the cache before the cool off period expires
 		p.removedTimeCache.Set(nm.url, struct{}{}, cache.DefaultExpiration)
+
 		if len(p.endpoints) < p.config.PoolLowWatermark {
+			goLogger.Warn("pool size below low watermark after removing a node; submitting a pool refresh request")
 			select {
 			case p.refresh <- struct{}{}:
 			default:
