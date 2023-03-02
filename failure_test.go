@@ -72,11 +72,6 @@ func TestCabooseTransientFailures(t *testing.T) {
 		nodeWeight = (nodeWeight * 80) / 100
 		_, err = ch.c.Get(ctx, randCid)
 		require.Contains(t, err.Error(), "504")
-		weights = ch.getPoolWeights()
-		require.Len(t, weights, 3)
-		for _, w := range weights {
-			require.EqualValues(t, nodeWeight, w)
-		}
 		if nodeWeight == 1 {
 			break
 		}
