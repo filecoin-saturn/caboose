@@ -54,6 +54,12 @@ func TestCidCoolDown(t *testing.T) {
 
 type HarnessOption func(config *caboose.Config)
 
+func WithPoolMembershipDebounce(d time.Duration) func(config *caboose.Config) {
+	return func(config *caboose.Config) {
+		config.PoolMembershipDebounce = d
+	}
+}
+
 func WithMaxCidFailuresBeforeCoolDown(max int) func(config *caboose.Config) {
 	return func(config *caboose.Config) {
 		config.MaxCidFailuresBeforeCoolDown = max
@@ -63,6 +69,12 @@ func WithMaxCidFailuresBeforeCoolDown(max int) func(config *caboose.Config) {
 func WithCidCoolDownDuration(duration time.Duration) func(config *caboose.Config) {
 	return func(config *caboose.Config) {
 		config.CidCoolDownDuration = duration
+	}
+}
+
+func WithMaxNCoolOff(n int) func(config *caboose.Config) {
+	return func(config *caboose.Config) {
+		config.MaxNCoolOff = n
 	}
 }
 

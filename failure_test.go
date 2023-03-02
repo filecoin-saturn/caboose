@@ -15,17 +15,15 @@ import (
 	"github.com/multiformats/go-multicodec"
 )
 
-var defaultCabooseWeight = 20
+var maxCabooseWeight = 20
 
 func TestCabooseTransientFailures(t *testing.T) {
 	ctx := context.Background()
-	ch := BuildCabooseHarness(t, 3, 3)
+	ch := BuildCabooseHarness(t, 3, 3, WithMaxNCoolOff(1), WithPoolMembershipDebounce(100*time.Second))
 
 	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
-	ch.fetchAndAssertSuccess(t, ctx, testCid)
 
-	// All three nodes should return transient failures -> None get downvoted or removed
-	// fetch fails
+	// All three nodes should return transient failures -> none get downvoted as they are added to cool off.
 	ch.failNodesWithTransientErr(t, func(e *ep) bool {
 		return true
 	})
@@ -33,56 +31,52 @@ func TestCabooseTransientFailures(t *testing.T) {
 	_, err := ch.c.Get(ctx, testCid)
 	require.Contains(t, err.Error(), "504")
 
-	// run 50 fetches -> all nodes should still be in the ring
-	ch.runFetchesForRandCids(50)
-	require.EqualValues(t, 0, ch.nNodesAlive())
-	require.EqualValues(t, 3, ch.getHashRingSize())
-
 	weights := ch.getPoolWeights()
 	require.Len(t, weights, 3)
 	for _, w := range weights {
-		require.EqualValues(t, defaultCabooseWeight, w)
+		require.EqualValues(t, maxCabooseWeight, w)
 	}
 
-	// Only one node returns transient failure, it gets downvoted
-	cnt := 0
-	ch.recoverNodesFromTransientErr(t, func(e *ep) bool {
-		if cnt < 2 {
-			cnt++
-			return true
-		}
-		return false
-	})
-	require.EqualValues(t, 2, ch.nNodesAlive())
-	ch.fetchAndAssertSuccess(t, ctx, testCid)
+	// only one cool off is allowed -> nodes will get downvoted now
+	_, err = ch.c.Get(ctx, testCid)
+	require.Contains(t, err.Error(), "504")
+	weights = ch.getPoolWeights()
+	require.Len(t, weights, 3)
+	for _, w := range weights {
+		require.EqualValues(t, (maxCabooseWeight*80)/100, w)
+	}
 
-	// assert node with transient failure is eventually downvoted
-	ch.stopOrchestrator()
+	// downvote nodes to zero -> they get added back with lower weight.
+	nodeWeight := (maxCabooseWeight * 80) / 100
 	i := 0
-	require.Eventually(t, func() bool {
+	for {
 		randCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte{uint8(i)})
-		i++
-		_, _ = ch.c.Get(context.Background(), randCid)
-		w := ch.getPoolWeights()
-		for _, weight := range w {
-			if weight < defaultCabooseWeight {
-				return true
+		i += 1
+		nodeWeight = (nodeWeight * 80) / 100
+		_, err = ch.c.Get(ctx, randCid)
+		require.Contains(t, err.Error(), "504")
+		weights = ch.getPoolWeights()
+		require.Len(t, weights, 3)
+		for _, w := range weights {
+			require.EqualValues(t, nodeWeight, w)
+		}
+		if nodeWeight == 1 {
+			break
+		}
+	}
+	randCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte{uint8(i)})
+	_, err = ch.c.Get(ctx, randCid)
+	require.Contains(t, err.Error(), "504")
+
+	require.Eventually(t, func() bool {
+		weights = ch.getPoolWeights()
+		for _, w := range weights {
+			if w != (maxCabooseWeight*10)/100 {
+				return false
 			}
 		}
-		return false
-
-	}, 20*time.Second, 100*time.Millisecond)
-
-	// but both the other nodes should have full weight
-	weights = ch.getPoolWeights()
-	cnt = 0
-
-	for _, w := range weights {
-		if w == defaultCabooseWeight {
-			cnt++
-		}
-	}
-	require.EqualValues(t, 2, cnt)
+		return true
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func TestCabooseFailures(t *testing.T) {

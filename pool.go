@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -290,34 +291,20 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	}
 	p.cidLk.RUnlock()
 
-	transientErrs := make(map[string]error)
 	nodes, err := p.getNodesToFetch(c, with)
 	if err != nil {
 		return nil, err
 	}
 
-	coolOffTransientsF := func() {
-		reqs := make([]weightUpdateReq, 0, len(transientErrs))
-		for node := range transientErrs {
-			reqs = append(reqs, weightUpdateReq{
-				node:    node,
-				failure: true,
-				coolOff: true,
-			})
-		}
-		p.changeWeightBatched(reqs)
-	}
-
 	blockFetchStart := time.Now()
 	for i := 0; i < len(nodes); i++ {
-		blk, err = p.fetchAndUpdate(ctx, nodes[i], c, i, transientErrs)
+		blk, err = p.fetchAndUpdate(ctx, nodes[i], c, i)
 
 		if err == nil {
 			durationMs := time.Since(blockFetchStart).Milliseconds()
 			fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
 			fetchDurationBlockSuccessMetric.Observe(float64(durationMs))
 
-			coolOffTransientsF()
 			return
 		}
 	}
@@ -325,9 +312,6 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 	fetchDurationBlockFailureMetric.Observe(float64(time.Since(blockFetchStart).Milliseconds()))
 
 	p.updateCidCoolDown(c)
-
-	// freeze transients
-	coolOffTransientsF()
 
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
 	return
@@ -432,38 +416,35 @@ func (p *pool) getNodesToFetch(c cid.Cid, with string) ([]string, error) {
 	return nodes, nil
 }
 
-func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int, transientErrs map[string]error) (blk blocks.Block, err error) {
+func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int) (blk blocks.Block, err error) {
 	blk, err = p.doFetch(ctx, node, c, attempt)
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
 	}
 
 	if err == nil {
-		p.changeWeight(node, false, false)
+		p.changeWeight(node, false)
 		// Saturn fetch worked, we return the block.
 		return
 	}
 
-	// If this is a NOT found or Timeout error, park the downvoting for now and see if other members are able to give us this content.
+	// If this is a transient NOT found or Timeout error, try to cool off.
 	if errors.Is(err, ErrContentProviderNotFound) || errors.Is(err, ErrSaturnTimeout) {
-		transientErrs[node] = err
-		return
+		if ok := p.isCoolOffLocked(node); ok {
+			return
+		}
 	}
 
-	coolOff := false
-	if errors.Is(err, ErrSaturnTooManyRequests) {
-		coolOff = true
+	var errTooManyRequests ErrSaturnTooManyRequests
+	if errors.As(err, &errTooManyRequests) {
+		if ok := p.isCoolOffLocked(node); ok {
+			return
+		}
 	}
 
 	// Saturn fetch failed, we downvote the failing member.
-	p.changeWeight(node, true, coolOff)
+	p.changeWeight(node, true)
 	return
-}
-
-type weightUpdateReq struct {
-	node    string
-	failure bool
-	coolOff bool
 }
 
 func (p *pool) updatePoolWithNewWeightUnlocked(nm *Member, idx int) {
@@ -489,7 +470,10 @@ func (p *pool) updatePoolWithNewWeightUnlocked(nm *Member, idx int) {
 	}
 }
 
-func (p *pool) isCoolOffUnlocked(node string) bool {
+func (p *pool) isCoolOffLocked(node string) bool {
+	p.lk.Lock()
+	defer p.lk.Unlock()
+
 	oldVal := p.coolOffCount[node]
 	p.coolOffCount[node] = oldVal + 1
 
@@ -505,16 +489,9 @@ func (p *pool) isCoolOffUnlocked(node string) bool {
 }
 
 // returns the updated weight mapping for tests
-func (p *pool) changeWeight(node string, failure bool, coolOff bool) {
+func (p *pool) changeWeight(node string, failure bool) {
 	p.lk.Lock()
 	defer p.lk.Unlock()
-
-	// reduce weight if we've repeatedly seen a cool off request for this node; otherwise, cool off requests to it for a while and try again.
-	if coolOff {
-		if ok := p.isCoolOffUnlocked(node); ok {
-			return
-		}
-	}
 
 	idx, nm := p.updateWeightUnlocked(node, failure)
 
@@ -529,33 +506,6 @@ func (p *pool) changeWeight(node string, failure bool, coolOff bool) {
 	if !failure {
 		p.coolOffCache.Delete(node)
 		delete(p.coolOffCount, node)
-	}
-}
-
-func (p *pool) changeWeightBatched(reqs []weightUpdateReq) {
-	p.lk.Lock()
-	defer p.lk.Unlock()
-
-	for _, req := range reqs {
-		// reduce weight if we've repeatedly seen a cool off request for this node; otherwise, cool off requests to it for a while and try again.
-		if req.coolOff {
-			if ok := p.isCoolOffUnlocked(req.node); ok {
-				continue
-			}
-		}
-
-		idx, nm := p.updateWeightUnlocked(req.node, req.failure)
-		// we weren't able to change the weight.
-		if idx == -1 || nm == nil {
-			continue
-		}
-		p.updatePoolWithNewWeightUnlocked(nm, idx)
-
-		// Remove node from cool off cache if we observed a successful fetch.
-		if !req.failure {
-			p.coolOffCache.Delete(req.node)
-			delete(p.coolOffCount, req.node)
-		}
 	}
 }
 
@@ -581,6 +531,7 @@ var (
 	saturnTransferIdKey = "Saturn-Transfer-Id"
 	saturnCacheHitKey   = "Saturn-Cache-Status"
 	saturnCacheHit      = "HIT"
+	saturnRetryAfterKey = "Retry-After"
 )
 
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
@@ -687,8 +638,22 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusTooManyRequests {
-			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTooManyRequests)
+			rs := int64(0)
+			retryAfter := resp.Header.Get(saturnRetryAfterKey)
+			if len(retryAfter) != 0 {
+				seconds, err := strconv.ParseInt(retryAfter, 10, 64)
+				if err == nil {
+					rs = seconds * 1000
+				}
+			}
+
+			if rs == 0 {
+				rs = p.config.SaturnNodeCoolOff.Milliseconds()
+			}
+
+			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTooManyRequests{RetryAfterMs: rs, Node: from})
 		}
+
 		if resp.StatusCode == http.StatusGatewayTimeout {
 			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
 		}

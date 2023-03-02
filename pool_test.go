@@ -18,35 +18,38 @@ func TestUpdateWeightWithRefresh(t *testing.T) {
 	ph.StartAndWait(t)
 
 	// downvote first node
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 16)
+	node1NewWeight := (maxWeight * 80) / 100
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], node1NewWeight)
 
 	// downvote first node again
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 12)
+	node1NewWeight = (node1NewWeight * 80) / 100
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], node1NewWeight)
 
 	// upvote node
-	ph.upvoteAndAssertUpvoted(t, ph.eps[0], 13)
+	node1NewWeight = node1NewWeight + 1
+	ph.upvoteAndAssertUpvoted(t, ph.eps[0], node1NewWeight)
 
 	ph.upvoteAndAssertUpvoted(t, ph.eps[1], 20)
 	ph.upvoteAndAssertUpvoted(t, ph.eps[2], 20)
 	ph.downvoteAndAssertDownvoted(t, ph.eps[2], 16)
 	ph.upvoteAndAssertUpvoted(t, ph.eps[2], 17)
 
-	// when node is downvoted to zero, it will be added back by a refresh with a weight of 10 as it has been removed recently.
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 8)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 6)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 4)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 3)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 2)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
-	ph.pool.changeWeight(ph.eps[0], true, false)
+	for {
+		node1NewWeight = (node1NewWeight * 80) / 100
+		ph.downvoteAndAssertDownvoted(t, ph.eps[0], node1NewWeight)
+		if node1NewWeight == 1 {
+			break
+		}
+	}
+	ph.pool.changeWeight(ph.eps[0], true)
 
-	// node is added back with a lower weight as it had recently been removed
+	// when node is downvoted to zero, it will be added back by a refresh with a weight of 10% max as it has been removed recently.
+
 	require.Eventually(t, func() bool {
 		ph.pool.lk.RLock()
 		defer ph.pool.lk.RUnlock()
 		weights := ph.pool.endpoints.ToWeights()
-		return weights[ph.eps[0]] == 10 && weights[ph.eps[1]] == 20 && weights[ph.eps[2]] == 17
+		return weights[ph.eps[0]] == (maxWeight*10)/100 && weights[ph.eps[1]] == 20 && weights[ph.eps[2]] == 17
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
@@ -55,23 +58,22 @@ func TestUpdateWeightWithMembershipDebounce(t *testing.T) {
 	ph.StartAndWait(t)
 
 	// assert node is removed when it's weight drops to 0 and not added back
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 16)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 12)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 9)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 7)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 5)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 4)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 3)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 2)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
-	ph.pool.changeWeight(ph.eps[0], true, false)
+	node1NewWeight := maxWeight
+	for {
+		node1NewWeight = (node1NewWeight * 80) / 100
+		ph.downvoteAndAssertDownvoted(t, ph.eps[0], node1NewWeight)
+		if node1NewWeight == 1 {
+			break
+		}
+	}
+	ph.pool.changeWeight(ph.eps[0], true)
 
-	// node is added back but with half the weight as it has been marked for membership debounce
+	// node is added back but with 10% max weight.
 	require.Eventually(t, func() bool {
 		ph.pool.lk.RLock()
 		defer ph.pool.lk.RUnlock()
 		weights := ph.pool.endpoints.ToWeights()
-		return weights[ph.eps[0]] == 10
+		return weights[ph.eps[0]] == (maxWeight*10)/100
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
@@ -81,15 +83,14 @@ func TestUpdateWeightWithoutRefresh(t *testing.T) {
 	ph.stopOrch(t)
 
 	// assert node is removed when it's weight drops to 0
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 16)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 12)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 9)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 7)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 5)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 4)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 3)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 2)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
+	node1NewWeight := maxWeight
+	for {
+		node1NewWeight = (node1NewWeight * 80) / 100
+		ph.downvoteAndAssertDownvoted(t, ph.eps[0], node1NewWeight)
+		if node1NewWeight == 1 {
+			break
+		}
+	}
 	ph.downvoteAndAssertRemoved(t, ph.eps[0])
 	ph.assertRingSize(t, 2)
 }
@@ -110,40 +111,6 @@ func TestUpdateWeightDebounce(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		ph.upvoteAndAssertUpvoted(t, ph.eps[0], 16)
 	}
-}
-
-func TestUpdateWeightBatched(t *testing.T) {
-	ph := BuildPoolHarness(t, 5, WithWeightChangeDebounce(0))
-	ph.StartAndWait(t)
-
-	// downvote, 0,2, & 4
-	var reqs []batchUpdateReq
-	for i := 0; i < 5; i = i + 2 {
-		reqs = append(reqs, batchUpdateReq{
-			node:     ph.eps[i],
-			failure:  true,
-			expected: 16,
-		})
-	}
-	ph.updateBatchedAndAssert(t, reqs)
-
-	// upvote, 0,2, & 3
-	reqs = []batchUpdateReq{}
-	reqs = append(reqs, batchUpdateReq{
-		node:     ph.eps[0],
-		failure:  false,
-		expected: 17,
-	}, batchUpdateReq{
-		node:     ph.eps[2],
-		failure:  false,
-		expected: 17,
-	}, batchUpdateReq{
-		node:     ph.eps[3],
-		failure:  false,
-		expected: 20,
-	})
-
-	ph.updateBatchedAndAssert(t, reqs)
 }
 
 type poolHarness struct {
@@ -173,35 +140,18 @@ type batchUpdateReq struct {
 	expected int
 }
 
-func (ph *poolHarness) updateBatchedAndAssert(t *testing.T, reqs []batchUpdateReq) {
-	var weightReqs []weightUpdateReq
-
-	for _, req := range reqs {
-		weightReqs = append(weightReqs, weightUpdateReq{
-			node:    req.node,
-			failure: req.failure,
-		})
-	}
-
-	ph.pool.changeWeightBatched(weightReqs)
-
-	for _, req := range reqs {
-		ph.assertWeight(t, req.node, req.expected)
-	}
-}
-
 func (ph *poolHarness) downvoteAndAssertRemoved(t *testing.T, url string) {
-	ph.pool.changeWeight(url, true, false)
+	ph.pool.changeWeight(url, true)
 	ph.assertRemoved(t, url)
 }
 
 func (ph *poolHarness) downvoteAndAssertDownvoted(t *testing.T, url string, expected int) {
-	ph.pool.changeWeight(url, true, false)
+	ph.pool.changeWeight(url, true)
 	ph.assertWeight(t, url, expected)
 }
 
 func (ph *poolHarness) upvoteAndAssertUpvoted(t *testing.T, url string, expected int) {
-	ph.pool.changeWeight(url, false, false)
+	ph.pool.changeWeight(url, false)
 	ph.assertWeight(t, url, expected)
 }
 

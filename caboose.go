@@ -96,7 +96,15 @@ var ErrNoBackend error = errors.New("no available strn backend")
 var ErrBackendFailed error = errors.New("strn backend failed")
 var ErrContentProviderNotFound error = errors.New("strn failed to find content providers")
 var ErrSaturnTimeout error = errors.New("strn backend timed out")
-var ErrSaturnTooManyRequests error = errors.New("strn backend returned `too many requests` error; 429")
+
+type ErrSaturnTooManyRequests struct {
+	Node         string
+	RetryAfterMs int64
+}
+
+func (e ErrSaturnTooManyRequests) Error() string {
+	return fmt.Sprintf("saturn node %s returned `too many requests` error, please retry after %d milliseconds", e.Node, e.RetryAfterMs)
+}
 
 type ErrCidCoolDown struct {
 	Cid          cid.Cid
