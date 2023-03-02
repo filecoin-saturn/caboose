@@ -16,6 +16,23 @@ import (
 )
 
 var maxCabooseWeight = 20
+var retryAfterMs = 1000
+
+func TestHttp429(t *testing.T) {
+	ctx := context.Background()
+	ch := BuildCabooseHarness(t, 3, 3, WithMaxNCoolOff(1), WithPoolMembershipDebounce(100*time.Second))
+
+	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
+	ch.failNodesWithCode(t, func(e *ep) bool {
+		return true
+	}, http.StatusTooManyRequests)
+
+	_, err := ch.c.Get(ctx, testCid)
+	require.Error(t, err)
+
+	ferr := err.(*caboose.ErrSaturnTooManyRequests)
+	require.EqualValues(t, retryAfterMs, ferr.RetryAfterMs)
+}
 
 func TestCabooseTransientFailures(t *testing.T) {
 	ctx := context.Background()
@@ -24,9 +41,9 @@ func TestCabooseTransientFailures(t *testing.T) {
 	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
 
 	// All three nodes should return transient failures -> none get downvoted as they are added to cool off.
-	ch.failNodesWithTransientErr(t, func(e *ep) bool {
+	ch.failNodesWithCode(t, func(e *ep) bool {
 		return true
-	})
+	}, http.StatusGatewayTimeout)
 	require.EqualValues(t, 0, ch.nNodesAlive())
 	_, err := ch.c.Get(ctx, testCid)
 	require.Contains(t, err.Error(), "504")
@@ -167,21 +184,11 @@ func (ch *CabooseHarness) fetchAndAssertSuccess(t *testing.T, ctx context.Contex
 	require.NoError(t, err)
 	require.NotEmpty(t, blk)
 }
-
-func (ch *CabooseHarness) failNodesWithTransientErr(t *testing.T, selectorF func(ep *ep) bool) {
+func (ch *CabooseHarness) failNodesWithCode(t *testing.T, selectorF func(ep *ep) bool, code int) {
 	for _, n := range ch.pool {
 		if selectorF(n) {
 			n.valid = false
-			n.transientErr = true
-		}
-	}
-}
-
-func (ch *CabooseHarness) recoverNodesFromTransientErr(t *testing.T, selectorF func(ep *ep) bool) {
-	for _, n := range ch.pool {
-		if selectorF(n) {
-			n.valid = true
-			n.transientErr = false
+			n.httpCode = code
 		}
 	}
 }
@@ -239,11 +246,10 @@ func (ch *CabooseHarness) startOrchestrator() {
 }
 
 type ep struct {
-	server         *httptest.Server
-	valid          bool
-	cnt            int
-	tooManyReqsErr bool
-	transientErr   bool
+	server   *httptest.Server
+	valid    bool
+	cnt      int
+	httpCode int
 }
 
 var testBlock = []byte("hello World")
@@ -254,15 +260,12 @@ func (e *ep) Setup() {
 		e.cnt++
 		if e.valid {
 			w.Write(testBlock)
-		} else if e.transientErr {
-			w.WriteHeader(http.StatusGatewayTimeout)
-			w.Write([]byte("504"))
-		} else if e.tooManyReqsErr {
-			w.WriteHeader(http.StatusTooManyRequests)
-			w.Write([]byte("429"))
 		} else {
-			w.WriteHeader(503)
-			w.Write([]byte("503"))
+			if e.httpCode == http.StatusTooManyRequests {
+				w.Header().Set("Retry-After", "1")
+			}
+			w.WriteHeader(e.httpCode)
+			w.Write([]byte("error"))
 		}
 	}))
 }

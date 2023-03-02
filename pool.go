@@ -437,6 +437,10 @@ func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attem
 
 	var errTooManyRequests ErrSaturnTooManyRequests
 	if errors.As(err, &errTooManyRequests) {
+		err = &ErrSaturnTooManyRequests{
+			Node:         errTooManyRequests.Node,
+			RetryAfterMs: errTooManyRequests.RetryAfterMs,
+		}
 		if ok := p.isCoolOffLocked(node); ok {
 			return
 		}
@@ -479,8 +483,8 @@ func (p *pool) isCoolOffLocked(node string) bool {
 
 	// reduce cool off duration if we've repeatedly seen a cool off request for this node.
 	newCoolOffMs := p.config.SaturnNodeCoolOff.Milliseconds() / int64(oldVal+1)
-	if newCoolOffMs < (time.Minute.Milliseconds()) {
-		newCoolOffMs = time.Minute.Milliseconds()
+	if newCoolOffMs == 0 {
+		newCoolOffMs = 1
 	}
 
 	p.coolOffCache.Set(node, struct{}{}, time.Duration(newCoolOffMs)*time.Millisecond)

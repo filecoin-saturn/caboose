@@ -113,6 +113,23 @@ func TestUpdateWeightDebounce(t *testing.T) {
 	}
 }
 
+func TestIsCoolOff(t *testing.T) {
+	dur := 50 * time.Millisecond
+	ph := BuildPoolHarness(t, 3, WithMaxNCoolOff(2), WithCoolOffDuration(dur))
+	ph.StartAndWait(t)
+
+	require.True(t, ph.pool.isCoolOffLocked(ph.eps[0]))
+	require.True(t, ph.pool.isCoolOffLocked(ph.eps[0]))
+	require.False(t, ph.pool.isCoolOffLocked(ph.eps[0]))
+
+	require.Eventually(t, func() bool {
+		ph.pool.lk.RLock()
+		_, ok := ph.pool.coolOffCache.Get(ph.eps[0])
+		ph.pool.lk.RUnlock()
+		return !ok
+	}, 10*time.Second, 50*time.Millisecond)
+}
+
 type poolHarness struct {
 	gol      sync.Mutex
 	goodOrch bool
@@ -132,12 +149,6 @@ func (ph *poolHarness) assertRemoved(t *testing.T, url string) {
 			require.Fail(t, "node not removed")
 		}
 	}
-}
-
-type batchUpdateReq struct {
-	node     string
-	failure  bool
-	expected int
 }
 
 func (ph *poolHarness) downvoteAndAssertRemoved(t *testing.T, url string) {
@@ -200,6 +211,18 @@ func (ph *poolHarness) stopOrch(t *testing.T) {
 }
 
 type HarnessOption func(config *Config)
+
+func WithCoolOffDuration(dur time.Duration) func(*Config) {
+	return func(config *Config) {
+		config.SaturnNodeCoolOff = dur
+	}
+}
+
+func WithMaxNCoolOff(n int) func(*Config) {
+	return func(config *Config) {
+		config.MaxNCoolOff = n
+	}
+}
 
 func WithWeightChangeDebounce(debounce time.Duration) func(*Config) {
 	return func(config *Config) {
