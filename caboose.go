@@ -92,10 +92,10 @@ const DefaultSaturnNodeCoolOff = 5 * time.Minute
 const DefaultMaxNCoolOff = 3
 
 var ErrNotImplemented error = errors.New("not implemented")
-var ErrNoBackend error = errors.New("no available strn backend")
-var ErrBackendFailed error = errors.New("strn backend failed")
-var ErrContentProviderNotFound error = errors.New("strn failed to find content providers")
-var ErrSaturnTimeout error = errors.New("strn backend timed out")
+var ErrNoBackend error = errors.New("no available saturn backend")
+var ErrBackendFailed error = errors.New("saturn backend failed")
+var ErrContentProviderNotFound error = errors.New("saturn failed to find content providers")
+var ErrSaturnTimeout error = errors.New("saturn backend timed out")
 
 type ErrSaturnTooManyRequests struct {
 	Node         string
@@ -112,7 +112,7 @@ type ErrCidCoolDown struct {
 }
 
 func (e *ErrCidCoolDown) Error() string {
-	return fmt.Sprintf("multiple retrieval failures seen for cid %s, please retry after %d milliseconds", e.Cid, e.RetryAfterMs)
+	return fmt.Sprintf("multiple saturn retrieval failures seen for CID %s, please retry after %d milliseconds", e.Cid, e.RetryAfterMs)
 }
 
 type Caboose struct {
