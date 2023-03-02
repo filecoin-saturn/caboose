@@ -16,7 +16,7 @@ import (
 )
 
 var maxCabooseWeight = 20
-var retryAfterMs = 1000
+var expRetryAfter = 1 * time.Second
 
 func TestHttp429(t *testing.T) {
 	ctx := context.Background()
@@ -31,7 +31,7 @@ func TestHttp429(t *testing.T) {
 	require.Error(t, err)
 
 	ferr := err.(*caboose.ErrSaturnTooManyRequests)
-	require.EqualValues(t, retryAfterMs, ferr.RetryAfterMs)
+	require.EqualValues(t, expRetryAfter, ferr.RetryAfter)
 }
 
 func TestCabooseTransientFailures(t *testing.T) {
@@ -165,7 +165,7 @@ func (ch *CabooseHarness) fetchAndAssertCoolDownError(t *testing.T, ctx context.
 	coolDownErr, ok := err.(*caboose.ErrCidCoolDown)
 	require.True(t, ok)
 	require.EqualValues(t, cid, coolDownErr.Cid)
-	require.NotZero(t, coolDownErr.RetryAfterMs)
+	require.NotZero(t, coolDownErr.RetryAfter)
 }
 
 func (ch *CabooseHarness) fetchAndAssertFailure(t *testing.T, ctx context.Context, testCid cid.Cid, contains string) {

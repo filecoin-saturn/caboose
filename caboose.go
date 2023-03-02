@@ -83,8 +83,10 @@ const DefaultPoolRefreshInterval = 5 * time.Minute
 
 // we cool off sending requests to Saturn for a cid for a certain duration
 // if we've seen a certain number of failures for it already in a given duration.
-const DefaultMaxCidFailures = 3
-const DefaultCidCoolDownDuration = 5 * time.Minute
+// NOTE: before getting creative here, make sure you dont break end user flow
+// described in https://github.com/ipni/storetheindex/pull/1344
+const DefaultMaxCidFailures = 3 * DefaultMaxRetries // this has to fail more than DefaultMaxRetries done for a single gateway request
+const DefaultCidCoolDownDuration = 1 * time.Minute  // how long will a sane person wait and stare at blank screen with "retry later" error before hitting F5?
 
 // we cool off sending requests to a Saturn node if it returns transient errors rather than immediately downvoting it;
 // however, only upto a certain max number of cool-offs.
@@ -98,21 +100,27 @@ var ErrContentProviderNotFound error = errors.New("saturn failed to find content
 var ErrSaturnTimeout error = errors.New("saturn backend timed out")
 
 type ErrSaturnTooManyRequests struct {
-	Node         string
-	RetryAfterMs int64
+	Node       string
+	RetryAfter time.Duration // TODO: DRY refactor after https://github.com/ipfs/go-libipfs/issues/188
 }
 
 func (e ErrSaturnTooManyRequests) Error() string {
-	return fmt.Sprintf("saturn node %s returned `too many requests` error, please retry after %d milliseconds", e.Node, e.RetryAfterMs)
+	return fmt.Sprintf("saturn node %s returned Too Many Requests error, please retry after %s", e.Node, humanRetry(e.RetryAfter))
 }
 
 type ErrCidCoolDown struct {
-	Cid          cid.Cid
-	RetryAfterMs int64
+	Cid        cid.Cid
+	RetryAfter time.Duration // TODO: DRY refactor after https://github.com/ipfs/go-libipfs/issues/188
 }
 
 func (e *ErrCidCoolDown) Error() string {
-	return fmt.Sprintf("multiple saturn retrieval failures seen for CID %s, please retry after %d milliseconds", e.Cid, e.RetryAfterMs)
+	return fmt.Sprintf("multiple saturn retrieval failures seen for CID %s, please retry after %s", e.Cid, humanRetry(e.RetryAfter))
+}
+
+// TODO: move this to upstream error interface in https://github.com/ipfs/go-libipfs/issues/188
+// and refactor ErrCidCoolDown and ErrSaturnTooManyRequests to inherit from that instead
+func humanRetry(d time.Duration) string {
+	return d.Truncate(time.Second).String()
 }
 
 type Caboose struct {

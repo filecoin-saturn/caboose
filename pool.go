@@ -285,8 +285,8 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 
 		expireAt := at.(time.Time)
 		return nil, &ErrCidCoolDown{
-			Cid:          c,
-			RetryAfterMs: time.Until(expireAt).Milliseconds(),
+			Cid:        c,
+			RetryAfter: time.Until(expireAt),
 		}
 	}
 	p.cidLk.RUnlock()
@@ -438,8 +438,8 @@ func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attem
 	var errTooManyRequests ErrSaturnTooManyRequests
 	if errors.As(err, &errTooManyRequests) {
 		err = &ErrSaturnTooManyRequests{
-			Node:         errTooManyRequests.Node,
-			RetryAfterMs: errTooManyRequests.RetryAfterMs,
+			Node:       errTooManyRequests.Node,
+			RetryAfter: errTooManyRequests.RetryAfter,
 		}
 		if ok := p.isCoolOffLocked(node); ok {
 			return
@@ -642,20 +642,19 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusTooManyRequests {
-			rs := int64(0)
-			retryAfter := resp.Header.Get(saturnRetryAfterKey)
-			if len(retryAfter) != 0 {
-				seconds, err := strconv.ParseInt(retryAfter, 10, 64)
+			var retryAfter time.Duration
+			if strnRetryHint := resp.Header.Get(saturnRetryAfterKey); strnRetryHint != "" {
+				seconds, err := strconv.ParseInt(strnRetryHint, 10, 64)
 				if err == nil {
-					rs = seconds * 1000
+					retryAfter = time.Duration(seconds) * time.Second
 				}
 			}
 
-			if rs == 0 {
-				rs = p.config.SaturnNodeCoolOff.Milliseconds()
+			if retryAfter == 0 {
+				retryAfter = p.config.SaturnNodeCoolOff
 			}
 
-			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTooManyRequests{RetryAfterMs: rs, Node: from})
+			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTooManyRequests{RetryAfter: retryAfter, Node: from})
 		}
 
 		if resp.StatusCode == http.StatusGatewayTimeout {
