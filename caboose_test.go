@@ -25,9 +25,9 @@ func TestCidCoolDown(t *testing.T) {
 	ch.fetchAndAssertSuccess(t, ctx, testCid)
 
 	// Invalidate all servers so we cool down cids
-	ch.failNodes(t, func(e *ep) bool {
+	ch.failNodesWithCode(t, func(e *ep) bool {
 		return true
-	})
+	}, 503)
 
 	// Fetch should fail with fetch error
 	ch.fetchAndAssertFailure(t, ctx, testCid, "503")

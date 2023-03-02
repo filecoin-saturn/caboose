@@ -264,6 +264,9 @@ func (e *ep) Setup() {
 			if e.httpCode == http.StatusTooManyRequests {
 				w.Header().Set("Retry-After", "1")
 			}
+			if e.httpCode == 0 {
+				e.httpCode = 500
+			}
 			w.WriteHeader(e.httpCode)
 			w.Write([]byte("error"))
 		}
