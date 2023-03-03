@@ -42,7 +42,7 @@ func main1() int {
 			saturnClient := http.Client{
 				Transport: &http.Transport{
 					TLSClientConfig: &tls.Config{
-						ServerName: "strn.pl",
+						ServerName: "l1s.strn.pl",
 					},
 				},
 			}

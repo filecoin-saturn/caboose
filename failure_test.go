@@ -2,12 +2,8 @@ package caboose_test
 
 import (
 	"context"
-	"crypto/tls"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,74 +15,80 @@ import (
 	"github.com/multiformats/go-multicodec"
 )
 
-var defaultCabooseWeight = 20
+var maxCabooseWeight = 20
+var expRetryAfter = 1 * time.Second
+
+func TestHttp429(t *testing.T) {
+	ctx := context.Background()
+	ch := BuildCabooseHarness(t, 3, 3, WithMaxNCoolOff(1), WithPoolMembershipDebounce(100*time.Second))
+
+	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
+	ch.failNodesWithCode(t, func(e *ep) bool {
+		return true
+	}, http.StatusTooManyRequests)
+
+	_, err := ch.c.Get(ctx, testCid)
+	require.Error(t, err)
+
+	ferr := err.(*caboose.ErrSaturnTooManyRequests)
+	require.EqualValues(t, expRetryAfter, ferr.RetryAfter)
+}
 
 func TestCabooseTransientFailures(t *testing.T) {
 	ctx := context.Background()
-	ch := BuildCabooseHarness(t, 3, 3)
+	ch := BuildCabooseHarness(t, 3, 3, WithMaxNCoolOff(1), WithPoolMembershipDebounce(100*time.Second))
 
 	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
-	ch.fetchAndAssertSuccess(t, ctx, testCid)
 
-	// All three nodes should return transient failures -> None get downvoted or removed
-	// fetch fails
-	ch.failNodesWithTransientErr(t, func(e *ep) bool {
+	// All three nodes should return transient failures -> none get downvoted as they are added to cool off.
+	ch.failNodesWithCode(t, func(e *ep) bool {
 		return true
-	})
+	}, http.StatusGatewayTimeout)
 	require.EqualValues(t, 0, ch.nNodesAlive())
 	_, err := ch.c.Get(ctx, testCid)
 	require.Contains(t, err.Error(), "504")
 
-	// run 50 fetches -> all nodes should still be in the ring
-	ch.runFetchesForRandCids(50)
-	require.EqualValues(t, 0, ch.nNodesAlive())
-	require.EqualValues(t, 3, ch.getHashRingSize())
-
 	weights := ch.getPoolWeights()
 	require.Len(t, weights, 3)
 	for _, w := range weights {
-		require.EqualValues(t, defaultCabooseWeight, w)
+		require.EqualValues(t, maxCabooseWeight, w)
 	}
 
-	// Only one node returns transient failure, it gets downvoted
-	cnt := 0
-	ch.recoverNodesFromTransientErr(t, func(e *ep) bool {
-		if cnt < 2 {
-			cnt++
-			return true
-		}
-		return false
-	})
-	require.EqualValues(t, 2, ch.nNodesAlive())
-	ch.fetchAndAssertSuccess(t, ctx, testCid)
+	// only one cool off is allowed -> nodes will get downvoted now
+	_, err = ch.c.Get(ctx, testCid)
+	require.Contains(t, err.Error(), "504")
+	weights = ch.getPoolWeights()
+	require.Len(t, weights, 3)
+	for _, w := range weights {
+		require.EqualValues(t, (maxCabooseWeight*80)/100, w)
+	}
 
-	// assert node with transient failure is eventually downvoted
-	ch.stopOrchestrator()
+	// downvote nodes to zero -> they get added back with lower weight.
+	nodeWeight := (maxCabooseWeight * 80) / 100
 	i := 0
-	require.Eventually(t, func() bool {
+	for {
 		randCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte{uint8(i)})
-		i++
-		_, _ = ch.c.Get(context.Background(), randCid)
-		w := ch.getPoolWeights()
-		for _, weight := range w {
-			if weight < defaultCabooseWeight {
-				return true
+		i += 1
+		nodeWeight = (nodeWeight * 80) / 100
+		_, err = ch.c.Get(ctx, randCid)
+		require.Contains(t, err.Error(), "504")
+		if nodeWeight == 1 {
+			break
+		}
+	}
+	randCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte{uint8(i)})
+	_, err = ch.c.Get(ctx, randCid)
+	require.Contains(t, err.Error(), "504")
+
+	require.Eventually(t, func() bool {
+		weights = ch.getPoolWeights()
+		for _, w := range weights {
+			if w != (maxCabooseWeight*10)/100 {
+				return false
 			}
 		}
-		return false
-
-	}, 20*time.Second, 100*time.Millisecond)
-
-	// but both the other nodes should have full weight
-	weights = ch.getPoolWeights()
-	cnt = 0
-
-	for _, w := range weights {
-		if w == defaultCabooseWeight {
-			cnt++
-		}
-	}
-	require.EqualValues(t, 2, cnt)
+		return true
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func TestCabooseFailures(t *testing.T) {
@@ -97,12 +99,12 @@ func TestCabooseFailures(t *testing.T) {
 	ch.fetchAndAssertSuccess(t, ctx, testCid)
 
 	// fail primary
-	ch.failedNodesAndAssertFetch(t, func(e *ep) bool {
+	ch.failNodesAndAssertFetch(t, func(e *ep) bool {
 		return e.cnt > 0 && e.valid
 	}, 2, testCid)
 
 	// fail primary and secondary.
-	ch.failedNodesAndAssertFetch(t, func(e *ep) bool {
+	ch.failNodesAndAssertFetch(t, func(e *ep) bool {
 		return e.cnt > 0 && e.valid
 	}, 1, testCid)
 
@@ -157,26 +159,31 @@ func (ch *CabooseHarness) runFetchesForRandCids(n int) {
 	}
 }
 
+func (ch *CabooseHarness) fetchAndAssertCoolDownError(t *testing.T, ctx context.Context, cid cid.Cid) {
+	_, err := ch.c.Get(ctx, cid)
+	require.Error(t, err)
+	coolDownErr, ok := err.(*caboose.ErrCidCoolDown)
+	require.True(t, ok)
+	require.EqualValues(t, cid, coolDownErr.Cid)
+	require.NotZero(t, coolDownErr.RetryAfter)
+}
+
+func (ch *CabooseHarness) fetchAndAssertFailure(t *testing.T, ctx context.Context, testCid cid.Cid, contains string) {
+	_, err := ch.c.Get(ctx, testCid)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), contains)
+}
+
 func (ch *CabooseHarness) fetchAndAssertSuccess(t *testing.T, ctx context.Context, c cid.Cid) {
 	blk, err := ch.c.Get(ctx, c)
 	require.NoError(t, err)
 	require.NotEmpty(t, blk)
 }
-
-func (ch *CabooseHarness) failNodesWithTransientErr(t *testing.T, selectorF func(ep *ep) bool) {
+func (ch *CabooseHarness) failNodesWithCode(t *testing.T, selectorF func(ep *ep) bool, code int) {
 	for _, n := range ch.pool {
 		if selectorF(n) {
 			n.valid = false
-			n.transientErr = true
-		}
-	}
-}
-
-func (ch *CabooseHarness) recoverNodesFromTransientErr(t *testing.T, selectorF func(ep *ep) bool) {
-	for _, n := range ch.pool {
-		if selectorF(n) {
-			n.valid = true
-			n.transientErr = false
+			n.httpCode = code
 		}
 	}
 }
@@ -189,7 +196,7 @@ func (ch *CabooseHarness) recoverNodes(t *testing.T, selectorF func(ep *ep) bool
 	}
 }
 
-func (ch *CabooseHarness) failedNodesAndAssertFetch(t *testing.T, selectorF func(ep *ep) bool, nAlive int, cid cid.Cid) {
+func (ch *CabooseHarness) failNodesAndAssertFetch(t *testing.T, selectorF func(ep *ep) bool, nAlive int, cid cid.Cid) {
 	ch.failNodes(t, selectorF)
 	require.EqualValues(t, nAlive, ch.nNodesAlive())
 	ch.fetchAndAssertSuccess(t, context.Background(), cid)
@@ -233,62 +240,11 @@ func (ch *CabooseHarness) startOrchestrator() {
 	ch.gol.Unlock()
 }
 
-func BuildCabooseHarness(t *testing.T, n int, maxRetries int) *CabooseHarness {
-	ch := &CabooseHarness{}
-
-	ch.pool = make([]*ep, n)
-	purls := make([]string, n)
-	for i := 0; i < len(ch.pool); i++ {
-		ch.pool[i] = &ep{}
-		ch.pool[i].Setup()
-		purls[i] = strings.TrimPrefix(ch.pool[i].server.URL, "https://")
-	}
-	ch.goodOrch = true
-	orch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ch.gol.Lock()
-		defer ch.gol.Unlock()
-		if ch.goodOrch {
-			json.NewEncoder(w).Encode(purls)
-		} else {
-			json.NewEncoder(w).Encode([]string{})
-		}
-	}))
-
-	saturnClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-				ServerName:         "example.com",
-			},
-		},
-	}
-
-	ourl, _ := url.Parse(orch.URL)
-	bs, err := caboose.NewCaboose(&caboose.Config{
-		OrchestratorEndpoint: ourl,
-		OrchestratorClient:   http.DefaultClient,
-		LoggingEndpoint:      *ourl,
-		LoggingClient:        http.DefaultClient,
-		LoggingInterval:      time.Hour,
-
-		SaturnClient:             saturnClient,
-		DoValidation:             false,
-		PoolWeightChangeDebounce: time.Duration(1),
-		PoolRefresh:              time.Millisecond * 50,
-		MaxRetrievalAttempts:     maxRetries,
-		PoolMembershipDebounce:   1,
-	})
-	require.NoError(t, err)
-
-	ch.c = bs
-	return ch
-}
-
 type ep struct {
-	server       *httptest.Server
-	valid        bool
-	cnt          int
-	transientErr bool
+	server   *httptest.Server
+	valid    bool
+	cnt      int
+	httpCode int
 }
 
 var testBlock = []byte("hello World")
@@ -299,12 +255,15 @@ func (e *ep) Setup() {
 		e.cnt++
 		if e.valid {
 			w.Write(testBlock)
-		} else if e.transientErr {
-			w.WriteHeader(http.StatusGatewayTimeout)
-			w.Write([]byte("504"))
 		} else {
-			w.WriteHeader(503)
-			w.Write([]byte("503"))
+			if e.httpCode == http.StatusTooManyRequests {
+				w.Header().Set("Retry-After", "1")
+			}
+			if e.httpCode == 0 {
+				e.httpCode = 500
+			}
+			w.WriteHeader(e.httpCode)
+			w.Write([]byte("error"))
 		}
 	}))
 }

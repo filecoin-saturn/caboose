@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +20,7 @@ var (
 	saturnTransferIdKey = "Saturn-Transfer-Id"
 	saturnCacheHitKey   = "Saturn-Cache-Status"
 	saturnCacheHit      = "HIT"
+	saturnRetryAfterKey = "Retry-After"
 )
 
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
@@ -171,6 +173,22 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	respReq = resp.Request
 
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			var retryAfter time.Duration
+			if strnRetryHint := resp.Header.Get(saturnRetryAfterKey); strnRetryHint != "" {
+				seconds, err := strconv.ParseInt(strnRetryHint, 10, 64)
+				if err == nil {
+					retryAfter = time.Duration(seconds) * time.Second
+				}
+			}
+
+			if retryAfter == 0 {
+				retryAfter = p.config.SaturnNodeCoolOff
+			}
+
+			return fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTooManyRequests{RetryAfter: retryAfter, Node: from})
+		}
+
 		// empty body so it can be re-used.
 		_, _ = io.Copy(io.Discard, resp.Body)
 		if resp.StatusCode == http.StatusGatewayTimeout {
