@@ -18,30 +18,38 @@ func TestUpdateWeightWithRefresh(t *testing.T) {
 	ph.StartAndWait(t)
 
 	// downvote first node
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
+	node1NewWeight := (maxWeight * 80) / 100
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], node1NewWeight)
 
-	// downvote second node again
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 5)
+	// downvote first node again
+	node1NewWeight = (node1NewWeight * 80) / 100
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], node1NewWeight)
 
 	// upvote node
-	ph.upvoteAndAssertUpvoted(t, ph.eps[0], 6)
+	node1NewWeight = node1NewWeight + 1
+	ph.upvoteAndAssertUpvoted(t, ph.eps[0], node1NewWeight)
+
 	ph.upvoteAndAssertUpvoted(t, ph.eps[1], 20)
 	ph.upvoteAndAssertUpvoted(t, ph.eps[2], 20)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[2], 10)
-	ph.upvoteAndAssertUpvoted(t, ph.eps[2], 11)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[2], 16)
+	ph.upvoteAndAssertUpvoted(t, ph.eps[2], 17)
 
-	// when now is downvoted to zero, it will be added back by a refresh with a weight of 20.
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 3)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
+	for {
+		node1NewWeight = (node1NewWeight * 80) / 100
+		ph.downvoteAndAssertDownvoted(t, ph.eps[0], node1NewWeight)
+		if node1NewWeight == 1 {
+			break
+		}
+	}
 	ph.pool.changeWeight(ph.eps[0], true)
+
+	// when node is downvoted to zero, it will be added back by a refresh with a weight of 10% max as it has been removed recently.
 
 	require.Eventually(t, func() bool {
 		ph.pool.lk.RLock()
 		defer ph.pool.lk.RUnlock()
 		weights := ph.pool.endpoints.ToWeights()
-
-		return weights[ph.eps[0]] == 20 && weights[ph.eps[1]] == 20 && weights[ph.eps[2]] == 11
-
+		return weights[ph.eps[0]] == (maxWeight*10)/100 && weights[ph.eps[1]] == 20 && weights[ph.eps[2]] == 17
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
@@ -50,12 +58,23 @@ func TestUpdateWeightWithMembershipDebounce(t *testing.T) {
 	ph.StartAndWait(t)
 
 	// assert node is removed when it's weight drops to 0 and not added back
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 5)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 2)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
-	time.Sleep(1 * time.Second)
-	ph.downvoteAndAssertRemoved(t, ph.eps[0])
+	node1NewWeight := maxWeight
+	for {
+		node1NewWeight = (node1NewWeight * 80) / 100
+		ph.downvoteAndAssertDownvoted(t, ph.eps[0], node1NewWeight)
+		if node1NewWeight == 1 {
+			break
+		}
+	}
+	ph.pool.changeWeight(ph.eps[0], true)
+
+	// node is added back but with 10% max weight.
+	require.Eventually(t, func() bool {
+		ph.pool.lk.RLock()
+		defer ph.pool.lk.RUnlock()
+		weights := ph.pool.endpoints.ToWeights()
+		return weights[ph.eps[0]] == (maxWeight*10)/100
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func TestUpdateWeightWithoutRefresh(t *testing.T) {
@@ -64,10 +83,14 @@ func TestUpdateWeightWithoutRefresh(t *testing.T) {
 	ph.stopOrch(t)
 
 	// assert node is removed when it's weight drops to 0
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 5)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 2)
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 1)
+	node1NewWeight := maxWeight
+	for {
+		node1NewWeight = (node1NewWeight * 80) / 100
+		ph.downvoteAndAssertDownvoted(t, ph.eps[0], node1NewWeight)
+		if node1NewWeight == 1 {
+			break
+		}
+	}
 	ph.downvoteAndAssertRemoved(t, ph.eps[0])
 	ph.assertRingSize(t, 2)
 }
@@ -77,52 +100,34 @@ func TestUpdateWeightDebounce(t *testing.T) {
 	ph.StartAndWait(t)
 
 	// downvote first node
-	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 16)
 
 	// downvoting a thousand times does NOT change weight
 	for i := 0; i < 1000; i++ {
-		ph.downvoteAndAssertDownvoted(t, ph.eps[0], 10)
+		ph.downvoteAndAssertDownvoted(t, ph.eps[0], 16)
 	}
 
 	// or upvoting
 	for i := 0; i < 1000; i++ {
-		ph.upvoteAndAssertUpvoted(t, ph.eps[0], 10)
+		ph.upvoteAndAssertUpvoted(t, ph.eps[0], 16)
 	}
 }
 
-func TestUpdateWeightBatched(t *testing.T) {
-	ph := BuildPoolHarness(t, 5, WithWeightChangeDebounce(0))
+func TestIsCoolOff(t *testing.T) {
+	dur := 50 * time.Millisecond
+	ph := BuildPoolHarness(t, 3, WithMaxNCoolOff(2), WithCoolOffDuration(dur), WithMinCoolOff(1*time.Millisecond))
 	ph.StartAndWait(t)
 
-	// downvote, 0,2, & 4
-	var reqs []batchUpdateReq
-	for i := 0; i < 5; i = i + 2 {
-		reqs = append(reqs, batchUpdateReq{
-			node:     ph.eps[i],
-			failure:  true,
-			expected: 10,
-		})
-	}
-	ph.updateBatchedAndAssert(t, reqs)
+	require.True(t, ph.pool.isCoolOffLocked(ph.eps[0]))
+	require.True(t, ph.pool.isCoolOffLocked(ph.eps[0]))
+	require.False(t, ph.pool.isCoolOffLocked(ph.eps[0]))
 
-	// upvote, 0,2, & 3
-	reqs = []batchUpdateReq{}
-	reqs = append(reqs, batchUpdateReq{
-		node:     ph.eps[0],
-		failure:  false,
-		expected: 11,
-	}, batchUpdateReq{
-		node:     ph.eps[2],
-		failure:  false,
-		expected: 11,
-	}, batchUpdateReq{
-		node:     ph.eps[3],
-		failure:  false,
-		expected: 20,
-	})
-
-	ph.updateBatchedAndAssert(t, reqs)
-
+	require.Eventually(t, func() bool {
+		ph.pool.lk.RLock()
+		_, ok := ph.pool.coolOffCache.Get(ph.eps[0])
+		ph.pool.lk.RUnlock()
+		return !ok
+	}, 10*time.Second, 50*time.Millisecond)
 }
 
 type poolHarness struct {
@@ -143,29 +148,6 @@ func (ph *poolHarness) assertRemoved(t *testing.T, url string) {
 		if ph.pool.endpoints[i].url == url {
 			require.Fail(t, "node not removed")
 		}
-	}
-}
-
-type batchUpdateReq struct {
-	node     string
-	failure  bool
-	expected int
-}
-
-func (ph *poolHarness) updateBatchedAndAssert(t *testing.T, reqs []batchUpdateReq) {
-	var weightReqs []weightUpdateReq
-
-	for _, req := range reqs {
-		weightReqs = append(weightReqs, weightUpdateReq{
-			node:    req.node,
-			failure: req.failure,
-		})
-	}
-
-	ph.pool.updateWeightBatched(weightReqs)
-
-	for _, req := range reqs {
-		ph.assertWeight(t, req.node, req.expected)
 	}
 }
 
@@ -190,7 +172,7 @@ func (ph *poolHarness) assertWeight(t *testing.T, url string, expected int) {
 
 	for i := range ph.pool.endpoints {
 		if ph.pool.endpoints[i].url == url {
-			require.EqualValues(t, expected, ph.pool.endpoints[i].replication)
+			require.EqualValues(t, expected, ph.pool.endpoints[i].weight)
 			return
 		}
 	}
@@ -229,6 +211,24 @@ func (ph *poolHarness) stopOrch(t *testing.T) {
 }
 
 type HarnessOption func(config *Config)
+
+func WithCoolOffDuration(dur time.Duration) func(*Config) {
+	return func(config *Config) {
+		config.SaturnNodeCoolOff = dur
+	}
+}
+
+func WithMinCoolOff(dur time.Duration) func(*Config) {
+	return func(config *Config) {
+		config.MinCoolOff = dur
+	}
+}
+
+func WithMaxNCoolOff(n int) func(*Config) {
+	return func(config *Config) {
+		config.MaxNCoolOff = n
+	}
+}
 
 func WithWeightChangeDebounce(debounce time.Duration) func(*Config) {
 	return func(config *Config) {
