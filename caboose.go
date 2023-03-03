@@ -68,6 +68,8 @@ type Config struct {
 	// SaturnNodeCoolOff is the cool off duration for a saturn node once we determine that we shouldn't be sending requests to it for a while.
 	SaturnNodeCoolOff time.Duration
 
+	MinCoolOff time.Duration
+
 	// MaxNCoolOff is the number of times we will cool off a node before downvoting it.
 	MaxNCoolOff int
 }
@@ -140,6 +142,9 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 
 	if config.SaturnNodeCoolOff == 0 {
 		config.SaturnNodeCoolOff = DefaultSaturnNodeCoolOff
+	}
+	if config.MinCoolOff == 0 {
+		config.MinCoolOff = 1 * time.Minute
 	}
 
 	if config.MaxNCoolOff == 0 {

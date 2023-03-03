@@ -483,11 +483,12 @@ func (p *pool) isCoolOffLocked(node string) bool {
 
 	// reduce cool off duration if we've repeatedly seen a cool off request for this node.
 	newCoolOffMs := p.config.SaturnNodeCoolOff.Milliseconds() / int64(oldVal+1)
-	if newCoolOffMs == 0 {
-		newCoolOffMs = 1
+	minCoolOff := time.Duration(newCoolOffMs) * time.Millisecond
+	if minCoolOff == 0 {
+		minCoolOff = p.config.MinCoolOff
 	}
 
-	p.coolOffCache.Set(node, struct{}{}, time.Duration(newCoolOffMs)*time.Millisecond)
+	p.coolOffCache.Set(node, struct{}{}, minCoolOff)
 
 	return (oldVal + 1) <= p.config.MaxNCoolOff
 }

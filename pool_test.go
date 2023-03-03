@@ -115,7 +115,7 @@ func TestUpdateWeightDebounce(t *testing.T) {
 
 func TestIsCoolOff(t *testing.T) {
 	dur := 50 * time.Millisecond
-	ph := BuildPoolHarness(t, 3, WithMaxNCoolOff(2), WithCoolOffDuration(dur))
+	ph := BuildPoolHarness(t, 3, WithMaxNCoolOff(2), WithCoolOffDuration(dur), WithMinCoolOff(1*time.Millisecond))
 	ph.StartAndWait(t)
 
 	require.True(t, ph.pool.isCoolOffLocked(ph.eps[0]))
@@ -215,6 +215,12 @@ type HarnessOption func(config *Config)
 func WithCoolOffDuration(dur time.Duration) func(*Config) {
 	return func(config *Config) {
 		config.SaturnNodeCoolOff = dur
+	}
+}
+
+func WithMinCoolOff(dur time.Duration) func(*Config) {
+	return func(config *Config) {
+		config.MinCoolOff = dur
 	}
 }
 
