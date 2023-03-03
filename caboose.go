@@ -126,6 +126,9 @@ func humanRetry(d time.Duration) string {
 	return d.Truncate(time.Second).String()
 }
 
+// ErrPartialResponse can be returned from a DataCallback to indicate that some of the requested resource
+// was successfully fetched, and that instead of retrying the full resource, that there are
+// one or more more specific resources that should be fetched (via StillNeed) to complete the request.
 type ErrPartialResponse struct {
 	error
 	StillNeed []string

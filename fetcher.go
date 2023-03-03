@@ -90,6 +90,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 		if err == nil && received > 0 {
 			fetchTTFBPerBlockPerPeerSuccessMetric.Observe(float64(ttfbMs))
+			// track individual block metrics separately
 			if mime == "application/vnd.ipld.raw" {
 				fetchDurationPerBlockPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
 			} else {
