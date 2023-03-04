@@ -16,6 +16,7 @@ var (
 	// Duration max bucket is informed by the timeouts per block and per peer request/retry
 	durationPerBlockHistogram        = prometheus.ExponentialBucketsRange(50, 60000, 10)
 	durationPerBlockPerPeerHistogram = prometheus.ExponentialBucketsRange(50, 20000, 10)
+	durationPerCarHistogram          = prometheus.ExponentialBucketsRange(50, 1800000, 10)
 
 	CabooseMetrics = prometheus.NewRegistry()
 
@@ -68,7 +69,7 @@ var (
 	fetchDurationPerCarPerPeerSuccessMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_car_peer_success"),
 		Help:    "Latency observed during successful caboose car fetches from a single peer",
-		Buckets: durationPerBlockPerPeerHistogram,
+		Buckets: durationPerCarHistogram,
 	})
 
 	fetchDurationPerBlockPerPeerFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -80,7 +81,7 @@ var (
 	fetchDurationPerCarPerPeerFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_car_peer_failure"),
 		Help:    "Latency observed during failed caboose car fetches from a single peer",
-		Buckets: durationPerBlockPerPeerHistogram,
+		Buckets: durationPerCarHistogram,
 	})
 
 	fetchDurationBlockSuccessMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -92,7 +93,7 @@ var (
 	fetchDurationCarSuccessMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_car_success"),
 		Help:    "Latency observed during successful caboose fetches for a car",
-		Buckets: durationPerBlockHistogram,
+		Buckets: durationPerCarHistogram,
 	})
 
 	fetchDurationBlockFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -104,7 +105,7 @@ var (
 	fetchDurationCarFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_car_failure"),
 		Help:    "Latency observed during failed caboose fetches for a car",
-		Buckets: durationPerBlockHistogram,
+		Buckets: durationPerCarHistogram,
 	})
 
 	fetchTTFBPerBlockPerPeerSuccessMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
