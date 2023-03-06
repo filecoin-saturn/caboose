@@ -47,9 +47,9 @@ type pool struct {
 	refresh chan struct{} // refresh is used to signal the need for doing a refresh of the Saturn endpoints pool.
 	done    chan struct{} // done is used to signal that we're shutting down the Saturn endpoints pool and don't need to refresh it anymore.
 
-	cidLk            sync.RWMutex
-	cidFailureCache  *cache.Cache // guarded by cidLk
-	cidCoolDownCache *cache.Cache // guarded by cidLk
+	fetchKeyLk            sync.RWMutex
+	fetchKeyFailureCache  *cache.Cache // guarded by fetchKeyLk
+	fetchKeyCoolDownCache *cache.Cache // guarded by fetchKeyLk
 
 	lk               sync.RWMutex
 	endpoints        MemberList         // guarded by lk
@@ -135,8 +135,8 @@ func newPool(c *Config) *pool {
 		done:             make(chan struct{}, 1),
 		removedTimeCache: cache.New(c.PoolMembershipDebounce, 10*time.Second),
 
-		cidCoolDownCache: cache.New(c.CidCoolDownDuration, 1*time.Minute),
-		cidFailureCache:  cache.New(c.CidCoolDownDuration, 1*time.Minute),
+		fetchKeyCoolDownCache: cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
+		fetchKeyFailureCache:  cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 
 		coolOffCount: make(map[string]int),
 		coolOffCache: cache.New(c.SaturnNodeCoolOff, cache.DefaultExpiration),
@@ -270,24 +270,28 @@ func (p *pool) Close() {
 	}
 }
 
+func cidToKey(c cid.Cid) string {
+	return c.Hash().B58String()
+}
+
 func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk blocks.Block, err error) {
 	// wait for pool to be initialised
 	<-p.started
 
 	// if the cid is in the cool down cache, we fail the request.
-	p.cidLk.RLock()
-	if at, ok := p.cidCoolDownCache.Get(c.String()); ok {
-		p.cidLk.RUnlock()
+	p.fetchKeyLk.RLock()
+	if at, ok := p.fetchKeyCoolDownCache.Get(cidToKey(c)); ok {
+		p.fetchKeyLk.RUnlock()
 
 		expireAt := at.(time.Time)
-		return nil, &ErrCidCoolDown{
+		return nil, &ErrCoolDown{
 			Cid:        c,
 			RetryAfter: time.Until(expireAt),
 		}
 	}
-	p.cidLk.RUnlock()
+	p.fetchKeyLk.RUnlock()
 
-	nodes, err := p.getNodesToFetch(c, with)
+	nodes, err := p.getNodesToFetch(cidToKey(c), with)
 	if err != nil {
 		return nil, err
 	}
@@ -307,7 +311,7 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 
 	fetchDurationBlockFailureMetric.Observe(float64(time.Since(blockFetchStart).Milliseconds()))
 
-	p.updateCidCoolDown(c)
+	p.updateFetchKeyCoolDown(cidToKey(c))
 
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
 	return
@@ -315,34 +319,33 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 
 // record the failure in the cid failure cache and
 // if the number of cid fetch failures has crossed a certain threshold, add the cid to a cool down cache.
-func (p *pool) updateCidCoolDown(c cid.Cid) {
-	p.cidLk.Lock()
-	defer p.cidLk.Unlock()
+func (p *pool) updateFetchKeyCoolDown(key string) {
+	p.fetchKeyLk.Lock()
+	defer p.fetchKeyLk.Unlock()
 
-	expireAt := time.Now().Add(p.config.CidCoolDownDuration)
-	key := c.String()
+	expireAt := time.Now().Add(p.config.FetchKeyCoolDownDuration)
 
-	if p.config.MaxCidFailuresBeforeCoolDown == 1 {
-		p.cidCoolDownCache.Set(key, expireAt, time.Until(expireAt)+100)
+	if p.config.MaxFetchFailuresBeforeCoolDown == 1 {
+		p.fetchKeyCoolDownCache.Set(key, expireAt, time.Until(expireAt)+100)
 		return
 	}
 
-	v, ok := p.cidFailureCache.Get(key)
+	v, ok := p.fetchKeyFailureCache.Get(key)
 	if !ok {
-		p.cidFailureCache.Set(key, 1, cache.DefaultExpiration)
+		p.fetchKeyFailureCache.Set(key, 1, cache.DefaultExpiration)
 		return
 	}
 
 	count := v.(int)
-	if p.config.MaxCidFailuresBeforeCoolDown == 1 || count+1 == p.config.MaxCidFailuresBeforeCoolDown {
-		p.cidCoolDownCache.Set(key, expireAt, time.Until(expireAt)+100)
-		p.cidFailureCache.Delete(key)
+	if p.config.MaxFetchFailuresBeforeCoolDown == 1 || count+1 == p.config.MaxFetchFailuresBeforeCoolDown {
+		p.fetchKeyCoolDownCache.Set(key, expireAt, time.Until(expireAt)+100)
+		p.fetchKeyFailureCache.Delete(key)
 	} else {
-		p.cidFailureCache.Set(key, count+1, cache.DefaultExpiration)
+		p.fetchKeyFailureCache.Set(key, count+1, cache.DefaultExpiration)
 	}
 }
 
-func (p *pool) getNodesToFetch(c cid.Cid, with string) ([]string, error) {
+func (p *pool) getNodesToFetch(key string, with string) ([]string, error) {
 	p.lk.RLock()
 	defer p.lk.RUnlock()
 
@@ -357,7 +360,7 @@ func (p *pool) getNodesToFetch(c cid.Cid, with string) ([]string, error) {
 	left := p.config.MaxRetrievalAttempts
 	aff := with
 	if aff == "" {
-		aff = c.Hash().B58String()
+		aff = key
 	}
 
 	// Get min(maxRetrievalAttempts, len(endpoints)) nodes from the consistent hashing ring for the given cid.
@@ -415,42 +418,29 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 	// wait for pool to be initialised
 	<-p.started
 
-	transientErrs := make(map[string]error)
+	// if the cid is in the cool down cache, we fail the request.
+	p.fetchKeyLk.RLock()
+	if at, ok := p.fetchKeyCoolDownCache.Get(path); ok {
+		p.fetchKeyLk.RUnlock()
 
-	left := p.config.MaxRetrievalAttempts
-	aff := with
-	if aff == "" {
-		aff = path
-	}
-
-	p.lk.RLock()
-	if left > len(p.endpoints) {
-		left = len(p.endpoints)
-	}
-
-	// if there are no endpoints in the consistent hashing ring, we submit a pool refresh request and fail this fetch.
-	if p.c == nil || p.c.Size() == 0 {
-		p.lk.RUnlock()
-		return ErrNoBackend
-	}
-	nodes, ok := p.c.GetNodes(aff, left)
-	p.lk.RUnlock()
-
-	// if there are no endpoints in the consistent hashing ring for the given cid, we submit a pool refresh request and fail this fetch.
-	if !ok || len(nodes) == 0 {
-		select {
-		case p.refresh <- struct{}{}:
-		default:
+		expireAt := at.(time.Time)
+		return &ErrCoolDown{
+			Path:       path,
+			RetryAfter: time.Until(expireAt),
 		}
+	}
+	p.fetchKeyLk.RUnlock()
 
-		return ErrNoBackend
+	nodes, err := p.getNodesToFetch(path, with)
+	if err != nil {
+		return err
 	}
 
 	carFetchStart := time.Now()
 
 	pq := []string{path}
 	for i := 0; i < len(nodes); i++ {
-		err = p.fetchResourceAndUpdate(ctx, nodes[i], pq[0], i, cb, transientErrs)
+		err = p.fetchResourceAndUpdate(ctx, nodes[i], pq[0], i, cb)
 
 		if err == nil {
 			pq = pq[1:]
@@ -459,18 +449,6 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 				// TODO: how to account for total retrieved data
 				//fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
 				fetchDurationCarSuccessMetric.Observe(float64(durationMs))
-
-				// downvote all parked failed nodes as some other node was able to give us the required content here.
-				reqs := make([]weightUpdateReq, 0, len(transientErrs))
-				for node, err := range transientErrs {
-					goLogger.Debugw("downvoting node with transient err as fetch was subsequently successful", "node", node, "err", err)
-					reqs = append(reqs, weightUpdateReq{
-						node:    node,
-						failure: true,
-					})
-				}
-
-				p.updateWeightBatched(reqs)
 				return
 			} else {
 				// TODO: potentially worth doing something smarter here based on what the current state
@@ -501,6 +479,8 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 
 	fetchDurationCarFailureMetric.Observe(float64(time.Since(carFetchStart).Milliseconds()))
 
+	p.updateFetchKeyCoolDown(path)
+
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
 	return
 }
@@ -511,6 +491,22 @@ func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, 
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
 	}
 
+	err = p.commonUpdate(node, err)
+	return
+}
+
+func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path string, attempt int, cb DataCallback) (err error) {
+	err = p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
+	if err != nil {
+		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", path, "error", err)
+	}
+
+	p.commonUpdate(node, err)
+	return
+}
+
+func (p *pool) commonUpdate(node string, err error) (ferr error) {
+	ferr = err
 	if err == nil {
 		p.changeWeight(node, false)
 		// Saturn fetch worked, we return the block.
@@ -526,10 +522,12 @@ func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, 
 
 	var errTooManyRequests ErrSaturnTooManyRequests
 	if errors.As(err, &errTooManyRequests) {
-		err = &ErrSaturnTooManyRequests{
+
+		ferr = &ErrSaturnTooManyRequests{
 			Node:       errTooManyRequests.Node,
 			RetryAfter: errTooManyRequests.RetryAfter,
 		}
+
 		if ok := p.isCoolOffLocked(node); ok {
 			return
 		}
@@ -538,71 +536,6 @@ func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, 
 	// Saturn fetch failed, we downvote the failing member.
 	p.changeWeight(node, true)
 	return
-}
-
-func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path string, attempt int, cb DataCallback, transientErrs map[string]error) (err error) {
-	err = p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
-	if err != nil {
-		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", path, "error", err)
-	}
-
-	if err == nil {
-		p.changeWeight(node, false)
-		// Saturn fetch worked, we return the block.
-		return
-	}
-
-	// If this is a NOT found or Timeout error, park the downvoting for now and see if other members are able to give us this content.
-	if errors.Is(err, ErrContentProviderNotFound) || errors.Is(err, ErrSaturnTimeout) || errors.Is(err, ErrPartialResponse{}) {
-		transientErrs[node] = err
-		return
-	}
-
-	// Saturn fetch failed, we downvote the failing member.
-	p.changeWeight(node, true)
-	return
-}
-
-type weightUpdateReq struct {
-	node    string
-	failure bool
-}
-
-func (p *pool) updateWeightBatched(reqs []weightUpdateReq) {
-	p.lk.Lock()
-	defer p.lk.Unlock()
-
-	for _, req := range reqs {
-		idx, nm := p.updateWeightUnlocked(req.node, req.failure)
-		// we weren't able to change the weight.
-		if idx == -1 || nm == nil {
-			continue
-		}
-		p.updatePoolWithNewWeightUnlocked(nm, idx)
-	}
-}
-
-func (p *pool) updatePoolWithNewWeightUnlocked(nm *Member, idx int) {
-	if nm.weight == 0 {
-		delete(p.coolOffCount, nm.url)
-		p.coolOffCache.Delete(nm.url)
-
-		p.c = p.c.RemoveNode(nm.url)
-		p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
-		// we will not add this node back to the cache before the cool off period expires
-		p.removedTimeCache.Set(nm.url, struct{}{}, cache.DefaultExpiration)
-
-		if len(p.endpoints) < p.config.PoolLowWatermark {
-			goLogger.Warn("pool size below low watermark after removing a node; submitting a pool refresh request")
-			select {
-			case p.refresh <- struct{}{}:
-			default:
-			}
-		}
-	} else {
-		p.endpoints[idx] = nm
-		p.c.UpdateWithWeights(p.endpoints.ToWeights())
-	}
 }
 
 func (p *pool) isCoolOffLocked(node string) bool {
@@ -629,23 +562,7 @@ func (p *pool) changeWeight(node string, failure bool) {
 	p.lk.Lock()
 	defer p.lk.Unlock()
 
-	idx, nm := p.updateWeightUnlocked(node, failure)
-
-	// we weren't able to change the weight.
-	if idx == -1 || nm == nil {
-		return
-	}
-
-	p.updatePoolWithNewWeightUnlocked(nm, idx)
-
-	// Remove node from cool off cache if we observed a successful fetch.
-	if !failure {
-		p.coolOffCache.Delete(node)
-		delete(p.coolOffCount, node)
-	}
-}
-
-func (p *pool) updateWeightUnlocked(node string, failure bool) (index int, member *Member) {
+	// build new member
 	idx := -1
 	var nm *Member
 	var needUpdate bool
@@ -657,5 +574,37 @@ func (p *pool) updateWeightUnlocked(node string, failure bool) (index int, membe
 			break
 		}
 	}
-	return idx, nm
+
+	// we weren't able to change the weight.
+	if idx == -1 || nm == nil {
+		return
+	}
+
+	// update pool with new weights
+	if nm.weight == 0 {
+		delete(p.coolOffCount, nm.url)
+		p.coolOffCache.Delete(nm.url)
+
+		p.c = p.c.RemoveNode(nm.url)
+		p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
+		// we will not add this node back to the cache before the cool off period expires
+		p.removedTimeCache.Set(nm.url, struct{}{}, cache.DefaultExpiration)
+
+		if len(p.endpoints) < p.config.PoolLowWatermark {
+			goLogger.Warn("pool size below low watermark after removing a node; submitting a pool refresh request")
+			select {
+			case p.refresh <- struct{}{}:
+			default:
+			}
+		}
+	} else {
+		p.endpoints[idx] = nm
+		p.c.UpdateWithWeights(p.endpoints.ToWeights())
+	}
+
+	// Remove node from cool off cache if we observed a successful fetch.
+	if !failure {
+		p.coolOffCache.Delete(node)
+		delete(p.coolOffCount, node)
+	}
 }
