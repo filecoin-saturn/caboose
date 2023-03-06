@@ -2,15 +2,16 @@ package caboose_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/filecoin-saturn/caboose"
 	"github.com/stretchr/testify/require"
 
-	"github.com/filecoin-saturn/caboose"
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multicodec"
 )
@@ -30,8 +31,10 @@ func TestHttp429(t *testing.T) {
 	_, err := ch.c.Get(ctx, testCid)
 	require.Error(t, err)
 
-	ferr := err.(*caboose.ErrSaturnTooManyRequests)
-	require.EqualValues(t, expRetryAfter, ferr.RetryAfter)
+	var ferr *caboose.ErrSaturnTooManyRequests
+	ok := errors.As(err, &ferr)
+	require.True(t, ok)
+	require.EqualValues(t, expRetryAfter, ferr.RetryAfter())
 }
 
 func TestCabooseTransientFailures(t *testing.T) {
@@ -163,10 +166,12 @@ func (ch *CabooseHarness) runFetchesForRandCids(n int) {
 func (ch *CabooseHarness) fetchAndAssertCoolDownError(t *testing.T, ctx context.Context, cid cid.Cid) {
 	_, err := ch.c.Get(ctx, cid)
 	require.Error(t, err)
-	coolDownErr, ok := err.(*caboose.ErrCoolDown)
+
+	var coolDownErr *caboose.ErrCoolDown
+	ok := errors.As(err, &coolDownErr)
 	require.True(t, ok)
 	require.EqualValues(t, cid, coolDownErr.Cid)
-	require.NotZero(t, coolDownErr.RetryAfter)
+	require.NotZero(t, coolDownErr.RetryAfter())
 }
 
 func (ch *CabooseHarness) fetchAndAssertFailure(t *testing.T, ctx context.Context, testCid cid.Cid, contains string) {

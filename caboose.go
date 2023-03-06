@@ -104,25 +104,31 @@ var ErrSaturnTimeout error = errors.New("saturn backend timed out")
 
 type ErrSaturnTooManyRequests struct {
 	Node       string
-	RetryAfter time.Duration // TODO: DRY refactor after https://github.com/ipfs/go-libipfs/issues/188
+	retryAfter time.Duration
 }
 
-func (e ErrSaturnTooManyRequests) Error() string {
-	return fmt.Sprintf("saturn node %s returned Too Many Requests error, please retry after %s", e.Node, humanRetry(e.RetryAfter))
+func (e *ErrSaturnTooManyRequests) Error() string {
+	return fmt.Sprintf("saturn node %s returned Too Many Requests error, please retry after %s", e.Node, humanRetry(e.retryAfter))
+}
+
+func (e *ErrSaturnTooManyRequests) RetryAfter() time.Duration {
+	return e.retryAfter
 }
 
 type ErrCoolDown struct {
 	Cid        cid.Cid
 	Path       string
-	RetryAfter time.Duration // TODO: DRY refactor after https://github.com/ipfs/go-libipfs/issues/188
+	retryAfter time.Duration
 }
 
 func (e *ErrCoolDown) Error() string {
-	return fmt.Sprintf("multiple saturn retrieval failures seen for CID %s/Path %s, please retry after %s", e.Cid, e.Path, humanRetry(e.RetryAfter))
+	return fmt.Sprintf("multiple saturn retrieval failures seen for CID %s/Path %s, please retry after %s", e.Cid, e.Path, humanRetry(e.retryAfter))
 }
 
-// TODO: move this to upstream error interface in https://github.com/ipfs/go-libipfs/issues/188
-// and refactor ErrCoolDown and ErrSaturnTooManyRequests to inherit from that instead
+func (e *ErrCoolDown) RetryAfter() time.Duration {
+	return e.retryAfter
+}
+
 func humanRetry(d time.Duration) string {
 	return d.Truncate(time.Second).String()
 }
