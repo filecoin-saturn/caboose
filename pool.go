@@ -19,6 +19,8 @@ import (
 	blocks "github.com/ipfs/go-libipfs/blocks"
 	"github.com/patrickmn/go-cache"
 	"github.com/serialx/hashring"
+
+	"github.com/influxdata/tdigest"
 )
 
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
@@ -61,6 +63,8 @@ type pool struct {
 	removedTimeCache *cache.Cache       // guarded by lk
 	coolOffCount     map[string]int     // guarded by lk
 	coolOffCache     *cache.Cache       // guarded by lk
+	fetchSpeedDigest *tdigest.TDigest   // guarded by lk
+	lastDigestReset  time.Time          // guarded by lk
 }
 
 // MemberList is the list of Saturn endpoints that are currently members of the Caboose consistent hashing ring
@@ -100,7 +104,7 @@ func (m *Member) ReplicationFactor() int {
 	return m.weight
 }
 
-func (m *Member) UpdateWeight(debounce time.Duration, failure bool) (*Member, bool) {
+func (m *Member) UpdateWeight(debounce time.Duration, failure bool, boostFactor int) (*Member, bool) {
 	// this is a best-effort. if there's a correlated failure we ignore the others, so do the try on best-effort.
 	if m.lk.TryLock() {
 		defer m.lk.Unlock()
@@ -114,7 +118,7 @@ func (m *Member) UpdateWeight(debounce time.Duration, failure bool) (*Member, bo
 			}
 
 			if m.weight < maxWeight {
-				updated := m.weight + 1
+				updated := m.weight + (1 * boostFactor)
 				if updated > maxWeight {
 					updated = maxWeight
 				}
@@ -144,6 +148,9 @@ func newPool(c *Config) *pool {
 
 		coolOffCount: make(map[string]int),
 		coolOffCache: cache.New(c.SaturnNodeCoolOff, cache.DefaultExpiration),
+
+		fetchSpeedDigest: tdigest.NewWithCompression(1000),
+		lastDigestReset:  time.Now(),
 	}
 
 	return &p
@@ -158,6 +165,11 @@ func (p *pool) doRefresh() {
 	if err == nil {
 		p.lk.Lock()
 		defer p.lk.Unlock()
+
+		if time.Since(p.lastDigestReset) > fetchSpeedDigestRefreshInterval {
+			p.fetchSpeedDigest.Reset()
+			p.lastDigestReset = time.Now()
+		}
 
 		// TODO: The orchestrator periodically prunes "bad" L1s based on a reputation system
 		// it owns and runs. We should probably just forget about the Saturn endpoints that were
@@ -417,13 +429,13 @@ func (p *pool) getNodesToFetch(c cid.Cid, with string) ([]string, error) {
 }
 
 func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int) (blk blocks.Block, err error) {
-	blk, err = p.doFetch(ctx, node, c, attempt)
+	blk, fs, err := p.doFetch(ctx, node, c, attempt)
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
 	}
 
 	if err == nil {
-		p.changeWeight(node, false)
+		p.changeWeight(node, false, fs)
 		// Saturn fetch worked, we return the block.
 		return
 	}
@@ -447,31 +459,8 @@ func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attem
 	}
 
 	// Saturn fetch failed, we downvote the failing member.
-	p.changeWeight(node, true)
+	p.changeWeight(node, true, 0)
 	return
-}
-
-func (p *pool) updatePoolWithNewWeightUnlocked(nm *Member, idx int) {
-	if nm.weight == 0 {
-		delete(p.coolOffCount, nm.url)
-		p.coolOffCache.Delete(nm.url)
-
-		p.c = p.c.RemoveNode(nm.url)
-		p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
-		// we will not add this node back to the cache before the cool off period expires
-		p.removedTimeCache.Set(nm.url, struct{}{}, cache.DefaultExpiration)
-
-		if len(p.endpoints) < p.config.PoolLowWatermark {
-			goLogger.Warn("pool size below low watermark after removing a node; submitting a pool refresh request")
-			select {
-			case p.refresh <- struct{}{}:
-			default:
-			}
-		}
-	} else {
-		p.endpoints[idx] = nm
-		p.c.UpdateWithWeights(p.endpoints.ToWeights())
-	}
 }
 
 func (p *pool) isCoolOffLocked(node string) bool {
@@ -494,39 +483,66 @@ func (p *pool) isCoolOffLocked(node string) bool {
 }
 
 // returns the updated weight mapping for tests
-func (p *pool) changeWeight(node string, failure bool) {
+func (p *pool) changeWeight(node string, failure bool, fetchSpeed float64) {
 	p.lk.Lock()
 	defer p.lk.Unlock()
 
-	idx, nm := p.updateWeightUnlocked(node, failure)
+	boostFactor := 1
+	// if the fetch was successful AND we have enough data points, we can boost the weight of the node.
+	if !failure && p.fetchSpeedDigest.Count() >= minFetchSpeedDataPoints {
+		p.fetchSpeedDigest.Add(fetchSpeed, 1)
+		if fetchSpeed >= p.fetchSpeedDigest.Quantile(0.99) { // 99th percentile gets 3X Boost
+			boostFactor = 3
+		} else if fetchSpeed >= p.fetchSpeedDigest.Quantile(0.8) { // 80th percentile gets 2X Boost
+			boostFactor = 2
+		}
+	}
+
+	// create new member with updated weight
+	idx := -1
+	var nm *Member
+	var needUpdate bool
+	for j, m := range p.endpoints {
+		if m.String() == node {
+			if nm, needUpdate = m.UpdateWeight(p.config.PoolWeightChangeDebounce, failure, boostFactor); needUpdate {
+				idx = j
+			}
+			break
+		}
+	}
 
 	// we weren't able to change the weight.
 	if idx == -1 || nm == nil {
 		return
 	}
 
-	p.updatePoolWithNewWeightUnlocked(nm, idx)
+	// update the pool with the new member.
+	if nm.weight == 0 {
+		delete(p.coolOffCount, nm.url)
+		p.coolOffCache.Delete(nm.url)
+
+		p.c = p.c.RemoveNode(nm.url)
+		p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
+		// we will not add this node back to the cache before the cool off period expires
+		p.removedTimeCache.Set(nm.url, struct{}{}, cache.DefaultExpiration)
+
+		if len(p.endpoints) < p.config.PoolLowWatermark {
+			goLogger.Warn("pool size below low watermark after removing a node; submitting a pool refresh request")
+			select {
+			case p.refresh <- struct{}{}:
+			default:
+			}
+		}
+	} else {
+		p.endpoints[idx] = nm
+		p.c.UpdateWithWeights(p.endpoints.ToWeights())
+	}
 
 	// Remove node from cool off cache if we observed a successful fetch.
 	if !failure {
 		p.coolOffCache.Delete(node)
 		delete(p.coolOffCount, node)
 	}
-}
-
-func (p *pool) updateWeightUnlocked(node string, failure bool) (index int, member *Member) {
-	idx := -1
-	var nm *Member
-	var needUpdate bool
-	for j, m := range p.endpoints {
-		if m.String() == node {
-			if nm, needUpdate = m.UpdateWeight(p.config.PoolWeightChangeDebounce, failure); needUpdate {
-				idx = j
-			}
-			break
-		}
-	}
-	return idx, nm
 }
 
 var saturnReqTmpl = "https://%s/ipfs/%s?format=raw"
@@ -540,7 +556,7 @@ var (
 )
 
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
-func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, e error) {
+func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, fetchSpeed float64, e error) {
 	requestId := uuid.NewString()
 	goLogger.Debugw("doing fetch", "from", from, "of", c, "requestId", requestId)
 	start := time.Now()
@@ -618,7 +634,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	reqUrl = fmt.Sprintf(saturnReqTmpl, from, c)
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	req.Header.Add("Accept", "application/vnd.ipld.raw")
@@ -633,7 +649,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	resp, err := p.config.SaturnClient.Do(req)
 	if err != nil {
 		networkError = err.Error()
-		return nil, fmt.Errorf("http request failed: %w", err)
+		return nil, 0, fmt.Errorf("http request failed: %w", err)
 	}
 	respHeader = resp.Header
 	defer resp.Body.Close()
@@ -656,24 +672,25 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 				retryAfter = p.config.SaturnNodeCoolOff
 			}
 
-			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTooManyRequests{RetryAfter: retryAfter, Node: from})
+			return nil, 0, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTooManyRequests{RetryAfter: retryAfter, Node: from})
 		}
 
 		if resp.StatusCode == http.StatusGatewayTimeout {
-			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
+			return nil, 0, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
 		}
 
 		// This should only be 502, but L1s were not translating 404 from Lassie, so we have to support both for now.
 		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadGateway {
-			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrContentProviderNotFound)
+			return nil, 0, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrContentProviderNotFound)
 		}
 
-		return nil, fmt.Errorf("http error from strn: %d", resp.StatusCode)
+		return nil, 0, fmt.Errorf("http error from strn: %d", resp.StatusCode)
 	}
 
 	block, ttfb, err := ReadAllWithTTFB(io.LimitReader(resp.Body, maxBlockSize))
 	fb = ttfb
 	received = len(block)
+	fetch_end := time.Now()
 
 	if err != nil {
 		switch {
@@ -681,28 +698,30 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 			// we don't expect to see this error any time soon, but if IPFS
 			// ecosystem ever starts allowing bigger blocks, this message will save
 			// multiple people collective man-months in debugging ;-)
-			return nil, fmt.Errorf("strn responded with a block bigger than maxBlockSize=%d", maxBlockSize-1)
+			return nil, 0, fmt.Errorf("strn responded with a block bigger than maxBlockSize=%d", maxBlockSize-1)
 		case err == io.EOF:
 			// This is fine :-)
 			// Zero-length block may be valid (example: bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku)
 			// We accept this as non-error and let it go over CID validation later.
 		default:
-			return nil, fmt.Errorf("unable to read strn response body: %w", err)
+			return nil, 0, fmt.Errorf("unable to read strn response body: %w", err)
 		}
 	}
 
 	if p.config.DoValidation {
 		nc, err := c.Prefix().Sum(block)
 		if err != nil {
-			return nil, blocks.ErrWrongHash
+			return nil, 0, blocks.ErrWrongHash
 		}
 		if !nc.Equals(c) {
-			return nil, blocks.ErrWrongHash
+			return nil, 0, blocks.ErrWrongHash
 		}
 	}
 	response_success_end = time.Now()
 
-	return blocks.NewBlockWithCid(block, c)
+	blk, err := blocks.NewBlockWithCid(block, c)
+
+	return blk, float64(float64(received) / float64(fetch_end.Sub(start).Milliseconds())), err
 }
 
 func ReadAllWithTTFB(r io.Reader) ([]byte, time.Time, error) {

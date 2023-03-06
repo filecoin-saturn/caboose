@@ -82,6 +82,8 @@ const DefaultSaturnRequestTimeout = 19 * time.Second
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
 const DefaultPoolRefreshInterval = 5 * time.Minute
+const fetchSpeedDigestRefreshInterval = 2 * time.Hour
+const minFetchSpeedDataPoints = 20
 
 // we cool off sending requests to Saturn for a cid for a certain duration
 // if we've seen a certain number of failures for it already in a given duration.
