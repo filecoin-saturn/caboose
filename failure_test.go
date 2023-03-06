@@ -245,16 +245,18 @@ type ep struct {
 	valid    bool
 	cnt      int
 	httpCode int
+	resp     []byte
 }
 
 var testBlock = []byte("hello World")
 
 func (e *ep) Setup() {
 	e.valid = true
+	e.resp = testBlock
 	e.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.cnt++
 		if e.valid {
-			w.Write(testBlock)
+			w.Write(e.resp)
 		} else {
 			if e.httpCode == http.StatusTooManyRequests {
 				w.Header().Set("Retry-After", "1")

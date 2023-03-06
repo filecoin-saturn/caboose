@@ -1,9 +1,11 @@
 package caboose_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,6 +15,12 @@ import (
 
 	"github.com/filecoin-saturn/caboose"
 	"github.com/ipfs/go-cid"
+	"github.com/ipld/go-car/v2"
+	"github.com/ipld/go-ipld-prime/linking"
+	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
+	basicnode "github.com/ipld/go-ipld-prime/node/basic"
+	"github.com/ipld/go-ipld-prime/storage/memstore"
+	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
 	"github.com/multiformats/go-multicodec"
 	"github.com/stretchr/testify/require"
 )
@@ -134,4 +142,38 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 
 	ch.c = bs
 	return ch
+}
+
+func TestResource(t *testing.T) {
+	h := BuildCabooseHarness(t, 1, 3)
+	// some setup.
+	buf := bytes.NewBuffer(nil)
+	ls := cidlink.DefaultLinkSystem()
+	store := memstore.Store{}
+	ls.SetReadStorage(&store)
+	ls.SetWriteStorage(&store)
+	n := basicnode.NewBytes(testBlock)
+	lnk := ls.MustStore(linking.LinkContext{}, cidlink.LinkPrototype{cid.NewPrefixV1(uint64(multicodec.Raw), uint64(multicodec.Sha2_256))}, n)
+	rt := lnk.(cidlink.Link).Cid
+
+	// make our carv1
+	car.TraverseV1(context.Background(), &ls, rt, selectorparse.CommonSelector_MatchPoint, buf)
+	h.pool[0].resp = buf.Bytes()
+
+	// ask for it.
+	if err := h.c.Fetch(context.Background(), "/path/to/car", func(resource string, reader io.Reader) error {
+		if resource != "/path/to/car" {
+			t.Fatal("incorrect path in resource callback")
+		}
+		got, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatalf("couldn't read: %v", err)
+		}
+		if !bytes.Equal(got, buf.Bytes()) {
+			t.Fatal("unexpected response")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
