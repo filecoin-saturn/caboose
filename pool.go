@@ -325,7 +325,7 @@ func (p *pool) updateFetchKeyCoolDown(key string) {
 
 	expireAt := time.Now().Add(p.config.FetchKeyCoolDownDuration)
 
-	if p.config.MaxFailuresBeforeCoolDown == 1 {
+	if p.config.MaxFetchFailuresBeforeCoolDown == 1 {
 		p.fetchKeyCoolDownCache.Set(key, expireAt, time.Until(expireAt)+100)
 		return
 	}
@@ -337,7 +337,7 @@ func (p *pool) updateFetchKeyCoolDown(key string) {
 	}
 
 	count := v.(int)
-	if p.config.MaxFailuresBeforeCoolDown == 1 || count+1 == p.config.MaxFailuresBeforeCoolDown {
+	if p.config.MaxFetchFailuresBeforeCoolDown == 1 || count+1 == p.config.MaxFetchFailuresBeforeCoolDown {
 		p.fetchKeyCoolDownCache.Set(key, expireAt, time.Until(expireAt)+100)
 		p.fetchKeyFailureCache.Delete(key)
 	} else {

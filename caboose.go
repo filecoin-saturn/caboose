@@ -58,9 +58,9 @@ type Config struct {
 	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
 	MaxRetrievalAttempts int
 
-	// MaxCidFailuresBeforeCoolDown is the maximum number of cid retrieval failures across the pool we will tolerate before we
-	// add the cid to the cool down cache.
-	MaxFailuresBeforeCoolDown int
+	// MaxFetchFailuresBeforeCoolDown is the maximum number of retrieval failures across the pool for a key we will tolerate before we
+	// add the key to the cool down cache.
+	MaxFetchFailuresBeforeCoolDown int
 
 	// FetchKeyCoolDownDuration is duration of time a cid will stay in the cool down cache
 	// before we start making retrieval attempts for it.
@@ -88,8 +88,8 @@ const DefaultPoolRefreshInterval = 5 * time.Minute
 // if we've seen a certain number of failures for it already in a given duration.
 // NOTE: before getting creative here, make sure you dont break end user flow
 // described in https://github.com/ipni/storetheindex/pull/1344
-const DefaultMaxFailures = 3 * DefaultMaxRetries // this has to fail more than DefaultMaxRetries done for a single gateway request
-const DefaultCoolDownDuration = 1 * time.Minute  // how long will a sane person wait and stare at blank screen with "retry later" error before hitting F5?
+const DefaultMaxFetchFailures = 3 * DefaultMaxRetries   // this has to fail more than DefaultMaxRetries done for a single gateway request
+const DefaultFetchKeyCoolDownDuration = 1 * time.Minute // how long will a sane person wait and stare at blank screen with "retry later" error before hitting F5?
 
 // we cool off sending requests to a Saturn node if it returns transient errors rather than immediately downvoting it;
 // however, only upto a certain max number of cool-offs.
@@ -149,10 +149,10 @@ type DataCallback func(resource string, reader io.Reader) error
 // Every request will result in a remote network request.
 func NewCaboose(config *Config) (*Caboose, error) {
 	if config.FetchKeyCoolDownDuration == 0 {
-		config.FetchKeyCoolDownDuration = DefaultCoolDownDuration
+		config.FetchKeyCoolDownDuration = DefaultFetchKeyCoolDownDuration
 	}
-	if config.MaxFailuresBeforeCoolDown == 0 {
-		config.MaxFailuresBeforeCoolDown = DefaultMaxFailures
+	if config.MaxFetchFailuresBeforeCoolDown == 0 {
+		config.MaxFetchFailuresBeforeCoolDown = DefaultMaxFetchFailures
 	}
 
 	if config.SaturnNodeCoolOff == 0 {

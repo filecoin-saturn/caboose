@@ -62,7 +62,7 @@ func WithPoolMembershipDebounce(d time.Duration) func(config *caboose.Config) {
 
 func WithMaxFailuresBeforeCoolDown(max int) func(config *caboose.Config) {
 	return func(config *caboose.Config) {
-		config.MaxFailuresBeforeCoolDown = max
+		config.MaxFetchFailuresBeforeCoolDown = max
 	}
 }
 
