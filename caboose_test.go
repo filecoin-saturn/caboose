@@ -19,7 +19,7 @@ import (
 
 func TestCidCoolDown(t *testing.T) {
 	ctx := context.Background()
-	ch := BuildCabooseHarness(t, 3, 3, WithMaxCidFailuresBeforeCoolDown(2), WithCidCoolDownDuration(1*time.Second))
+	ch := BuildCabooseHarness(t, 3, 3, WithMaxFailuresBeforeCoolDown(2), WithCidCoolDownDuration(1*time.Second))
 
 	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
 	ch.fetchAndAssertSuccess(t, ctx, testCid)
@@ -60,15 +60,15 @@ func WithPoolMembershipDebounce(d time.Duration) func(config *caboose.Config) {
 	}
 }
 
-func WithMaxCidFailuresBeforeCoolDown(max int) func(config *caboose.Config) {
+func WithMaxFailuresBeforeCoolDown(max int) func(config *caboose.Config) {
 	return func(config *caboose.Config) {
-		config.MaxCidFailuresBeforeCoolDown = max
+		config.MaxFailuresBeforeCoolDown = max
 	}
 }
 
 func WithCidCoolDownDuration(duration time.Duration) func(config *caboose.Config) {
 	return func(config *caboose.Config) {
-		config.CidCoolDownDuration = duration
+		config.FetchKeyCoolDownDuration = duration
 	}
 }
 

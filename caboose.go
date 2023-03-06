@@ -60,11 +60,11 @@ type Config struct {
 
 	// MaxCidFailuresBeforeCoolDown is the maximum number of cid retrieval failures across the pool we will tolerate before we
 	// add the cid to the cool down cache.
-	MaxCidFailuresBeforeCoolDown int
+	MaxFailuresBeforeCoolDown int
 
-	// CidCoolDownDuration is duration of time a cid will stay in the cool down cache
+	// FetchKeyCoolDownDuration is duration of time a cid will stay in the cool down cache
 	// before we start making retrieval attempts for it.
-	CidCoolDownDuration time.Duration
+	FetchKeyCoolDownDuration time.Duration
 
 	// SaturnNodeCoolOff is the cool off duration for a saturn node once we determine that we shouldn't be sending requests to it for a while.
 	SaturnNodeCoolOff time.Duration
@@ -88,8 +88,8 @@ const DefaultPoolRefreshInterval = 5 * time.Minute
 // if we've seen a certain number of failures for it already in a given duration.
 // NOTE: before getting creative here, make sure you dont break end user flow
 // described in https://github.com/ipni/storetheindex/pull/1344
-const DefaultMaxCidFailures = 3 * DefaultMaxRetries // this has to fail more than DefaultMaxRetries done for a single gateway request
-const DefaultCidCoolDownDuration = 1 * time.Minute  // how long will a sane person wait and stare at blank screen with "retry later" error before hitting F5?
+const DefaultMaxFailures = 3 * DefaultMaxRetries // this has to fail more than DefaultMaxRetries done for a single gateway request
+const DefaultCoolDownDuration = 1 * time.Minute  // how long will a sane person wait and stare at blank screen with "retry later" error before hitting F5?
 
 // we cool off sending requests to a Saturn node if it returns transient errors rather than immediately downvoting it;
 // however, only upto a certain max number of cool-offs.
@@ -111,17 +111,18 @@ func (e ErrSaturnTooManyRequests) Error() string {
 	return fmt.Sprintf("saturn node %s returned Too Many Requests error, please retry after %s", e.Node, humanRetry(e.RetryAfter))
 }
 
-type ErrCidCoolDown struct {
+type ErrCoolDown struct {
 	Cid        cid.Cid
+	Path       string
 	RetryAfter time.Duration // TODO: DRY refactor after https://github.com/ipfs/go-libipfs/issues/188
 }
 
-func (e *ErrCidCoolDown) Error() string {
-	return fmt.Sprintf("multiple saturn retrieval failures seen for CID %s, please retry after %s", e.Cid, humanRetry(e.RetryAfter))
+func (e *ErrCoolDown) Error() string {
+	return fmt.Sprintf("multiple saturn retrieval failures seen for CID %s/Path %s, please retry after %s", e.Cid, e.Path, humanRetry(e.RetryAfter))
 }
 
 // TODO: move this to upstream error interface in https://github.com/ipfs/go-libipfs/issues/188
-// and refactor ErrCidCoolDown and ErrSaturnTooManyRequests to inherit from that instead
+// and refactor ErrCoolDown and ErrSaturnTooManyRequests to inherit from that instead
 func humanRetry(d time.Duration) string {
 	return d.Truncate(time.Second).String()
 }
@@ -147,11 +148,11 @@ type DataCallback func(resource string, reader io.Reader) error
 // Note: Caboose is NOT a persistent blockstore and does NOT have an in-memory cache.
 // Every request will result in a remote network request.
 func NewCaboose(config *Config) (*Caboose, error) {
-	if config.CidCoolDownDuration == 0 {
-		config.CidCoolDownDuration = DefaultCidCoolDownDuration
+	if config.FetchKeyCoolDownDuration == 0 {
+		config.FetchKeyCoolDownDuration = DefaultCoolDownDuration
 	}
-	if config.MaxCidFailuresBeforeCoolDown == 0 {
-		config.MaxCidFailuresBeforeCoolDown = DefaultMaxCidFailures
+	if config.MaxFailuresBeforeCoolDown == 0 {
+		config.MaxFailuresBeforeCoolDown = DefaultMaxFailures
 	}
 
 	if config.SaturnNodeCoolOff == 0 {

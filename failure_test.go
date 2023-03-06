@@ -162,7 +162,7 @@ func (ch *CabooseHarness) runFetchesForRandCids(n int) {
 func (ch *CabooseHarness) fetchAndAssertCoolDownError(t *testing.T, ctx context.Context, cid cid.Cid) {
 	_, err := ch.c.Get(ctx, cid)
 	require.Error(t, err)
-	coolDownErr, ok := err.(*caboose.ErrCidCoolDown)
+	coolDownErr, ok := err.(*caboose.ErrCoolDown)
 	require.True(t, ok)
 	require.EqualValues(t, cid, coolDownErr.Cid)
 	require.NotZero(t, coolDownErr.RetryAfter)
