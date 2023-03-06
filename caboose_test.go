@@ -1,9 +1,12 @@
 package caboose_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,13 +16,19 @@ import (
 
 	"github.com/filecoin-saturn/caboose"
 	"github.com/ipfs/go-cid"
+	"github.com/ipld/go-car/v2"
+	"github.com/ipld/go-ipld-prime/linking"
+	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
+	basicnode "github.com/ipld/go-ipld-prime/node/basic"
+	"github.com/ipld/go-ipld-prime/storage/memstore"
+	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
 	"github.com/multiformats/go-multicodec"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCidCoolDown(t *testing.T) {
 	ctx := context.Background()
-	ch := BuildCabooseHarness(t, 3, 3, WithMaxCidFailuresBeforeCoolDown(2), WithCidCoolDownDuration(1*time.Second))
+	ch := BuildCabooseHarness(t, 3, 3, WithMaxFailuresBeforeCoolDown(2), WithCidCoolDownDuration(1*time.Second))
 
 	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
 	ch.fetchAndAssertSuccess(t, ctx, testCid)
@@ -60,15 +69,15 @@ func WithPoolMembershipDebounce(d time.Duration) func(config *caboose.Config) {
 	}
 }
 
-func WithMaxCidFailuresBeforeCoolDown(max int) func(config *caboose.Config) {
+func WithMaxFailuresBeforeCoolDown(max int) func(config *caboose.Config) {
 	return func(config *caboose.Config) {
-		config.MaxCidFailuresBeforeCoolDown = max
+		config.MaxFetchFailuresBeforeCoolDown = max
 	}
 }
 
 func WithCidCoolDownDuration(duration time.Duration) func(config *caboose.Config) {
 	return func(config *caboose.Config) {
-		config.CidCoolDownDuration = duration
+		config.FetchKeyCoolDownDuration = duration
 	}
 }
 
@@ -132,6 +141,67 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 	bs, err := caboose.NewCaboose(conf)
 	require.NoError(t, err)
 
-	ch.c = bs.(*caboose.Caboose)
+	ch.c = bs
 	return ch
+}
+
+func TestResource(t *testing.T) {
+	h := BuildCabooseHarness(t, 1, 3)
+	// some setup.
+	buf := bytes.NewBuffer(nil)
+	ls := cidlink.DefaultLinkSystem()
+	store := memstore.Store{}
+	ls.SetReadStorage(&store)
+	ls.SetWriteStorage(&store)
+	n := basicnode.NewBytes(testBlock)
+	lnk := ls.MustStore(linking.LinkContext{}, cidlink.LinkPrototype{Prefix: cid.NewPrefixV1(uint64(multicodec.Raw), uint64(multicodec.Sha2_256))}, n)
+	rt := lnk.(cidlink.Link).Cid
+
+	// make our carv1
+	car.TraverseV1(context.Background(), &ls, rt, selectorparse.CommonSelector_MatchPoint, buf)
+	h.pool[0].resp = buf.Bytes()
+
+	// ask for it.
+	if err := h.c.Fetch(context.Background(), "/path/to/car", func(resource string, reader io.Reader) error {
+		if resource != "/path/to/car" {
+			t.Fatal("incorrect path in resource callback")
+		}
+		got, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatalf("couldn't read: %v", err)
+		}
+		if !bytes.Equal(got, buf.Bytes()) {
+			t.Fatal("unexpected response")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// confirm that errors propogate.
+	if err := h.c.Fetch(context.Background(), "/path/to/car", func(resource string, reader io.Reader) error {
+		return fmt.Errorf("test error")
+	}); err.Error() != "test error" {
+		t.Fatalf("expected error. got %v", err)
+	}
+
+	// confirm partial failures work as expected.
+	second := false
+	if err := h.c.Fetch(context.Background(), "/path/to/car1", func(resource string, reader io.Reader) error {
+		if resource == "/path/to/car1" {
+			return caboose.ErrPartialResponse{StillNeed: []string{"/path/to/car2"}}
+		}
+		if resource == "/path/to/car2" {
+			fmt.Printf("doing second...\n")
+			second = true
+			return nil
+		}
+		t.Fatal("unexpected call")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !second {
+		t.Fatal("expected fall-over progress")
+	}
 }

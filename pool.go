@@ -5,16 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
 	blocks "github.com/ipfs/go-libipfs/blocks"
 	"github.com/patrickmn/go-cache"
@@ -51,9 +47,9 @@ type pool struct {
 	refresh chan struct{} // refresh is used to signal the need for doing a refresh of the Saturn endpoints pool.
 	done    chan struct{} // done is used to signal that we're shutting down the Saturn endpoints pool and don't need to refresh it anymore.
 
-	cidLk            sync.RWMutex
-	cidFailureCache  *cache.Cache // guarded by cidLk
-	cidCoolDownCache *cache.Cache // guarded by cidLk
+	fetchKeyLk            sync.RWMutex
+	fetchKeyFailureCache  *cache.Cache // guarded by fetchKeyLk
+	fetchKeyCoolDownCache *cache.Cache // guarded by fetchKeyLk
 
 	lk               sync.RWMutex
 	endpoints        MemberList         // guarded by lk
@@ -139,8 +135,8 @@ func newPool(c *Config) *pool {
 		done:             make(chan struct{}, 1),
 		removedTimeCache: cache.New(c.PoolMembershipDebounce, 10*time.Second),
 
-		cidCoolDownCache: cache.New(c.CidCoolDownDuration, 1*time.Minute),
-		cidFailureCache:  cache.New(c.CidCoolDownDuration, 1*time.Minute),
+		fetchKeyCoolDownCache: cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
+		fetchKeyFailureCache:  cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 
 		coolOffCount: make(map[string]int),
 		coolOffCache: cache.New(c.SaturnNodeCoolOff, cache.DefaultExpiration),
@@ -274,31 +270,35 @@ func (p *pool) Close() {
 	}
 }
 
-func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk blocks.Block, err error) {
+func cidToKey(c cid.Cid) string {
+	return c.Hash().B58String()
+}
+
+func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk blocks.Block, err error) {
 	// wait for pool to be initialised
 	<-p.started
 
 	// if the cid is in the cool down cache, we fail the request.
-	p.cidLk.RLock()
-	if at, ok := p.cidCoolDownCache.Get(c.String()); ok {
-		p.cidLk.RUnlock()
+	p.fetchKeyLk.RLock()
+	if at, ok := p.fetchKeyCoolDownCache.Get(cidToKey(c)); ok {
+		p.fetchKeyLk.RUnlock()
 
 		expireAt := at.(time.Time)
-		return nil, &ErrCidCoolDown{
+		return nil, &ErrCoolDown{
 			Cid:        c,
 			RetryAfter: time.Until(expireAt),
 		}
 	}
-	p.cidLk.RUnlock()
+	p.fetchKeyLk.RUnlock()
 
-	nodes, err := p.getNodesToFetch(c, with)
+	nodes, err := p.getNodesToFetch(cidToKey(c), with)
 	if err != nil {
 		return nil, err
 	}
 
 	blockFetchStart := time.Now()
 	for i := 0; i < len(nodes); i++ {
-		blk, err = p.fetchAndUpdate(ctx, nodes[i], c, i)
+		blk, err = p.fetchBlockAndUpdate(ctx, nodes[i], c, i)
 
 		if err == nil {
 			durationMs := time.Since(blockFetchStart).Milliseconds()
@@ -311,7 +311,7 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 
 	fetchDurationBlockFailureMetric.Observe(float64(time.Since(blockFetchStart).Milliseconds()))
 
-	p.updateCidCoolDown(c)
+	p.updateFetchKeyCoolDown(cidToKey(c))
 
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
 	return
@@ -319,34 +319,33 @@ func (p *pool) fetchWith(ctx context.Context, c cid.Cid, with string) (blk block
 
 // record the failure in the cid failure cache and
 // if the number of cid fetch failures has crossed a certain threshold, add the cid to a cool down cache.
-func (p *pool) updateCidCoolDown(c cid.Cid) {
-	p.cidLk.Lock()
-	defer p.cidLk.Unlock()
+func (p *pool) updateFetchKeyCoolDown(key string) {
+	p.fetchKeyLk.Lock()
+	defer p.fetchKeyLk.Unlock()
 
-	expireAt := time.Now().Add(p.config.CidCoolDownDuration)
-	key := c.String()
+	expireAt := time.Now().Add(p.config.FetchKeyCoolDownDuration)
 
-	if p.config.MaxCidFailuresBeforeCoolDown == 1 {
-		p.cidCoolDownCache.Set(key, expireAt, time.Until(expireAt)+100)
+	if p.config.MaxFetchFailuresBeforeCoolDown == 1 {
+		p.fetchKeyCoolDownCache.Set(key, expireAt, time.Until(expireAt)+100)
 		return
 	}
 
-	v, ok := p.cidFailureCache.Get(key)
+	v, ok := p.fetchKeyFailureCache.Get(key)
 	if !ok {
-		p.cidFailureCache.Set(key, 1, cache.DefaultExpiration)
+		p.fetchKeyFailureCache.Set(key, 1, cache.DefaultExpiration)
 		return
 	}
 
 	count := v.(int)
-	if p.config.MaxCidFailuresBeforeCoolDown == 1 || count+1 == p.config.MaxCidFailuresBeforeCoolDown {
-		p.cidCoolDownCache.Set(key, expireAt, time.Until(expireAt)+100)
-		p.cidFailureCache.Delete(key)
+	if p.config.MaxFetchFailuresBeforeCoolDown == 1 || count+1 == p.config.MaxFetchFailuresBeforeCoolDown {
+		p.fetchKeyCoolDownCache.Set(key, expireAt, time.Until(expireAt)+100)
+		p.fetchKeyFailureCache.Delete(key)
 	} else {
-		p.cidFailureCache.Set(key, count+1, cache.DefaultExpiration)
+		p.fetchKeyFailureCache.Set(key, count+1, cache.DefaultExpiration)
 	}
 }
 
-func (p *pool) getNodesToFetch(c cid.Cid, with string) ([]string, error) {
+func (p *pool) getNodesToFetch(key string, with string) ([]string, error) {
 	p.lk.RLock()
 	defer p.lk.RUnlock()
 
@@ -361,7 +360,7 @@ func (p *pool) getNodesToFetch(c cid.Cid, with string) ([]string, error) {
 	left := p.config.MaxRetrievalAttempts
 	aff := with
 	if aff == "" {
-		aff = c.Hash().B58String()
+		aff = key
 	}
 
 	// Get min(maxRetrievalAttempts, len(endpoints)) nodes from the consistent hashing ring for the given cid.
@@ -412,16 +411,99 @@ func (p *pool) getNodesToFetch(c cid.Cid, with string) ([]string, error) {
 	}
 
 	// if we still don't have enough nodes, just return the initial set of nodes we got without considering cool off.
-
 	return nodes, nil
 }
 
-func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int) (blk blocks.Block, err error) {
+func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallback, with string) (err error) {
+	// wait for pool to be initialised
+	<-p.started
+
+	// if the cid is in the cool down cache, we fail the request.
+	p.fetchKeyLk.RLock()
+	if at, ok := p.fetchKeyCoolDownCache.Get(path); ok {
+		p.fetchKeyLk.RUnlock()
+
+		expireAt := at.(time.Time)
+		return &ErrCoolDown{
+			Path:       path,
+			RetryAfter: time.Until(expireAt),
+		}
+	}
+	p.fetchKeyLk.RUnlock()
+
+	nodes, err := p.getNodesToFetch(path, with)
+	if err != nil {
+		return err
+	}
+
+	carFetchStart := time.Now()
+
+	pq := []string{path}
+	for i := 0; i < len(nodes); i++ {
+		err = p.fetchResourceAndUpdate(ctx, nodes[i], pq[0], i, cb)
+
+		var epr = ErrPartialResponse{}
+		if err == nil {
+			pq = pq[1:]
+			if len(pq) == 0 {
+				durationMs := time.Since(carFetchStart).Milliseconds()
+				// TODO: how to account for total retrieved data
+				//fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
+				fetchDurationCarSuccessMetric.Observe(float64(durationMs))
+				return
+			} else {
+				// TODO: potentially worth doing something smarter here based on what the current state
+				// of permanent vs temporary errors is.
+
+				// for now: reset i on partials so we also give them a chance to retry.
+				i = 0
+			}
+		} else if errors.As(err, &epr) {
+			if len(epr.StillNeed) == 0 {
+				// the error was ErrPartial, but no additional needs were specified treat as
+				// any other transient error.
+				continue
+			}
+			pq = pq[1:]
+			pq = append(pq, epr.StillNeed...)
+			// TODO: potentially worth doing something smarter here based on what the current state
+			// of permanent vs temporary errors is.
+
+			// for now: reset i on partials so we also give them a chance to retry.
+			i = -1
+		}
+	}
+
+	fetchDurationCarFailureMetric.Observe(float64(time.Since(carFetchStart).Milliseconds()))
+
+	p.updateFetchKeyCoolDown(path)
+
+	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
+	return
+}
+
+func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int) (blk blocks.Block, err error) {
 	blk, err = p.doFetch(ctx, node, c, attempt)
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
 	}
 
+	err = p.commonUpdate(node, err)
+	return
+}
+
+func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path string, attempt int, cb DataCallback) (err error) {
+	err = p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
+	if err != nil {
+		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", path, "error", err)
+	}
+
+	p.commonUpdate(node, err)
+	return
+}
+
+func (p *pool) commonUpdate(node string, err error) (ferr error) {
+	ferr = err
 	if err == nil {
 		p.changeWeight(node, false)
 		// Saturn fetch worked, we return the block.
@@ -437,10 +519,12 @@ func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attem
 
 	var errTooManyRequests ErrSaturnTooManyRequests
 	if errors.As(err, &errTooManyRequests) {
-		err = &ErrSaturnTooManyRequests{
+
+		ferr = &ErrSaturnTooManyRequests{
 			Node:       errTooManyRequests.Node,
 			RetryAfter: errTooManyRequests.RetryAfter,
 		}
+
 		if ok := p.isCoolOffLocked(node); ok {
 			return
 		}
@@ -449,29 +533,6 @@ func (p *pool) fetchAndUpdate(ctx context.Context, node string, c cid.Cid, attem
 	// Saturn fetch failed, we downvote the failing member.
 	p.changeWeight(node, true)
 	return
-}
-
-func (p *pool) updatePoolWithNewWeightUnlocked(nm *Member, idx int) {
-	if nm.weight == 0 {
-		delete(p.coolOffCount, nm.url)
-		p.coolOffCache.Delete(nm.url)
-
-		p.c = p.c.RemoveNode(nm.url)
-		p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
-		// we will not add this node back to the cache before the cool off period expires
-		p.removedTimeCache.Set(nm.url, struct{}{}, cache.DefaultExpiration)
-
-		if len(p.endpoints) < p.config.PoolLowWatermark {
-			goLogger.Warn("pool size below low watermark after removing a node; submitting a pool refresh request")
-			select {
-			case p.refresh <- struct{}{}:
-			default:
-			}
-		}
-	} else {
-		p.endpoints[idx] = nm
-		p.c.UpdateWithWeights(p.endpoints.ToWeights())
-	}
 }
 
 func (p *pool) isCoolOffLocked(node string) bool {
@@ -498,23 +559,7 @@ func (p *pool) changeWeight(node string, failure bool) {
 	p.lk.Lock()
 	defer p.lk.Unlock()
 
-	idx, nm := p.updateWeightUnlocked(node, failure)
-
-	// we weren't able to change the weight.
-	if idx == -1 || nm == nil {
-		return
-	}
-
-	p.updatePoolWithNewWeightUnlocked(nm, idx)
-
-	// Remove node from cool off cache if we observed a successful fetch.
-	if !failure {
-		p.coolOffCache.Delete(node)
-		delete(p.coolOffCount, node)
-	}
-}
-
-func (p *pool) updateWeightUnlocked(node string, failure bool) (index int, member *Member) {
+	// build new member
 	idx := -1
 	var nm *Member
 	var needUpdate bool
@@ -526,203 +571,37 @@ func (p *pool) updateWeightUnlocked(node string, failure bool) (index int, membe
 			break
 		}
 	}
-	return idx, nm
-}
 
-var saturnReqTmpl = "https://%s/ipfs/%s?format=raw"
-
-var (
-	saturnNodeIdKey     = "Saturn-Node-Id"
-	saturnTransferIdKey = "Saturn-Transfer-Id"
-	saturnCacheHitKey   = "Saturn-Cache-Status"
-	saturnCacheHit      = "HIT"
-	saturnRetryAfterKey = "Retry-After"
-)
-
-// doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
-func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, e error) {
-	requestId := uuid.NewString()
-	goLogger.Debugw("doing fetch", "from", from, "of", c, "requestId", requestId)
-	start := time.Now()
-	response_success_end := time.Now()
-
-	fb := time.Unix(0, 0)
-	code := 0
-	proto := "unknown"
-	respReq := &http.Request{}
-	received := 0
-	reqUrl := ""
-	var respHeader http.Header
-	saturnNodeId := ""
-	saturnTransferId := ""
-	isCacheHit := false
-	networkError := ""
-
-	defer func() {
-		var ttfbMs int64
-		durationSecs := time.Since(start).Seconds()
-		durationMs := time.Since(start).Milliseconds()
-		goLogger.Debugw("fetch result", "from", from, "of", c, "status", code, "size", received, "ttfb", int(ttfbMs), "duration", durationSecs, "attempt", attempt, "error", e)
-		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
-
-		if e == nil && received > 0 {
-			ttfbMs = fb.Sub(start).Milliseconds()
-			fetchTTFBPerBlockPerPeerSuccessMetric.Observe(float64(ttfbMs))
-			fetchDurationPerBlockPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
-			fetchSpeedPerBlockPerPeerMetric.Observe(float64(received) / float64(durationMs))
-		} else {
-			fetchTTFBPerBlockPerPeerFailureMetric.Observe(float64(ttfbMs))
-			fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
-		}
-
-		if received > 0 {
-			fetchSizeMetric.Observe(float64(received))
-		}
-
-		if respHeader != nil {
-			saturnNodeId = respHeader.Get(saturnNodeIdKey)
-			saturnTransferId = respHeader.Get(saturnTransferIdKey)
-
-			cacheHit := respHeader.Get(saturnCacheHitKey)
-			if cacheHit == saturnCacheHit {
-				isCacheHit = true
-			}
-
-			for k, v := range respHeader {
-				received = received + len(k) + len(v)
-			}
-		}
-
-		p.logger.queue <- log{
-			CacheHit:           isCacheHit,
-			URL:                reqUrl,
-			StartTime:          start,
-			NumBytesSent:       received,
-			RequestDurationSec: durationSecs,
-			RequestID:          saturnTransferId,
-			HTTPStatusCode:     code,
-			HTTPProtocol:       proto,
-			TTFBMS:             int(ttfbMs),
-			// my address
-			Range:          "",
-			Referrer:       respReq.Referer(),
-			UserAgent:      respReq.UserAgent(),
-			NodeId:         saturnNodeId,
-			NodeIpAddress:  from,
-			IfNetworkError: networkError,
-		}
-	}()
-
-	reqCtx, cancel := context.WithTimeout(ctx, DefaultSaturnRequestTimeout)
-	defer cancel()
-	reqUrl = fmt.Sprintf(saturnReqTmpl, from, c)
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
-	if err != nil {
-		return nil, err
+	// we weren't able to change the weight.
+	if idx == -1 || nm == nil {
+		return
 	}
 
-	req.Header.Add("Accept", "application/vnd.ipld.raw")
-	if p.config.ExtraHeaders != nil {
-		for k, vs := range *p.config.ExtraHeaders {
-			for _, v := range vs {
-				req.Header.Add(k, v)
+	// update pool with new weights
+	if nm.weight == 0 {
+		delete(p.coolOffCount, nm.url)
+		p.coolOffCache.Delete(nm.url)
+
+		p.c = p.c.RemoveNode(nm.url)
+		p.endpoints = append(p.endpoints[:idx], p.endpoints[idx+1:]...)
+		// we will not add this node back to the cache before the cool off period expires
+		p.removedTimeCache.Set(nm.url, struct{}{}, cache.DefaultExpiration)
+
+		if len(p.endpoints) < p.config.PoolLowWatermark {
+			goLogger.Warn("pool size below low watermark after removing a node; submitting a pool refresh request")
+			select {
+			case p.refresh <- struct{}{}:
+			default:
 			}
 		}
+	} else {
+		p.endpoints[idx] = nm
+		p.c.UpdateWithWeights(p.endpoints.ToWeights())
 	}
 
-	resp, err := p.config.SaturnClient.Do(req)
-	if err != nil {
-		networkError = err.Error()
-		return nil, fmt.Errorf("http request failed: %w", err)
-	}
-	respHeader = resp.Header
-	defer resp.Body.Close()
-
-	code = resp.StatusCode
-	proto = resp.Proto
-	respReq = resp.Request
-
-	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusTooManyRequests {
-			var retryAfter time.Duration
-			if strnRetryHint := resp.Header.Get(saturnRetryAfterKey); strnRetryHint != "" {
-				seconds, err := strconv.ParseInt(strnRetryHint, 10, 64)
-				if err == nil {
-					retryAfter = time.Duration(seconds) * time.Second
-				}
-			}
-
-			if retryAfter == 0 {
-				retryAfter = p.config.SaturnNodeCoolOff
-			}
-
-			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTooManyRequests{RetryAfter: retryAfter, Node: from})
-		}
-
-		if resp.StatusCode == http.StatusGatewayTimeout {
-			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
-		}
-
-		// This should only be 502, but L1s were not translating 404 from Lassie, so we have to support both for now.
-		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadGateway {
-			return nil, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrContentProviderNotFound)
-		}
-
-		return nil, fmt.Errorf("http error from strn: %d", resp.StatusCode)
-	}
-
-	block, ttfb, err := ReadAllWithTTFB(io.LimitReader(resp.Body, maxBlockSize))
-	fb = ttfb
-	received = len(block)
-
-	if err != nil {
-		switch {
-		case err == io.EOF && received >= maxBlockSize:
-			// we don't expect to see this error any time soon, but if IPFS
-			// ecosystem ever starts allowing bigger blocks, this message will save
-			// multiple people collective man-months in debugging ;-)
-			return nil, fmt.Errorf("strn responded with a block bigger than maxBlockSize=%d", maxBlockSize-1)
-		case err == io.EOF:
-			// This is fine :-)
-			// Zero-length block may be valid (example: bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku)
-			// We accept this as non-error and let it go over CID validation later.
-		default:
-			return nil, fmt.Errorf("unable to read strn response body: %w", err)
-		}
-	}
-
-	if p.config.DoValidation {
-		nc, err := c.Prefix().Sum(block)
-		if err != nil {
-			return nil, blocks.ErrWrongHash
-		}
-		if !nc.Equals(c) {
-			return nil, blocks.ErrWrongHash
-		}
-	}
-	response_success_end = time.Now()
-
-	return blocks.NewBlockWithCid(block, c)
-}
-
-func ReadAllWithTTFB(r io.Reader) ([]byte, time.Time, error) {
-	b := make([]byte, 0, 512)
-	var ttfb time.Time
-	for {
-		if len(b) == cap(b) {
-			// Add more capacity (let append pick how much).
-			b = append(b, 0)[:len(b)]
-		}
-		n, err := r.Read(b[len(b):cap(b)])
-		b = b[:len(b)+n]
-		if ttfb.IsZero() {
-			ttfb = time.Now()
-		}
-		if err != nil {
-			if err == io.EOF {
-				err = nil
-			}
-			return b, ttfb, err
-		}
+	// Remove node from cool off cache if we observed a successful fetch.
+	if !failure {
+		p.coolOffCache.Delete(node)
+		delete(p.coolOffCount, node)
 	}
 }

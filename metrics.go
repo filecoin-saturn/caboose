@@ -16,6 +16,7 @@ var (
 	// Duration max bucket is informed by the timeouts per block and per peer request/retry
 	durationPerBlockHistogram        = prometheus.ExponentialBucketsRange(50, 60000, 10)
 	durationPerBlockPerPeerHistogram = prometheus.ExponentialBucketsRange(50, 20000, 10)
+	durationPerCarHistogram          = prometheus.ExponentialBucketsRange(50, 1800000, 10)
 
 	CabooseMetrics = prometheus.NewRegistry()
 
@@ -65,10 +66,22 @@ var (
 		Buckets: durationPerBlockPerPeerHistogram,
 	})
 
+	fetchDurationPerCarPerPeerSuccessMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_car_peer_success"),
+		Help:    "Latency observed during successful caboose car fetches from a single peer",
+		Buckets: durationPerCarHistogram,
+	})
+
 	fetchDurationPerBlockPerPeerFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_block_peer_failure"),
 		Help:    "Latency observed during failed caboose fetches from a single peer",
 		Buckets: durationPerBlockPerPeerHistogram,
+	})
+
+	fetchDurationPerCarPerPeerFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_car_peer_failure"),
+		Help:    "Latency observed during failed caboose car fetches from a single peer",
+		Buckets: durationPerCarHistogram,
 	})
 
 	fetchDurationBlockSuccessMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -77,10 +90,22 @@ var (
 		Buckets: durationPerBlockHistogram,
 	})
 
+	fetchDurationCarSuccessMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_car_success"),
+		Help:    "Latency observed during successful caboose fetches for a car",
+		Buckets: durationPerCarHistogram,
+	})
+
 	fetchDurationBlockFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_block_failure"),
 		Help:    "Latency observed during failed caboose fetches for a block",
 		Buckets: durationPerBlockHistogram,
+	})
+
+	fetchDurationCarFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_car_failure"),
+		Help:    "Latency observed during failed caboose fetches for a car",
+		Buckets: durationPerCarHistogram,
 	})
 
 	fetchTTFBPerBlockPerPeerSuccessMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -106,9 +131,13 @@ func init() {
 	CabooseMetrics.MustRegister(fetchSpeedPerBlockMetric)
 	CabooseMetrics.MustRegister(fetchSpeedPerBlockPerPeerMetric)
 	CabooseMetrics.MustRegister(fetchDurationPerBlockPerPeerSuccessMetric)
+	CabooseMetrics.MustRegister(fetchDurationPerCarPerPeerSuccessMetric)
 	CabooseMetrics.MustRegister(fetchDurationPerBlockPerPeerFailureMetric)
+	CabooseMetrics.MustRegister(fetchDurationPerCarPerPeerFailureMetric)
 	CabooseMetrics.MustRegister(fetchDurationBlockSuccessMetric)
+	CabooseMetrics.MustRegister(fetchDurationCarSuccessMetric)
 	CabooseMetrics.MustRegister(fetchDurationBlockFailureMetric)
+	CabooseMetrics.MustRegister(fetchDurationCarFailureMetric)
 	CabooseMetrics.MustRegister(fetchTTFBPerBlockPerPeerSuccessMetric)
 	CabooseMetrics.MustRegister(fetchTTFBPerBlockPerPeerFailureMetric)
 }

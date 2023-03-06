@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -57,13 +58,13 @@ type Config struct {
 	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
 	MaxRetrievalAttempts int
 
-	// MaxCidFailuresBeforeCoolDown is the maximum number of cid retrieval failures across the pool we will tolerate before we
-	// add the cid to the cool down cache.
-	MaxCidFailuresBeforeCoolDown int
+	// MaxFetchFailuresBeforeCoolDown is the maximum number of retrieval failures across the pool for a key we will tolerate before we
+	// add the key to the cool down cache.
+	MaxFetchFailuresBeforeCoolDown int
 
-	// CidCoolDownDuration is duration of time a cid will stay in the cool down cache
+	// FetchKeyCoolDownDuration is duration of time a key will stay in the cool down cache
 	// before we start making retrieval attempts for it.
-	CidCoolDownDuration time.Duration
+	FetchKeyCoolDownDuration time.Duration
 
 	// SaturnNodeCoolOff is the cool off duration for a saturn node once we determine that we shouldn't be sending requests to it for a while.
 	SaturnNodeCoolOff time.Duration
@@ -87,8 +88,8 @@ const DefaultPoolRefreshInterval = 5 * time.Minute
 // if we've seen a certain number of failures for it already in a given duration.
 // NOTE: before getting creative here, make sure you dont break end user flow
 // described in https://github.com/ipni/storetheindex/pull/1344
-const DefaultMaxCidFailures = 3 * DefaultMaxRetries // this has to fail more than DefaultMaxRetries done for a single gateway request
-const DefaultCidCoolDownDuration = 1 * time.Minute  // how long will a sane person wait and stare at blank screen with "retry later" error before hitting F5?
+const DefaultMaxFetchFailures = 3 * DefaultMaxRetries   // this has to fail more than DefaultMaxRetries done for a single gateway request
+const DefaultFetchKeyCoolDownDuration = 1 * time.Minute // how long will a sane person wait and stare at blank screen with "retry later" error before hitting F5?
 
 // we cool off sending requests to a Saturn node if it returns transient errors rather than immediately downvoting it;
 // however, only upto a certain max number of cool-offs.
@@ -110,19 +111,35 @@ func (e ErrSaturnTooManyRequests) Error() string {
 	return fmt.Sprintf("saturn node %s returned Too Many Requests error, please retry after %s", e.Node, humanRetry(e.RetryAfter))
 }
 
-type ErrCidCoolDown struct {
+type ErrCoolDown struct {
 	Cid        cid.Cid
+	Path       string
 	RetryAfter time.Duration // TODO: DRY refactor after https://github.com/ipfs/go-libipfs/issues/188
 }
 
-func (e *ErrCidCoolDown) Error() string {
-	return fmt.Sprintf("multiple saturn retrieval failures seen for CID %s, please retry after %s", e.Cid, humanRetry(e.RetryAfter))
+func (e *ErrCoolDown) Error() string {
+	return fmt.Sprintf("multiple saturn retrieval failures seen for CID %s/Path %s, please retry after %s", e.Cid, e.Path, humanRetry(e.RetryAfter))
 }
 
 // TODO: move this to upstream error interface in https://github.com/ipfs/go-libipfs/issues/188
-// and refactor ErrCidCoolDown and ErrSaturnTooManyRequests to inherit from that instead
+// and refactor ErrCoolDown and ErrSaturnTooManyRequests to inherit from that instead
 func humanRetry(d time.Duration) string {
 	return d.Truncate(time.Second).String()
+}
+
+// ErrPartialResponse can be returned from a DataCallback to indicate that some of the requested resource
+// was successfully fetched, and that instead of retrying the full resource, that there are
+// one or more more specific resources that should be fetched (via StillNeed) to complete the request.
+type ErrPartialResponse struct {
+	error
+	StillNeed []string
+}
+
+func (epr ErrPartialResponse) Error() string {
+	if epr.error != nil {
+		return fmt.Sprintf("partial response: %s", epr.error.Error())
+	}
+	return "caboose received a partial response"
 }
 
 type Caboose struct {
@@ -131,13 +148,18 @@ type Caboose struct {
 	logger *logger
 }
 
-func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
+// DataCallback allows for extensible validation of path-retrieved data.
+type DataCallback func(resource string, reader io.Reader) error
 
-	if config.CidCoolDownDuration == 0 {
-		config.CidCoolDownDuration = DefaultCidCoolDownDuration
+// NewCaboose sets up a caboose fetcher.
+// Note: Caboose is NOT a persistent blockstore and does NOT have an in-memory cache.
+// Every request will result in a remote network request.
+func NewCaboose(config *Config) (*Caboose, error) {
+	if config.FetchKeyCoolDownDuration == 0 {
+		config.FetchKeyCoolDownDuration = DefaultFetchKeyCoolDownDuration
 	}
-	if config.MaxCidFailuresBeforeCoolDown == 0 {
-		config.MaxCidFailuresBeforeCoolDown = DefaultMaxCidFailures
+	if config.MaxFetchFailuresBeforeCoolDown == 0 {
+		config.MaxFetchFailuresBeforeCoolDown = DefaultMaxFetchFailures
 	}
 
 	if config.SaturnNodeCoolOff == 0 {
@@ -194,6 +216,9 @@ func NewCaboose(config *Config) (ipfsblockstore.Blockstore, error) {
 	return &c, nil
 }
 
+// Caboose is a blockstore.
+var _ ipfsblockstore.Blockstore = (*Caboose)(nil)
+
 // GetMemberWeights is for testing ONLY
 func (c *Caboose) GetMemberWeights() map[string]int {
 	c.pool.lk.RLock()
@@ -207,11 +232,13 @@ func (c *Caboose) Close() {
 	c.logger.Close()
 }
 
-// Note: Caboose is NOT a persistent blockstore and does NOT have an in-memory cache. Every block read request will escape to the Saturn network.
-// Caching is left to the caller.
+// Fetch allows fetching car archives by a path of the form `/ipfs/<cid>[/path/to/file]`
+func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error {
+	return c.pool.fetchResourceWith(ctx, path, cb, c.getAffinity(ctx))
+}
 
 func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
-	blk, err := c.pool.fetchWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
 		return false, err
 	}
@@ -219,7 +246,7 @@ func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
 }
 
 func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
-	blk, err := c.pool.fetchWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +255,7 @@ func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
 
 // GetSize returns the CIDs mapped BlockSize
 func (c *Caboose) GetSize(ctx context.Context, it cid.Cid) (int, error) {
-	blk, err := c.pool.fetchWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
 		return 0, err
 	}
