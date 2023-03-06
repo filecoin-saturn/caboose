@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -153,7 +154,7 @@ func TestResource(t *testing.T) {
 	ls.SetReadStorage(&store)
 	ls.SetWriteStorage(&store)
 	n := basicnode.NewBytes(testBlock)
-	lnk := ls.MustStore(linking.LinkContext{}, cidlink.LinkPrototype{cid.NewPrefixV1(uint64(multicodec.Raw), uint64(multicodec.Sha2_256))}, n)
+	lnk := ls.MustStore(linking.LinkContext{}, cidlink.LinkPrototype{Prefix: cid.NewPrefixV1(uint64(multicodec.Raw), uint64(multicodec.Sha2_256))}, n)
 	rt := lnk.(cidlink.Link).Cid
 
 	// make our carv1
@@ -175,5 +176,12 @@ func TestResource(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+
+	// confirm that errors propogate.
+	if err := h.c.Fetch(context.Background(), "/path/to/car", func(resource string, reader io.Reader) error {
+		return fmt.Errorf("test error")
+	}); err.Error() != "test error" {
+		t.Fatalf("expected error. got %v", err)
 	}
 }
