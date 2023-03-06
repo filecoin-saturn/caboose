@@ -135,6 +135,13 @@ type ErrPartialResponse struct {
 	StillNeed []string
 }
 
+func (epr ErrPartialResponse) Error() string {
+	if epr.error != nil {
+		return fmt.Sprintf("partial response: %s", epr.error.Error())
+	}
+	return "caboose received a partial response"
+}
+
 type Caboose struct {
 	config *Config
 	pool   *pool

@@ -184,4 +184,24 @@ func TestResource(t *testing.T) {
 	}); err.Error() != "test error" {
 		t.Fatalf("expected error. got %v", err)
 	}
+
+	// confirm partial failures work as expected.
+	second := false
+	if err := h.c.Fetch(context.Background(), "/path/to/car1", func(resource string, reader io.Reader) error {
+		if resource == "/path/to/car1" {
+			return caboose.ErrPartialResponse{StillNeed: []string{"/path/to/car2"}}
+		}
+		if resource == "/path/to/car2" {
+			fmt.Printf("doing second...\n")
+			second = true
+			return nil
+		}
+		t.Fatal("unexpected call")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !second {
+		t.Fatal("expected fall-over progress")
+	}
 }
