@@ -62,7 +62,7 @@ type Config struct {
 	// add the key to the cool down cache.
 	MaxFetchFailuresBeforeCoolDown int
 
-	// FetchKeyCoolDownDuration is duration of time a cid will stay in the cool down cache
+	// FetchKeyCoolDownDuration is duration of time a key will stay in the cool down cache
 	// before we start making retrieval attempts for it.
 	FetchKeyCoolDownDuration time.Duration
 
