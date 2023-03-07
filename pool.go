@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/influxdata/tdigest"
+
 	"github.com/ipfs/go-cid"
 	blocks "github.com/ipfs/go-libipfs/blocks"
 	"github.com/patrickmn/go-cache"
@@ -57,6 +59,8 @@ type pool struct {
 	removedTimeCache *cache.Cache       // guarded by lk
 	coolOffCount     map[string]int     // guarded by lk
 	coolOffCache     *cache.Cache       // guarded by lk
+	fetchSpeedDigest *tdigest.TDigest   // guarded by lk
+	lastDigestReset  time.Time          // guarded by lk
 }
 
 // MemberList is the list of Saturn endpoints that are currently members of the Caboose consistent hashing ring
@@ -96,7 +100,7 @@ func (m *Member) ReplicationFactor() int {
 	return m.weight
 }
 
-func (m *Member) UpdateWeight(debounce time.Duration, failure bool) (*Member, bool) {
+func (m *Member) UpdateWeight(debounce time.Duration, failure bool, boostFactor int) (*Member, bool) {
 	// this is a best-effort. if there's a correlated failure we ignore the others, so do the try on best-effort.
 	if m.lk.TryLock() {
 		defer m.lk.Unlock()
@@ -110,7 +114,7 @@ func (m *Member) UpdateWeight(debounce time.Duration, failure bool) (*Member, bo
 			}
 
 			if m.weight < maxWeight {
-				updated := m.weight + 1
+				updated := m.weight + (1 * boostFactor)
 				if updated > maxWeight {
 					updated = maxWeight
 				}
@@ -138,8 +142,10 @@ func newPool(c *Config) *pool {
 		fetchKeyCoolDownCache: cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 		fetchKeyFailureCache:  cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 
-		coolOffCount: make(map[string]int),
-		coolOffCache: cache.New(c.SaturnNodeCoolOff, cache.DefaultExpiration),
+		coolOffCount:     make(map[string]int),
+		coolOffCache:     cache.New(c.SaturnNodeCoolOff, cache.DefaultExpiration),
+		fetchSpeedDigest: tdigest.NewWithCompression(1000),
+		lastDigestReset:  time.Now(),
 	}
 
 	return &p
@@ -154,6 +160,11 @@ func (p *pool) doRefresh() {
 	if err == nil {
 		p.lk.Lock()
 		defer p.lk.Unlock()
+
+		if time.Since(p.lastDigestReset) > fetchSpeedDigestRefreshInterval {
+			p.fetchSpeedDigest.Reset()
+			p.lastDigestReset = time.Now()
+		}
 
 		// TODO: The orchestrator periodically prunes "bad" L1s based on a reputation system
 		// it owns and runs. We should probably just forget about the Saturn endpoints that were
@@ -483,29 +494,29 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 }
 
 func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int) (blk blocks.Block, err error) {
-	blk, err = p.doFetch(ctx, node, c, attempt)
+	blk, fs, err := p.doFetch(ctx, node, c, attempt)
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
 	}
 
-	err = p.commonUpdate(node, err)
+	err = p.commonUpdate(node, err, fs)
 	return
 }
 
 func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path string, attempt int, cb DataCallback) (err error) {
-	err = p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
+	fs, err := p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", path, "error", err)
 	}
 
-	p.commonUpdate(node, err)
+	p.commonUpdate(node, err, fs)
 	return
 }
 
-func (p *pool) commonUpdate(node string, err error) (ferr error) {
+func (p *pool) commonUpdate(node string, err error, fs float64) (ferr error) {
 	ferr = err
 	if err == nil {
-		p.changeWeight(node, false)
+		p.changeWeight(node, false, fs)
 		// Saturn fetch worked, we return the block.
 		return
 	}
@@ -531,7 +542,7 @@ func (p *pool) commonUpdate(node string, err error) (ferr error) {
 	}
 
 	// Saturn fetch failed, we downvote the failing member.
-	p.changeWeight(node, true)
+	p.changeWeight(node, true, fs)
 	return
 }
 
@@ -555,9 +566,21 @@ func (p *pool) isCoolOffLocked(node string) bool {
 }
 
 // returns the updated weight mapping for tests
-func (p *pool) changeWeight(node string, failure bool) {
+func (p *pool) changeWeight(node string, failure bool, fetchSpeed float64) {
 	p.lk.Lock()
 	defer p.lk.Unlock()
+
+	boostFactor := 1
+
+	// if the fetch was successful AND we have enough data points, we can boost the weight of the node.
+	if !failure && p.fetchSpeedDigest.Count() >= minFetchSpeedDataPoints {
+		p.fetchSpeedDigest.Add(fetchSpeed, 1)
+		if fetchSpeed >= p.fetchSpeedDigest.Quantile(0.99) { // 99th percentile gets 3X Boost
+			boostFactor = 3
+		} else if fetchSpeed >= p.fetchSpeedDigest.Quantile(0.8) { // 80th percentile gets 2X Boost
+			boostFactor = 2
+		}
+	}
 
 	// build new member
 	idx := -1
@@ -565,7 +588,7 @@ func (p *pool) changeWeight(node string, failure bool) {
 	var needUpdate bool
 	for j, m := range p.endpoints {
 		if m.String() == node {
-			if nm, needUpdate = m.UpdateWeight(p.config.PoolWeightChangeDebounce, failure); needUpdate {
+			if nm, needUpdate = m.UpdateWeight(p.config.PoolWeightChangeDebounce, failure, boostFactor); needUpdate {
 				idx = j
 			}
 			break

@@ -95,6 +95,8 @@ const DefaultFetchKeyCoolDownDuration = 1 * time.Minute // how long will a sane 
 // however, only upto a certain max number of cool-offs.
 const DefaultSaturnNodeCoolOff = 5 * time.Minute
 const DefaultMaxNCoolOff = 3
+const fetchSpeedDigestRefreshInterval = 2 * time.Hour
+const minFetchSpeedDataPoints = 20
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available saturn backend")

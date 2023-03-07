@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	github.com/google/uuid v1.3.0
+	github.com/influxdata/tdigest v0.0.1
 	github.com/ipfs/go-cid v0.3.2
 	github.com/ipfs/go-ipfs-blockstore v1.2.0
 	github.com/ipfs/go-libipfs v0.6.1-0.20230224134131-7ba1df55d53b
