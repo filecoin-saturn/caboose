@@ -82,13 +82,14 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	networkError := ""
 
 	defer func() {
-		ttfbMs := fb.Sub(start).Milliseconds()
+		var ttfbMs int64
 		durationSecs := time.Since(start).Seconds()
 		durationMs := time.Since(start).Milliseconds()
 		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "ttfb", int(ttfbMs), "duration", durationSecs, "attempt", attempt, "error", err)
 		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
 
 		if err == nil && received > 0 {
+			ttfbMs = fb.Sub(start).Milliseconds()
 			fetchTTFBPerBlockPerPeerSuccessMetric.Observe(float64(ttfbMs))
 			// track individual block metrics separately
 			if mime == "application/vnd.ipld.raw" {
