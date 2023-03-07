@@ -53,14 +53,15 @@ type pool struct {
 	fetchKeyFailureCache  *cache.Cache // guarded by fetchKeyLk
 	fetchKeyCoolDownCache *cache.Cache // guarded by fetchKeyLk
 
-	lk               sync.RWMutex
-	endpoints        MemberList         // guarded by lk
-	c                *hashring.HashRing // guarded by lk
-	removedTimeCache *cache.Cache       // guarded by lk
-	coolOffCount     map[string]int     // guarded by lk
-	coolOffCache     *cache.Cache       // guarded by lk
-	fetchSpeedDigest *tdigest.TDigest   // guarded by lk
-	lastDigestReset  time.Time          // guarded by lk
+	lk                sync.RWMutex
+	endpoints         MemberList          // guarded by lk
+	c                 *hashring.HashRing  // guarded by lk
+	removedTimeCache  *cache.Cache        // guarded by lk
+	coolOffCount      map[string]int      // guarded by lk
+	coolOffCache      *cache.Cache        // guarded by lk
+	fetchSpeedDigest  *tdigest.TDigest    // guarded by lk
+	uniqueNodeFetches map[string]struct{} // guarded by lk
+	lastDigestReset   time.Time           // guarded by lk
 }
 
 // MemberList is the list of Saturn endpoints that are currently members of the Caboose consistent hashing ring
@@ -142,10 +143,11 @@ func newPool(c *Config) *pool {
 		fetchKeyCoolDownCache: cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 		fetchKeyFailureCache:  cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 
-		coolOffCount:     make(map[string]int),
-		coolOffCache:     cache.New(c.SaturnNodeCoolOff, cache.DefaultExpiration),
-		fetchSpeedDigest: tdigest.NewWithCompression(1000),
-		lastDigestReset:  time.Now(),
+		coolOffCount:      make(map[string]int),
+		coolOffCache:      cache.New(c.SaturnNodeCoolOff, cache.DefaultExpiration),
+		fetchSpeedDigest:  tdigest.NewWithCompression(1000),
+		uniqueNodeFetches: make(map[string]struct{}),
+		lastDigestReset:   time.Now(),
 	}
 
 	return &p
@@ -162,6 +164,7 @@ func (p *pool) doRefresh() {
 		defer p.lk.Unlock()
 
 		if time.Since(p.lastDigestReset) > fetchSpeedDigestRefreshInterval {
+			p.uniqueNodeFetches = make(map[string]struct{})
 			p.fetchSpeedDigest.Reset()
 			p.lastDigestReset = time.Now()
 		}
@@ -572,13 +575,19 @@ func (p *pool) changeWeight(node string, failure bool, fetchSpeed float64) {
 
 	boostFactor := 1
 
-	// if the fetch was successful AND we have enough data points, we can boost the weight of the node.
-	if !failure && p.fetchSpeedDigest.Count() >= minFetchSpeedDataPoints {
+	// if the fetch was successful AND we have enough fetch speed data points across nodes,
+	// we can boost the weight of the node.
+	if !failure {
 		p.fetchSpeedDigest.Add(fetchSpeed, 1)
-		if fetchSpeed >= p.fetchSpeedDigest.Quantile(0.99) { // 99th percentile gets 3X Boost
-			boostFactor = 3
-		} else if fetchSpeed >= p.fetchSpeedDigest.Quantile(0.8) { // 80th percentile gets 2X Boost
-			boostFactor = 2
+		if _, ok := p.uniqueNodeFetches[node]; !ok {
+			p.uniqueNodeFetches[node] = struct{}{}
+		}
+		if len(p.uniqueNodeFetches) >= p.config.MinFetchSpeedDataPoints {
+			if fetchSpeed >= p.fetchSpeedDigest.Quantile(0.99) { // 99th percentile gets 3X Boost
+				boostFactor = 3
+			} else if fetchSpeed >= p.fetchSpeedDigest.Quantile(0.8) { // 80th percentile gets 2X Boost
+				boostFactor = 2
+			}
 		}
 	}
 

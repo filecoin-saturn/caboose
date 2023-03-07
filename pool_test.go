@@ -13,6 +13,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestChangeWeightBoost(t *testing.T) {
+	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0), WithMinFetchSpeedDataPoints(2))
+	ph.StartAndWait(t)
+
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 16)
+	// weight does not get boost as we don't have enough unique node speeds.
+	ph.pool.changeWeight(ph.eps[0], false, 5)
+	ph.assertWeight(t, ph.eps[0], 17)
+	ph.pool.changeWeight(ph.eps[0], false, 50)
+	ph.assertWeight(t, ph.eps[0], 18)
+
+	// downvote a node
+	ph.downvoteAndAssertDownvoted(t, ph.eps[1], 16)
+
+	// weight boost for being in the top 99 percentile as we now have enough unique node speed observations.
+	ph.pool.changeWeight(ph.eps[1], false, 100)
+	ph.assertWeight(t, ph.eps[1], 19)
+
+}
+
 func TestUpdateWeightWithRefresh(t *testing.T) {
 	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0))
 	ph.StartAndWait(t)
@@ -230,6 +250,12 @@ func WithMaxNCoolOff(n int) func(*Config) {
 	}
 }
 
+func WithMinFetchSpeedDataPoints(n int) func(*Config) {
+	return func(config *Config) {
+		config.MinFetchSpeedDataPoints = n
+	}
+}
+
 func WithWeightChangeDebounce(debounce time.Duration) func(*Config) {
 	return func(config *Config) {
 		config.PoolWeightChangeDebounce = debounce
@@ -273,6 +299,7 @@ func BuildPoolHarness(t *testing.T, n int, opts ...HarnessOption) *poolHarness {
 		PoolWeightChangeDebounce: 100 * time.Millisecond,
 		PoolRefresh:              100 * time.Millisecond,
 		PoolMembershipDebounce:   100 * time.Millisecond,
+		MinFetchSpeedDataPoints:  10000,
 	}
 
 	for _, opt := range opts {

@@ -73,6 +73,10 @@ type Config struct {
 
 	// MaxNCoolOff is the number of times we will cool off a node before downvoting it.
 	MaxNCoolOff int
+
+	// MinFetchSpeedDataPoints is the minimum number of nodes we should have fetch speed data points from
+	// before we start boosting node weights for fast speeds.
+	MinFetchSpeedDataPoints int
 }
 
 const DefaultMaxRetries = 3
@@ -96,7 +100,7 @@ const DefaultFetchKeyCoolDownDuration = 1 * time.Minute // how long will a sane 
 const DefaultSaturnNodeCoolOff = 5 * time.Minute
 const DefaultMaxNCoolOff = 3
 const fetchSpeedDigestRefreshInterval = 2 * time.Hour
-const minFetchSpeedDataPoints = 20
+const minFetchSpeedDataPoints = 10
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available saturn backend")
@@ -157,6 +161,10 @@ type DataCallback func(resource string, reader io.Reader) error
 // Note: Caboose is NOT a persistent blockstore and does NOT have an in-memory cache.
 // Every request will result in a remote network request.
 func NewCaboose(config *Config) (*Caboose, error) {
+	if config.MinFetchSpeedDataPoints == 0 {
+		config.MinFetchSpeedDataPoints = minFetchSpeedDataPoints
+	}
+
 	if config.FetchKeyCoolDownDuration == 0 {
 		config.FetchKeyCoolDownDuration = DefaultFetchKeyCoolDownDuration
 	}

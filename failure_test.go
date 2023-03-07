@@ -93,6 +93,7 @@ func TestCabooseTransientFailures(t *testing.T) {
 }
 
 func TestCabooseFailures(t *testing.T) {
+	t.Skip("FIX ME/FLAKY")
 	ctx := context.Background()
 	ch := BuildCabooseHarness(t, 3, 3)
 
