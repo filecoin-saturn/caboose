@@ -14,7 +14,8 @@ import (
 )
 
 func TestChangeWeightBoost(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0), WithMinFetchSpeedDataPoints(2))
+	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0), WithMinFetchSpeedDataPoints(2),
+		WithNodeSpeedBoostCoolOff(1*time.Minute))
 	ph.StartAndWait(t)
 
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 16)
@@ -26,10 +27,19 @@ func TestChangeWeightBoost(t *testing.T) {
 
 	// downvote a node
 	ph.downvoteAndAssertDownvoted(t, ph.eps[1], 16)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[1], 12)
 
 	// weight boost for being in the top 99 percentile as we now have enough unique node speed observations.
 	ph.pool.changeWeight(ph.eps[1], false, 100)
-	ph.assertWeight(t, ph.eps[1], 19)
+	ph.assertWeight(t, ph.eps[1], 15)
+	// weight boost for same node again fails because of cooloff
+	ph.pool.changeWeight(ph.eps[1], false, 1000)
+	ph.assertWeight(t, ph.eps[1], 16)
+
+	// but node 2 is not under cool off
+	ph.downvoteAndAssertDownvoted(t, ph.eps[2], 16)
+	ph.pool.changeWeight(ph.eps[2], false, 10000)
+	ph.assertWeight(t, ph.eps[2], 19)
 
 }
 
@@ -250,9 +260,15 @@ func WithMaxNCoolOff(n int) func(*Config) {
 	}
 }
 
+func WithNodeSpeedBoostCoolOff(dur time.Duration) func(*Config) {
+	return func(config *Config) {
+		config.NodeSpeedBoostCoolOff = dur
+	}
+}
+
 func WithMinFetchSpeedDataPoints(n int) func(*Config) {
 	return func(config *Config) {
-		config.MinFetchSpeedDataPoints = n
+		config.MinFetchSpeedNodeDataPoints = n
 	}
 }
 
@@ -294,12 +310,12 @@ func BuildPoolHarness(t *testing.T, n int, opts ...HarnessOption) *poolHarness {
 	ourl, _ := url.Parse(orch.URL)
 	ph.orchUrl = ourl
 	config := &Config{
-		OrchestratorEndpoint:     ourl,
-		OrchestratorClient:       http.DefaultClient,
-		PoolWeightChangeDebounce: 100 * time.Millisecond,
-		PoolRefresh:              100 * time.Millisecond,
-		PoolMembershipDebounce:   100 * time.Millisecond,
-		MinFetchSpeedDataPoints:  10000,
+		OrchestratorEndpoint:        ourl,
+		OrchestratorClient:          http.DefaultClient,
+		PoolWeightChangeDebounce:    100 * time.Millisecond,
+		PoolRefresh:                 100 * time.Millisecond,
+		PoolMembershipDebounce:      100 * time.Millisecond,
+		MinFetchSpeedNodeDataPoints: 10000,
 	}
 
 	for _, opt := range opts {
