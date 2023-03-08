@@ -15,7 +15,7 @@ import (
 
 func TestChangeWeightBoost(t *testing.T) {
 	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0), WithMinFetchSpeedNodeDataPoints(2),
-		WithNodeSpeedBoostCoolOff(1*time.Minute))
+		WithNodeSpeedBoostCoolOff(1*time.Minute), WithMinFetchSpeedDataPoints(2))
 	ph.StartAndWait(t)
 
 	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 16)
@@ -271,6 +271,12 @@ func WithMaxNCoolOff(n int) func(*Config) {
 func WithNodeSpeedBoostCoolOff(dur time.Duration) func(*Config) {
 	return func(config *Config) {
 		config.NodeSpeedBoostCoolOff = dur
+	}
+}
+
+func WithMinFetchSpeedDataPoints(n int) func(*Config) {
+	return func(config *Config) {
+		config.MinFetchSpeedDataPoints = n
 	}
 }
 
