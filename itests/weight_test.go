@@ -18,16 +18,15 @@ import (
 
 	"go.uber.org/atomic"
 
+	"github.com/ipfs/go-cid"
 	golog "github.com/ipfs/go-log/v2"
+	"github.com/multiformats/go-multicodec"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/filecoin-saturn/caboose"
 
 	blocks2 "github.com/ipfs/go-libipfs/blocks"
-
-	"github.com/ipfs/go-cid"
-	"github.com/multiformats/go-multicodec"
 
 	"github.com/stretchr/testify/require"
 )
@@ -79,9 +78,9 @@ func generateBlockWithCid() blocks2.BasicBlock {
 }
 
 var (
-	maxLatencyMS = 5000
-	minLatencyMS = 100
-	blocks       []blocks2.BasicBlock
+	maxLatency = 5000
+	minLatency = 100
+	blocks     []blocks2.BasicBlock
 )
 
 func TestPoolHealthFuzz(t *testing.T) {
@@ -91,9 +90,9 @@ func TestPoolHealthFuzz(t *testing.T) {
 	// build 3000 L1s with different failure rates and latencies
 	var l1s []*L1Node
 	for i := 0; i < 300; i++ {
-		lsMillis := time.Duration(rand.Intn(maxLatencyMS-minLatencyMS)+minLatencyMS) * time.Millisecond
+		latency := time.Duration(rand.Intn(maxLatency-minLatency)+minLatency) * time.Millisecond
 
-		l1 := BuildL1Node(t, 0.7, lsMillis)
+		l1 := BuildL1Node(t, 0.7, latency)
 		l1s = append(l1s, l1)
 	}
 	t.Log("created 300 L1s with a success ratio of 70%")
