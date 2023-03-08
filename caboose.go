@@ -109,7 +109,7 @@ const DefaultMaxNCoolOff = 3
 const fetchSpeedDigestRefreshInterval = 2 * time.Hour
 const minFetchSpeedNodeDataPoints = 10
 const minFetchSpeedDataPoints = 100
-const defaultNodeSpeedBoostCoolOff = 10 * time.Minute
+const defaultNodeSpeedBoostCoolOff = 30 * time.Minute
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available saturn backend")
