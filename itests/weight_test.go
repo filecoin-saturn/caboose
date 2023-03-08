@@ -51,7 +51,6 @@ func init() {
 	}
 	fmt.Println("Rlimit Final", rLimit)
 
-	rand.Seed(time.Now().UnixNano())
 	// generate 10,000 blocks.
 	for i := 0; i < 10000; i++ {
 		blocks = append(blocks, generateBlockWithCid())
@@ -92,9 +91,9 @@ func TestPoolHealthFuzz(t *testing.T) {
 	// build 3000 L1s with different failure rates and latencies
 	var l1s []*L1Node
 	for i := 0; i < 300; i++ {
-		latencyMS := time.Duration(rand.Intn(maxLatencyMS-minLatencyMS)+minLatencyMS) * time.Millisecond
+		lsMillis := time.Duration(rand.Intn(maxLatencyMS-minLatencyMS)+minLatencyMS) * time.Millisecond
 
-		l1 := BuildL1Node(t, 0.7, latencyMS)
+		l1 := BuildL1Node(t, 0.7, lsMillis)
 		l1s = append(l1s, l1)
 	}
 	t.Log("created 300 L1s with a success ratio of 70%")
