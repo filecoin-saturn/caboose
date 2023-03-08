@@ -456,7 +456,7 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 				// of permanent vs temporary errors is.
 
 				// for now: reset i on partials so we also give them a chance to retry.
-				i = 0
+				i = -1
 			}
 		} else if errors.As(err, &epr) {
 			if len(epr.StillNeed) == 0 {
