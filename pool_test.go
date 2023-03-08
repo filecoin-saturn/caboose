@@ -14,7 +14,7 @@ import (
 )
 
 func TestChangeWeightBoost(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0), WithMinFetchSpeedDataPoints(2),
+	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0), WithMinFetchSpeedNodeDataPoints(2),
 		WithNodeSpeedBoostCoolOff(1*time.Minute))
 	ph.StartAndWait(t)
 
@@ -44,8 +44,9 @@ func TestChangeWeightBoost(t *testing.T) {
 }
 
 func TestUpdateWeightWithRefresh(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0))
+	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0), WithMembershipDebounce(1000*time.Second))
 	ph.StartAndWait(t)
+	ph.stopOrch(t)
 
 	// downvote first node
 	node1NewWeight := (maxWeight * 80) / 100
@@ -71,14 +72,15 @@ func TestUpdateWeightWithRefresh(t *testing.T) {
 			break
 		}
 	}
-	ph.pool.changeWeight(ph.eps[0], true, 0)
+	ph.downvoteAndAssertRemoved(t, ph.eps[0])
+	ph.startOrch(t)
 
 	// when node is downvoted to zero, it will be added back by a refresh with a weight of 10% max as it has been removed recently.
-
 	require.Eventually(t, func() bool {
 		ph.pool.lk.RLock()
 		defer ph.pool.lk.RUnlock()
 		weights := ph.pool.endpoints.ToWeights()
+		t.Logf("weights of nodes are: %v", weights)
 		return weights[ph.eps[0]] == (maxWeight*10)/100 && weights[ph.eps[1]] == 20 && weights[ph.eps[2]] == 17
 	}, 10*time.Second, 100*time.Millisecond)
 }
@@ -240,6 +242,12 @@ func (ph *poolHarness) stopOrch(t *testing.T) {
 	ph.goodOrch = false
 }
 
+func (ph *poolHarness) startOrch(t *testing.T) {
+	ph.gol.Lock()
+	defer ph.gol.Unlock()
+	ph.goodOrch = true
+}
+
 type HarnessOption func(config *Config)
 
 func WithCoolOffDuration(dur time.Duration) func(*Config) {
@@ -266,7 +274,7 @@ func WithNodeSpeedBoostCoolOff(dur time.Duration) func(*Config) {
 	}
 }
 
-func WithMinFetchSpeedDataPoints(n int) func(*Config) {
+func WithMinFetchSpeedNodeDataPoints(n int) func(*Config) {
 	return func(config *Config) {
 		config.MinFetchSpeedNodeDataPoints = n
 	}
@@ -316,6 +324,7 @@ func BuildPoolHarness(t *testing.T, n int, opts ...HarnessOption) *poolHarness {
 		PoolRefresh:                 100 * time.Millisecond,
 		PoolMembershipDebounce:      100 * time.Millisecond,
 		MinFetchSpeedNodeDataPoints: 10000,
+		MinFetchSpeedDataPoints:     100000,
 	}
 
 	for _, opt := range opts {

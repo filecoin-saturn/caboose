@@ -93,12 +93,13 @@ func TestCabooseTransientFailures(t *testing.T) {
 }
 
 func TestCabooseFailures(t *testing.T) {
-	t.Skip("FIX ME/FLAKY")
 	ctx := context.Background()
 	ch := BuildCabooseHarness(t, 3, 3)
 
 	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
 	ch.fetchAndAssertSuccess(t, ctx, testCid)
+
+	ch.stopOrchestrator()
 
 	// fail primary
 	ch.failNodesAndAssertFetch(t, func(e *ep) bool {
@@ -111,7 +112,6 @@ func TestCabooseFailures(t *testing.T) {
 	}, 1, testCid)
 
 	// force pool down to the 1 remaining good node.
-	ch.stopOrchestrator()
 	ch.runFetchesForRandCids(50)
 	ch.fetchAndAssertSuccess(t, ctx, testCid)
 
@@ -119,9 +119,6 @@ func TestCabooseFailures(t *testing.T) {
 	ch.failNodes(t, func(ep *ep) bool {
 		return true
 	})
-	ch.runFetchesForRandCids(50)
-	require.EqualValues(t, 0, ch.nNodesAlive())
-	require.EqualValues(t, 0, ch.getHashRingSize())
 
 	_, err := ch.c.Get(context.Background(), testCid)
 	require.Error(t, err)

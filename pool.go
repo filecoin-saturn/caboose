@@ -139,7 +139,7 @@ func newPool(c *Config) *pool {
 		started:          make(chan struct{}),
 		refresh:          make(chan struct{}, 1),
 		done:             make(chan struct{}, 1),
-		removedTimeCache: cache.New(c.PoolMembershipDebounce, 10*time.Second),
+		removedTimeCache: cache.New(c.PoolMembershipDebounce, 1*time.Second),
 
 		fetchKeyCoolDownCache: cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 		fetchKeyFailureCache:  cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
