@@ -188,7 +188,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				retryAfter = p.config.SaturnNodeCoolOff
 			}
 
-			return fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTooManyRequests{RetryAfter: retryAfter, Node: from})
+			return fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, &ErrSaturnTooManyRequests{retryAfter: retryAfter, Node: from})
 		}
 
 		// empty body so it can be re-used.

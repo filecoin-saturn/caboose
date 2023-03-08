@@ -286,7 +286,7 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 		expireAt := at.(time.Time)
 		return nil, &ErrCoolDown{
 			Cid:        c,
-			RetryAfter: time.Until(expireAt),
+			retryAfter: time.Until(expireAt),
 		}
 	}
 	p.fetchKeyLk.RUnlock()
@@ -426,7 +426,7 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 		expireAt := at.(time.Time)
 		return &ErrCoolDown{
 			Path:       path,
-			RetryAfter: time.Until(expireAt),
+			retryAfter: time.Until(expireAt),
 		}
 	}
 	p.fetchKeyLk.RUnlock()
@@ -517,14 +517,8 @@ func (p *pool) commonUpdate(node string, err error) (ferr error) {
 		}
 	}
 
-	var errTooManyRequests ErrSaturnTooManyRequests
-	if errors.As(err, &errTooManyRequests) {
-
-		ferr = &ErrSaturnTooManyRequests{
-			Node:       errTooManyRequests.Node,
-			RetryAfter: errTooManyRequests.RetryAfter,
-		}
-
+	if errors.Is(err, &ErrSaturnTooManyRequests{}) {
+		ferr = err
 		if ok := p.isCoolOffLocked(node); ok {
 			return
 		}
