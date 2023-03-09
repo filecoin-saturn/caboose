@@ -90,6 +90,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 		if err == nil && received > 0 {
 			ttfbMs = fb.Sub(start).Milliseconds()
+			if ttfbMs < 0 {
+				goLogger.Errorw("negative ttfb", "from", from, "of", resource, "ttfb", ttfbMs, "start", start, "fb", fb, "err", err,
+					"recieved", received)
+			}
 			fetchTTFBPerBlockPerPeerSuccessMetric.Observe(float64(ttfbMs))
 			// track individual block metrics separately
 			if mime == "application/vnd.ipld.raw" {
@@ -99,7 +103,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			}
 			fetchSpeedPerBlockPerPeerMetric.Observe(float64(received) / float64(durationMs))
 		} else {
-			fetchTTFBPerBlockPerPeerFailureMetric.Observe(float64(ttfbMs))
+			fetchTTFBPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
 			if mime == "application/vnd.ipld.raw" {
 				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
 			} else {
@@ -216,7 +220,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if err != nil {
-		return
+		return 0, err
 	}
 
 	response_success_end = time.Now()

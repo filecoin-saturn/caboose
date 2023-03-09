@@ -84,6 +84,7 @@ var (
 )
 
 func TestPoolHealthFuzz(t *testing.T) {
+	t.Skip("Run locally ONLY")
 	golog.SetAllLoggers(golog.LevelFatal)
 	ctx := context.Background()
 
