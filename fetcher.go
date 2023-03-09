@@ -24,10 +24,10 @@ var (
 )
 
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
-func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, e error) {
+func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, fs float64, e error) {
 	reqUrl := fmt.Sprintf(saturnReqTmpl, c)
 
-	e = p.fetchResource(ctx, from, reqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {
+	fs, e = p.fetchResource(ctx, from, reqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {
 		block, err := io.ReadAll(io.LimitReader(r, maxBlockSize))
 		if err != nil {
 			switch {
@@ -63,7 +63,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	return
 }
 
-func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (err error) {
+func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (fetchSpeed float64, err error) {
 	requestId := uuid.NewString()
 	goLogger.Debugw("doing fetch", "from", from, "of", resource, "mime", mime, "requestId", requestId)
 	start := time.Now()
@@ -85,11 +85,16 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		var ttfbMs int64
 		durationSecs := time.Since(start).Seconds()
 		durationMs := time.Since(start).Milliseconds()
-		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "ttfb", int(ttfbMs), "duration", durationSecs, "attempt", attempt, "error", err)
+		goLogger.Debugw("fetch result", "saturnTransferId", saturnTransferId, "saturnNodeId", saturnNodeId,
+			"from", from, "of", resource, "status", code, "size", received, "ttfb", int(ttfbMs), "duration", durationSecs, "attempt", attempt, "error", err)
 		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
 
 		if err == nil && received > 0 {
 			ttfbMs = fb.Sub(start).Milliseconds()
+			if ttfbMs < 0 {
+				goLogger.Errorw("negative ttfb", "from", from, "of", resource, "ttfb", ttfbMs, "start", start, "fb", fb, "err", err,
+					"recieved", received, "saturnTransferId", saturnTransferId, "saturnNodeId", saturnNodeId)
+			}
 			fetchTTFBPerBlockPerPeerSuccessMetric.Observe(float64(ttfbMs))
 			// track individual block metrics separately
 			if mime == "application/vnd.ipld.raw" {
@@ -99,7 +104,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			}
 			fetchSpeedPerBlockPerPeerMetric.Observe(float64(received) / float64(durationMs))
 		} else {
-			fetchTTFBPerBlockPerPeerFailureMetric.Observe(float64(ttfbMs))
+			fetchTTFBPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
 			if mime == "application/vnd.ipld.raw" {
 				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
 			} else {
@@ -149,7 +154,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	req.Header.Add("Accept", mime)
@@ -165,7 +170,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	resp, err = p.config.SaturnClient.Do(req)
 	if err != nil {
 		networkError = err.Error()
-		return fmt.Errorf("http request failed: %w", err)
+		return 0, fmt.Errorf("http request failed: %w", err)
 	}
 	respHeader = resp.Header
 	defer resp.Body.Close()
@@ -188,25 +193,26 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				retryAfter = p.config.SaturnNodeCoolOff
 			}
 
-			return fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, &ErrSaturnTooManyRequests{retryAfter: retryAfter, Node: from})
+			return 0, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, &ErrSaturnTooManyRequests{retryAfter: retryAfter, Node: from})
 		}
 
 		// empty body so it can be re-used.
 		_, _ = io.Copy(io.Discard, resp.Body)
 		if resp.StatusCode == http.StatusGatewayTimeout {
-			return fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
+			return 0, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
 		}
 
 		// This should only be 502, but L1s were not translating 404 from Lassie, so we have to support both for now.
 		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadGateway {
-			return fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrContentProviderNotFound)
+			return 0, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrContentProviderNotFound)
 		}
 
-		return fmt.Errorf("http error from strn: %d", resp.StatusCode)
+		return 0, fmt.Errorf("http error from strn: %d", resp.StatusCode)
 	}
 
 	wrapped := TrackingReader{resp.Body, time.Time{}, 0}
 	err = cb(resource, &wrapped)
+	fetch_end := time.Now()
 
 	fb = wrapped.firstByte
 	received = wrapped.len
@@ -215,9 +221,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if err != nil {
-		return
+		return 0, err
 	}
 
 	response_success_end = time.Now()
-	return nil
+	return float64(float64(received) / float64(fetch_end.Sub(start).Milliseconds())), nil
 }

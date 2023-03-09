@@ -13,9 +13,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestUpdateWeightWithRefresh(t *testing.T) {
-	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0))
+func TestChangeWeightBoost(t *testing.T) {
+	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0), WithMinFetchSpeedNodeDataPoints(2),
+		WithNodeSpeedBoostCoolOff(1*time.Minute), WithMinFetchSpeedDataPoints(2))
 	ph.StartAndWait(t)
+
+	ph.downvoteAndAssertDownvoted(t, ph.eps[0], 16)
+	// weight does not get boost as we don't have enough unique node speeds.
+	ph.pool.changeWeight(ph.eps[0], false, 5)
+	ph.assertWeight(t, ph.eps[0], 17)
+	ph.pool.changeWeight(ph.eps[0], false, 50)
+	ph.assertWeight(t, ph.eps[0], 18)
+
+	// downvote a node
+	ph.downvoteAndAssertDownvoted(t, ph.eps[1], 16)
+	ph.downvoteAndAssertDownvoted(t, ph.eps[1], 12)
+
+	// weight boost for being in the top 99 percentile as we now have enough unique node speed observations.
+	ph.pool.changeWeight(ph.eps[1], false, 100)
+	ph.assertWeight(t, ph.eps[1], 15)
+	// weight boost for same node again fails because of cooloff
+	ph.pool.changeWeight(ph.eps[1], false, 1000)
+	ph.assertWeight(t, ph.eps[1], 16)
+
+	// but node 2 is not under cool off
+	ph.downvoteAndAssertDownvoted(t, ph.eps[2], 16)
+	ph.pool.changeWeight(ph.eps[2], false, 10000)
+	ph.assertWeight(t, ph.eps[2], 19)
+
+}
+
+func TestUpdateWeightWithRefresh(t *testing.T) {
+	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0), WithMembershipDebounce(1000*time.Second))
+	ph.StartAndWait(t)
+	ph.stopOrch(t)
 
 	// downvote first node
 	node1NewWeight := (maxWeight * 80) / 100
@@ -41,14 +72,15 @@ func TestUpdateWeightWithRefresh(t *testing.T) {
 			break
 		}
 	}
-	ph.pool.changeWeight(ph.eps[0], true)
+	ph.downvoteAndAssertRemoved(t, ph.eps[0])
+	ph.startOrch(t)
 
 	// when node is downvoted to zero, it will be added back by a refresh with a weight of 10% max as it has been removed recently.
-
 	require.Eventually(t, func() bool {
 		ph.pool.lk.RLock()
 		defer ph.pool.lk.RUnlock()
 		weights := ph.pool.endpoints.ToWeights()
+		t.Logf("weights of nodes are: %v", weights)
 		return weights[ph.eps[0]] == (maxWeight*10)/100 && weights[ph.eps[1]] == 20 && weights[ph.eps[2]] == 17
 	}, 10*time.Second, 100*time.Millisecond)
 }
@@ -66,7 +98,7 @@ func TestUpdateWeightWithMembershipDebounce(t *testing.T) {
 			break
 		}
 	}
-	ph.pool.changeWeight(ph.eps[0], true)
+	ph.pool.changeWeight(ph.eps[0], true, 0)
 
 	// node is added back but with 10% max weight.
 	require.Eventually(t, func() bool {
@@ -152,17 +184,17 @@ func (ph *poolHarness) assertRemoved(t *testing.T, url string) {
 }
 
 func (ph *poolHarness) downvoteAndAssertRemoved(t *testing.T, url string) {
-	ph.pool.changeWeight(url, true)
+	ph.pool.changeWeight(url, true, 0)
 	ph.assertRemoved(t, url)
 }
 
 func (ph *poolHarness) downvoteAndAssertDownvoted(t *testing.T, url string, expected int) {
-	ph.pool.changeWeight(url, true)
+	ph.pool.changeWeight(url, true, 0)
 	ph.assertWeight(t, url, expected)
 }
 
 func (ph *poolHarness) upvoteAndAssertUpvoted(t *testing.T, url string, expected int) {
-	ph.pool.changeWeight(url, false)
+	ph.pool.changeWeight(url, false, 0)
 	ph.assertWeight(t, url, expected)
 }
 
@@ -210,6 +242,12 @@ func (ph *poolHarness) stopOrch(t *testing.T) {
 	ph.goodOrch = false
 }
 
+func (ph *poolHarness) startOrch(t *testing.T) {
+	ph.gol.Lock()
+	defer ph.gol.Unlock()
+	ph.goodOrch = true
+}
+
 type HarnessOption func(config *Config)
 
 func WithCoolOffDuration(dur time.Duration) func(*Config) {
@@ -227,6 +265,24 @@ func WithMinCoolOff(dur time.Duration) func(*Config) {
 func WithMaxNCoolOff(n int) func(*Config) {
 	return func(config *Config) {
 		config.MaxNCoolOff = n
+	}
+}
+
+func WithNodeSpeedBoostCoolOff(dur time.Duration) func(*Config) {
+	return func(config *Config) {
+		config.NodeSpeedBoostCoolOff = dur
+	}
+}
+
+func WithMinFetchSpeedDataPoints(n int) func(*Config) {
+	return func(config *Config) {
+		config.MinFetchSpeedDataPoints = n
+	}
+}
+
+func WithMinFetchSpeedNodeDataPoints(n int) func(*Config) {
+	return func(config *Config) {
+		config.MinFetchSpeedNodeDataPoints = n
 	}
 }
 
@@ -268,11 +324,13 @@ func BuildPoolHarness(t *testing.T, n int, opts ...HarnessOption) *poolHarness {
 	ourl, _ := url.Parse(orch.URL)
 	ph.orchUrl = ourl
 	config := &Config{
-		OrchestratorEndpoint:     ourl,
-		OrchestratorClient:       http.DefaultClient,
-		PoolWeightChangeDebounce: 100 * time.Millisecond,
-		PoolRefresh:              100 * time.Millisecond,
-		PoolMembershipDebounce:   100 * time.Millisecond,
+		OrchestratorEndpoint:        ourl,
+		OrchestratorClient:          http.DefaultClient,
+		PoolWeightChangeDebounce:    100 * time.Millisecond,
+		PoolRefresh:                 100 * time.Millisecond,
+		PoolMembershipDebounce:      100 * time.Millisecond,
+		MinFetchSpeedNodeDataPoints: 10000,
+		MinFetchSpeedDataPoints:     100000,
 	}
 
 	for _, opt := range opts {
