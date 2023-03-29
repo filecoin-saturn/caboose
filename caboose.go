@@ -75,11 +75,19 @@ type Config struct {
 	MaxNCoolOff int
 }
 
+const DefaultLoggingInterval = 5 * time.Second
+const DefaultSaturnLoggerRequestTimeout = 1 * time.Minute
+
+const DefaultSaturnOrchestratorRequestTimeout = 30 * time.Second
+
+const DefaultSaturnBlockRequestTimeout = 19 * time.Second
+const DefaultSaturnCarRequestTimeout = 30 * time.Minute
+
 const DefaultMaxRetries = 3
 const DefaultPoolFailureDownvoteDebounce = 1 * time.Minute
 const DefaultPoolMembershipDebounce = 3 * DefaultPoolRefreshInterval
 const DefaultPoolLowWatermark = 5
-const DefaultSaturnRequestTimeout = 19 * time.Second
+
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
 const DefaultPoolRefreshInterval = 5 * time.Minute
@@ -122,7 +130,7 @@ type ErrCoolDown struct {
 }
 
 func (e *ErrCoolDown) Error() string {
-	return fmt.Sprintf("multiple saturn retrieval failures seen for CID %s/Path %s, please retry after %s", e.Cid, e.Path, humanRetry(e.retryAfter))
+	return fmt.Sprintf("multiple saturn retrieval failures seen for CID %q / Path %q, please retry after %s", e.Cid, e.Path, humanRetry(e.retryAfter))
 }
 
 func (e *ErrCoolDown) RetryAfter() time.Duration {
@@ -188,7 +196,7 @@ func NewCaboose(config *Config) (*Caboose, error) {
 
 	if c.config.SaturnClient == nil {
 		c.config.SaturnClient = &http.Client{
-			Timeout: DefaultSaturnRequestTimeout,
+			Timeout: DefaultSaturnCarRequestTimeout,
 		}
 	}
 	if c.config.OrchestratorEndpoint == nil {

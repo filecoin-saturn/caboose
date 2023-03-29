@@ -49,15 +49,15 @@ func main1() int {
 
 			cb, err := caboose.NewCaboose(&caboose.Config{
 				OrchestratorClient: &http.Client{
-					Timeout: 30 * time.Second,
+					Timeout: caboose.DefaultSaturnOrchestratorRequestTimeout,
 				},
 
 				LoggingEndpoint: *le,
 				LoggingClient:   http.DefaultClient,
-				LoggingInterval: 5 * time.Second,
+				LoggingInterval: caboose.DefaultLoggingInterval,
 
 				DoValidation: true,
-				PoolRefresh:  5 * time.Minute,
+				PoolRefresh:  caboose.DefaultPoolRefreshInterval,
 				SaturnClient: &saturnClient,
 			})
 			if err != nil {
