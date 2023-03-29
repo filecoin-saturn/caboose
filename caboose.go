@@ -130,7 +130,16 @@ type ErrCoolDown struct {
 }
 
 func (e *ErrCoolDown) Error() string {
-	return fmt.Sprintf("multiple saturn retrieval failures seen for CID %q / Path %q, please retry after %s", e.Cid, e.Path, humanRetry(e.retryAfter))
+	switch true {
+	case e.Cid != cid.Undef && e.Path != "":
+		return fmt.Sprintf("multiple saturn retrieval failures seen for CID %q and Path %q, please retry after %s", e.Cid, e.Path, humanRetry(e.retryAfter))
+	case e.Path != "":
+		return fmt.Sprintf("multiple saturn retrieval failures seen for Path %q, please retry after %s", e.Path, humanRetry(e.retryAfter))
+	case e.Cid != cid.Undef:
+		return fmt.Sprintf("multiple saturn retrieval failures seen for CID %q, please retry after %s", e.Cid, humanRetry(e.retryAfter))
+	default:
+		return fmt.Sprintf("multiple saturn retrieval failures for unknown CID/Path (BUG), please retry after %s", humanRetry(e.retryAfter))
+	}
 }
 
 func (e *ErrCoolDown) RetryAfter() time.Duration {
