@@ -3,6 +3,7 @@ package caboose
 import (
 	"context"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
+	servertiming "github.com/mitchellh/go-server-timing"
 )
 
 var saturnReqTmpl = "/ipfs/%s?format=raw"
@@ -84,6 +86,14 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	isBlockRequest := false
 	if mime == "application/vnd.ipld.raw" {
 		isBlockRequest = true
+	}
+
+	// Get our timing header builder from the context
+	timing := servertiming.FromContext(ctx)
+	var timingMetric *servertiming.Metric
+	if timing != nil {
+		timingMetric = timing.NewMetric("fetch").Start()
+		defer timingMetric.Stop()
 	}
 
 	defer func() {
@@ -188,10 +198,23 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	proto = resp.Proto
 	respReq = resp.Request
 
+	if timing != nil {
+		timingHeaders := respHeader.Values(servertiming.HeaderKey)
+		for _, th := range timingHeaders {
+			if subReqTiming, err := servertiming.ParseHeader(th); err == nil {
+				for _, m := range subReqTiming.Metrics {
+					m.Extra["attempt"] = fmt.Sprintf("%d", attempt)
+					m.Extra["subreq"] = subReqID(from, resource)
+					timing.Add(m)
+				}
+			}
+		}
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusTooManyRequests {
 			var retryAfter time.Duration
-			if strnRetryHint := resp.Header.Get(saturnRetryAfterKey); strnRetryHint != "" {
+			if strnRetryHint := respHeader.Get(saturnRetryAfterKey); strnRetryHint != "" {
 				seconds, err := strconv.ParseInt(strnRetryHint, 10, 64)
 				if err == nil {
 					retryAfter = time.Duration(seconds) * time.Second
@@ -234,4 +257,8 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	response_success_end = time.Now()
 	return nil
+}
+
+func subReqID(host, rsrc string) string {
+	return fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte(host+rsrc)))
 }
