@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/filecoin-saturn/caboose"
+	carv2 "github.com/ipfs/boxo/ipld/car/v2"
+	"github.com/ipfs/boxo/ipld/car/v2/blockstore"
 	"github.com/ipfs/go-cid"
-	carv2 "github.com/ipld/go-car/v2"
-	"github.com/ipld/go-car/v2/blockstore"
 	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
 	"github.com/ipld/go-ipld-prime/storage/bsadapter"
 	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
@@ -49,15 +49,15 @@ func main1() int {
 
 			cb, err := caboose.NewCaboose(&caboose.Config{
 				OrchestratorClient: &http.Client{
-					Timeout: 30 * time.Second,
+					Timeout: caboose.DefaultSaturnOrchestratorRequestTimeout,
 				},
 
 				LoggingEndpoint: *le,
 				LoggingClient:   http.DefaultClient,
-				LoggingInterval: 5 * time.Second,
+				LoggingInterval: caboose.DefaultLoggingInterval,
 
 				DoValidation: true,
-				PoolRefresh:  5 * time.Minute,
+				PoolRefresh:  caboose.DefaultPoolRefreshInterval,
 				SaturnClient: &saturnClient,
 			})
 			if err != nil {

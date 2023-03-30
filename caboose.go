@@ -9,11 +9,11 @@ import (
 	"net/url"
 	"time"
 
+	ipfsblockstore "github.com/ipfs/boxo/blockstore"
+	ipath "github.com/ipfs/boxo/coreiface/path"
+	gateway "github.com/ipfs/boxo/gateway"
+	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
-	ipfsblockstore "github.com/ipfs/go-ipfs-blockstore"
-	blocks "github.com/ipfs/go-libipfs/blocks"
-	gateway "github.com/ipfs/go-libipfs/gateway"
-	ipath "github.com/ipfs/interface-go-ipfs-core/path"
 )
 
 type Config struct {
@@ -75,11 +75,19 @@ type Config struct {
 	MaxNCoolOff int
 }
 
+const DefaultLoggingInterval = 5 * time.Second
+const DefaultSaturnLoggerRequestTimeout = 1 * time.Minute
+
+const DefaultSaturnOrchestratorRequestTimeout = 30 * time.Second
+
+const DefaultSaturnBlockRequestTimeout = 19 * time.Second
+const DefaultSaturnCarRequestTimeout = 30 * time.Minute
+
 const DefaultMaxRetries = 3
 const DefaultPoolFailureDownvoteDebounce = 1 * time.Minute
 const DefaultPoolMembershipDebounce = 3 * DefaultPoolRefreshInterval
 const DefaultPoolLowWatermark = 5
-const DefaultSaturnRequestTimeout = 19 * time.Second
+
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
 const DefaultPoolRefreshInterval = 5 * time.Minute
@@ -122,7 +130,16 @@ type ErrCoolDown struct {
 }
 
 func (e *ErrCoolDown) Error() string {
-	return fmt.Sprintf("multiple saturn retrieval failures seen for CID %s/Path %s, please retry after %s", e.Cid, e.Path, humanRetry(e.retryAfter))
+	switch true {
+	case e.Cid != cid.Undef && e.Path != "":
+		return fmt.Sprintf("multiple saturn retrieval failures seen for CID %q and Path %q, please retry after %s", e.Cid, e.Path, humanRetry(e.retryAfter))
+	case e.Path != "":
+		return fmt.Sprintf("multiple saturn retrieval failures seen for Path %q, please retry after %s", e.Path, humanRetry(e.retryAfter))
+	case e.Cid != cid.Undef:
+		return fmt.Sprintf("multiple saturn retrieval failures seen for CID %q, please retry after %s", e.Cid, humanRetry(e.retryAfter))
+	default:
+		return fmt.Sprintf("multiple saturn retrieval failures for unknown CID/Path (BUG), please retry after %s", humanRetry(e.retryAfter))
+	}
 }
 
 func (e *ErrCoolDown) RetryAfter() time.Duration {
@@ -188,7 +205,7 @@ func NewCaboose(config *Config) (*Caboose, error) {
 
 	if c.config.SaturnClient == nil {
 		c.config.SaturnClient = &http.Client{
-			Timeout: DefaultSaturnRequestTimeout,
+			Timeout: DefaultSaturnCarRequestTimeout,
 		}
 	}
 	if c.config.OrchestratorEndpoint == nil {

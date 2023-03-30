@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
-	blocks "github.com/ipfs/go-libipfs/blocks"
 )
 
 var saturnReqTmpl = "/ipfs/%s?format=raw"
@@ -81,6 +81,11 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	isCacheHit := false
 	networkError := ""
 
+	isBlockRequest := false
+	if mime == "application/vnd.ipld.raw" {
+		isBlockRequest = true
+	}
+
 	defer func() {
 		var ttfbMs int64
 		durationSecs := time.Since(start).Seconds()
@@ -92,7 +97,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			ttfbMs = fb.Sub(start).Milliseconds()
 			fetchTTFBPerBlockPerPeerSuccessMetric.Observe(float64(ttfbMs))
 			// track individual block metrics separately
-			if mime == "application/vnd.ipld.raw" {
+			if isBlockRequest {
 				fetchDurationPerBlockPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
 			} else {
 				fetchDurationPerCarPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
@@ -100,7 +105,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			fetchSpeedPerBlockPerPeerMetric.Observe(float64(received) / float64(durationMs))
 		} else {
 			fetchTTFBPerBlockPerPeerFailureMetric.Observe(float64(ttfbMs))
-			if mime == "application/vnd.ipld.raw" {
+			if isBlockRequest {
 				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
 			} else {
 				fetchDurationPerCarPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
@@ -145,7 +150,16 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 	}()
 
-	reqCtx, cancel := context.WithTimeout(ctx, DefaultSaturnRequestTimeout)
+	// TODO: Ideally, we would have additional "PerRequestInactivityTimeout"
+	// which is the amount of time without any NEW data from the server, but
+	// that can be added later. We need both because a slow trickle of data
+	// could take a large amount of time.
+	requestTimeout := DefaultSaturnCarRequestTimeout
+	if isBlockRequest {
+		requestTimeout = DefaultSaturnBlockRequestTimeout
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
 	if err != nil {
