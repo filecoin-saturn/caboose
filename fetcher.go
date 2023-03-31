@@ -272,7 +272,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 // todo: refactor for dryness
 func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType string, isCacheHit bool, totalTimeMs, ttfbMs int64, recieved int) {
 	if len(timingHeaders) == 0 {
-		goLogger.Error("no timing headers found")
+		goLogger.Debug("no timing headers in request response.")
 		return
 	}
 
