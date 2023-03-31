@@ -17,9 +17,7 @@ import (
 	"github.com/serialx/hashring"
 )
 
-var (
-	maxPoolSize = 300
-)
+const maxPoolSize = 300
 
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
@@ -207,7 +205,7 @@ func (p *pool) doRefresh() {
 				return int64(int64(n[i].weight)*n[i].addedAt.Unix()) > int64(int64(n[j].weight)*n[j].addedAt.Unix())
 			})
 			n = n[:maxPoolSize]
-			goLogger.Infow(fmt.Sprintf("trimmed pool size to %d", maxPoolSize), "first", n[0].url, "first_weight",
+			goLogger.Infow("trimmed pool size", "pool-size", maxPoolSize, "first", n[0].url, "first_weight",
 				n[0].weight, "last", n[maxPoolSize-1].url, "last_weight", n[maxPoolSize-1].weight)
 		}
 
