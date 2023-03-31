@@ -66,6 +66,11 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 }
 
 func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (err error) {
+	resourceType := "car"
+	if mime == "application/vnd.ipld.raw" {
+		resourceType = "block"
+	}
+
 	requestId := uuid.NewString()
 	goLogger.Debugw("doing fetch", "from", from, "of", resource, "mime", mime, "requestId", requestId)
 	start := time.Now()
@@ -97,35 +102,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	defer func() {
-		var ttfbMs int64
-		durationSecs := time.Since(start).Seconds()
-		durationMs := time.Since(start).Milliseconds()
-		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "ttfb", int(ttfbMs), "duration", durationSecs, "attempt", attempt, "error", err)
-		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
-
-		if err == nil && received > 0 {
-			ttfbMs = fb.Sub(start).Milliseconds()
-			fetchTTFBPerBlockPerPeerSuccessMetric.Observe(float64(ttfbMs))
-			// track individual block metrics separately
-			if isBlockRequest {
-				fetchDurationPerBlockPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
-			} else {
-				fetchDurationPerCarPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
-			}
-			fetchSpeedPerBlockPerPeerMetric.Observe(float64(received) / float64(durationMs))
-		} else {
-			fetchTTFBPerBlockPerPeerFailureMetric.Observe(float64(ttfbMs))
-			if isBlockRequest {
-				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
-			} else {
-				fetchDurationPerCarPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
-			}
-		}
-
-		if received > 0 {
-			fetchSizeMetric.Observe(float64(received))
-		}
-
 		if respHeader != nil {
 			saturnNodeId = respHeader.Get(saturnNodeIdKey)
 			saturnTransferId = respHeader.Get(saturnTransferIdKey)
@@ -138,6 +114,40 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			for k, v := range respHeader {
 				received = received + len(k) + len(v)
 			}
+		}
+
+		var ttfbMs int64
+		durationSecs := time.Since(start).Seconds()
+		durationMs := time.Since(start).Milliseconds()
+		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "ttfb", int(ttfbMs), "duration", durationSecs, "attempt", attempt, "error", err)
+
+		fetchResponseCodeMetric.WithLabelValues(resourceType, fmt.Sprintf("%d", code)).Add(1)
+
+		cacheStatus := getCacheStatus(isCacheHit)
+		if err == nil && received > 0 {
+			ttfbMs = fb.Sub(start).Milliseconds()
+			fetchSpeedPerPeerSuccessMetric.WithLabelValues(resourceType, cacheStatus).Observe(float64(received) / float64(durationMs))
+			fetchCacheCountSuccessTotalMetric.WithLabelValues(resourceType, cacheStatus).Add(1)
+			// track individual block metrics separately
+			if isBlockRequest {
+				fetchTTFBPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(ttfbMs))
+				fetchDurationPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
+			} else {
+				fetchTTFBPerCARPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(ttfbMs))
+				fetchDurationPerCarPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
+			}
+
+			updateSuccessServerTimingMetrics(respHeader.Values(servertiming.HeaderKey), resourceType, isCacheHit, durationMs, ttfbMs, received)
+		} else {
+			if isBlockRequest {
+				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
+			} else {
+				fetchDurationPerCarPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
+			}
+		}
+
+		if received > 0 {
+			fetchSizeMetric.WithLabelValues(resourceType).Observe(float64(received))
 		}
 
 		p.logger.queue <- log{
@@ -257,6 +267,47 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	response_success_end = time.Now()
 	return nil
+}
+
+// todo: refactor for dryness
+func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType string, isCacheHit bool, totalTimeMs, ttfbMs int64, recieved int) {
+	if len(timingHeaders) == 0 {
+		goLogger.Error("no timing headers found")
+		return
+	}
+
+	for _, th := range timingHeaders {
+		if subReqTiming, err := servertiming.ParseHeader(th); err == nil {
+			for _, m := range subReqTiming.Metrics {
+				switch m.Name {
+				case "shim_lassie_headers":
+					if m.Duration.Milliseconds() != 0 && !isCacheHit {
+						fetchDurationPerPeerSuccessCacheMissTotalLassieMetric.WithLabelValues(resourceType).Observe(float64(m.Duration.Milliseconds()))
+					}
+
+				case "nginx":
+					// sanity checks
+					if totalTimeMs != 0 && ttfbMs != 0 && m.Duration.Milliseconds() != 0 {
+						fetchDurationPerPeerSuccessTotalL1NodeMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit)).Observe(float64(m.Duration.Milliseconds()))
+						networkTimeMs := totalTimeMs - m.Duration.Milliseconds()
+						if networkTimeMs > 0 {
+							fetchNetworkSpeedPerPeerSuccessMetric.WithLabelValues(resourceType).Observe(float64(recieved) / float64(networkTimeMs))
+						}
+						networkLatencyMs := ttfbMs - m.Duration.Milliseconds()
+						fetchNetworkLatencyPeerSuccessMetric.WithLabelValues(resourceType).Observe(float64(networkLatencyMs))
+					}
+				default:
+				}
+			}
+		}
+	}
+}
+
+func getCacheStatus(isCacheHit bool) string {
+	if isCacheHit {
+		return "Cache-hit"
+	}
+	return "Cache-miss"
 }
 
 func subReqID(host, rsrc string) string {
