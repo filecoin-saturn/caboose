@@ -160,6 +160,19 @@ var (
 		Help:    "Time spent in Lassie for a Saturn L1 Nginx cache miss for a successful fetch per peer in milliseconds",
 		Buckets: durationMsPerCarHistogram,
 	}, []string{"resourceType"})
+
+	// network timing
+	fetchNetworkSpeedPerPeerSuccessMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_network_speed_peer_success"),
+		Help:    "Network speed observed during successful caboose fetches from a single peer in bytes per milliseconds",
+		Buckets: speedBytesPerMsHistogram,
+	}, []string{"resourceType"})
+
+	fetchNetworkLatencyPeerSuccessMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_network_latency_peer_success"),
+		Help:    "Network latency observed during successful caboose fetches from a single peer in milliseconds",
+		Buckets: durationMsPerCarHistogram,
+	}, []string{"resourceType"})
 )
 
 var CabooseMetrics = prometheus.NewRegistry()
@@ -189,4 +202,7 @@ func init() {
 
 	CabooseMetrics.MustRegister(fetchDurationPerPeerSuccessTotalL1NodeMetric)
 	CabooseMetrics.MustRegister(fetchDurationPerPeerSuccessCacheMissTotalLassieMetric)
+
+	CabooseMetrics.MustRegister(fetchNetworkSpeedPerPeerSuccessMetric)
+	CabooseMetrics.MustRegister(fetchNetworkLatencyPeerSuccessMetric)
 }

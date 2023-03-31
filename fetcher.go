@@ -137,7 +137,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				fetchDurationPerCarPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
 			}
 
-			updateSuccessServerTimingMetrics(respHeader.Values(servertiming.HeaderKey), resourceType, cacheStatus)
+			updateSuccessServerTimingMetrics(respHeader.Values(servertiming.HeaderKey), resourceType, cacheStatus, durationMs, ttfbMs, received)
 		} else {
 			if isBlockRequest {
 				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
@@ -270,7 +270,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 }
 
 // todo: refactor for dryness
-func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType string, cache_status string) {
+func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType string, cache_status string, totalTimeMs, ttfbMs int64, recieved int) {
 	if len(timingHeaders) == 0 {
 		goLogger.Error("no timing headers found")
 		return
@@ -284,6 +284,11 @@ func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType strin
 					fetchDurationPerPeerSuccessCacheMissTotalLassieMetric.WithLabelValues(resourceType).Observe(float64(m.Duration.Milliseconds()))
 				case "nginx":
 					fetchDurationPerPeerSuccessTotalL1NodeMetric.WithLabelValues(resourceType, cache_status).Observe(float64(m.Duration.Milliseconds()))
+					networkTimeMs := totalTimeMs - m.Duration.Milliseconds()
+					fetchNetworkSpeedPerPeerSuccessMetric.WithLabelValues(resourceType).Observe(float64(recieved) / float64(networkTimeMs))
+
+					networkLatencyMs := ttfbMs - m.Duration.Milliseconds()
+					fetchNetworkLatencyPeerSuccessMetric.WithLabelValues(resourceType).Observe(float64(networkLatencyMs))
 				default:
 				}
 			}
