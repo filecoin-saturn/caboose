@@ -64,6 +64,11 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 }
 
 func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (err error) {
+	resourceType := "car"
+	if mime == "application/vnd.ipld.raw" {
+		resourceType = "block"
+	}
+
 	requestId := uuid.NewString()
 	goLogger.Debugw("doing fetch", "from", from, "of", resource, "mime", mime, "requestId", requestId)
 	start := time.Now()
@@ -87,35 +92,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	defer func() {
-		var ttfbMs int64
-		durationSecs := time.Since(start).Seconds()
-		durationMs := time.Since(start).Milliseconds()
-		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "ttfb", int(ttfbMs), "duration", durationSecs, "attempt", attempt, "error", err)
-		fetchResponseMetric.WithLabelValues(fmt.Sprintf("%d", code)).Add(1)
-
-		if err == nil && received > 0 {
-			ttfbMs = fb.Sub(start).Milliseconds()
-			fetchTTFBPerBlockPerPeerSuccessMetric.Observe(float64(ttfbMs))
-			// track individual block metrics separately
-			if isBlockRequest {
-				fetchDurationPerBlockPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
-			} else {
-				fetchDurationPerCarPerPeerSuccessMetric.Observe(float64(response_success_end.Sub(start).Milliseconds()))
-			}
-			fetchSpeedPerBlockPerPeerMetric.Observe(float64(received) / float64(durationMs))
-		} else {
-			fetchTTFBPerBlockPerPeerFailureMetric.Observe(float64(ttfbMs))
-			if isBlockRequest {
-				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
-			} else {
-				fetchDurationPerCarPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
-			}
-		}
-
-		if received > 0 {
-			fetchSizeMetric.Observe(float64(received))
-		}
-
 		if respHeader != nil {
 			saturnNodeId = respHeader.Get(saturnNodeIdKey)
 			saturnTransferId = respHeader.Get(saturnTransferIdKey)
@@ -128,6 +104,38 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			for k, v := range respHeader {
 				received = received + len(k) + len(v)
 			}
+		}
+
+		var ttfbMs int64
+		durationSecs := time.Since(start).Seconds()
+		durationMs := time.Since(start).Milliseconds()
+		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "ttfb", int(ttfbMs), "duration", durationSecs, "attempt", attempt, "error", err)
+
+		fetchResponseCodeMetric.WithLabelValues(resourceType, fmt.Sprintf("%d", code)).Add(1)
+
+		if err == nil && received > 0 {
+			ttfbMs = fb.Sub(start).Milliseconds()
+			cacheStatus := getCacheStatus(isCacheHit)
+			// track individual block metrics separately
+			if isBlockRequest {
+				fetchTTFBPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(ttfbMs))
+				fetchDurationPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
+				fetchSpeedPerBlockPerPeerMetric.WithLabelValues(cacheStatus).Observe(float64(received) / float64(durationMs))
+			} else {
+				fetchTTFBPerCARPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(ttfbMs))
+				fetchDurationPerCarPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
+				fetchSpeedPerCarPerPeerMetric.WithLabelValues(cacheStatus).Observe(float64(received) / float64(durationMs))
+			}
+		} else {
+			if isBlockRequest {
+				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
+			} else {
+				fetchDurationPerCarPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
+			}
+		}
+
+		if received > 0 {
+			fetchSizeMetric.WithLabelValues(resourceType).Observe(float64(received))
 		}
 
 		p.logger.queue <- log{
@@ -234,4 +242,11 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	response_success_end = time.Now()
 	return nil
+}
+
+func getCacheStatus(isCacheHit bool) string {
+	if isCacheHit {
+		return "Cache-hit"
+	}
+	return "Cache-miss"
 }

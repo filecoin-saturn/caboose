@@ -17,6 +17,10 @@ import (
 	"github.com/serialx/hashring"
 )
 
+var (
+	maxPoolSize = 300
+)
+
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
 func (p *pool) loadPool() ([]string, error) {
@@ -197,14 +201,14 @@ func (p *pool) doRefresh() {
 			}
 		}
 
-		// If we have more than 200 nodes, pick the top 200 sorted by (weight * age).
-		if len(n) > 200 {
+		// If we have more than maxPoolSize nodes, pick the top maxPoolSize sorted by (weight * age).
+		if len(n) > maxPoolSize {
 			sort.Slice(n, func(i, j int) bool {
 				return int64(int64(n[i].weight)*n[i].addedAt.Unix()) > int64(int64(n[j].weight)*n[j].addedAt.Unix())
 			})
-			n = n[:200]
-			goLogger.Infow("trimmed pool list to 200", "first", n[0].url, "first_weight",
-				n[0].weight, "last", n[199].url, "last_weight", n[199].weight)
+			n = n[:maxPoolSize]
+			goLogger.Infow(fmt.Sprintf("trimmed pool size to %d", maxPoolSize), "first", n[0].url, "first_weight",
+				n[0].weight, "last", n[maxPoolSize-1].url, "last_weight", n[maxPoolSize-1].weight)
 		}
 
 		p.endpoints = n
@@ -215,6 +219,7 @@ func (p *pool) doRefresh() {
 		}
 		poolSizeMetric.Set(float64(len(n)))
 
+		poolNewMembersMetric.Reset()
 		// periodic update of a pool health metric
 		byWeight := make(map[int]int)
 		for _, m := range p.endpoints {
@@ -222,7 +227,12 @@ func (p *pool) doRefresh() {
 				byWeight[m.weight] = 0
 			}
 			byWeight[m.weight] += 1
+
+			if _, ok := oldMap[m.String()]; !ok {
+				poolNewMembersMetric.WithLabelValues((fmt.Sprintf("%d", m.weight))).Add(1)
+			}
 		}
+
 		poolHealthMetric.Reset()
 		for weight, cnt := range byWeight {
 			poolHealthMetric.WithLabelValues(fmt.Sprintf("%d", weight)).Set(float64(cnt))
