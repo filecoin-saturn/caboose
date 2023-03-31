@@ -312,7 +312,6 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 
 		if err == nil {
 			durationMs := time.Since(blockFetchStart).Milliseconds()
-			fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
 			fetchDurationBlockSuccessMetric.Observe(float64(durationMs))
 
 			return

@@ -17,17 +17,13 @@ var (
 	// ----- Histogram buckets to record fetch duration metrics -----
 	// The upper bound on the fetch duration buckets are informed by the timeouts per block and per peer request/retry.
 
-	// buckets to record duration in milliseconds to fetch a block across multiple peers,
-	// histogram buckets will be [50ms,.., 60 seconds] -> total 10 buckets +1 prometheus Inf bucket
-	durationMsPerBlockHistogram = prometheus.ExponentialBucketsRange(50, 60000, 10)
-
-	// buckets to record duration in milliseconds to fetch a block from a single peer,
-	// histogram buckets will be [50ms,.., 20 seconds] -> total 10 buckets +1 prometheus Inf bucket
-	durationMsPerBlockPerPeerHistogram = prometheus.ExponentialBucketsRange(50, 20000, 10)
+	// buckets to record duration in milliseconds to fetch a block,
+	// histogram buckets will be [50ms,.., 60 seconds] -> total 20 buckets +1 prometheus Inf bucket
+	durationMsPerBlockHistogram = prometheus.ExponentialBucketsRange(50, 60000, 20)
 
 	// buckets to record duration in milliseconds to fetch a CAR,
 	// histogram buckets will be [50ms,.., 30 minutes] -> total 10 buckets +1 prometheus Inf bucket
-	durationMsPerCarHistogram = prometheus.ExponentialBucketsRange(50, 1800000, 10)
+	durationMsPerCarHistogram = prometheus.ExponentialBucketsRange(50, 1800000, 40)
 )
 
 // pool metrics
@@ -65,27 +61,26 @@ var (
 		Help:    "Size in bytes of caboose block fetches",
 		Buckets: blockSizeHistogram,
 	}, []string{"resourceType"})
+
+	// success cases
+	fetchSpeedPerPeerSuccessMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_speed_peer_success"),
+		Help:    "Speed observed during caboose fetches for successfully fetching from a single peer in bytes/ms",
+		Buckets: speedBytesPerMsHistogram,
+	}, []string{"resourceType", "cache_status"})
+
+	fetchCacheCountSuccessTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "fetch_cache_count_success_total"),
+		Help: "Records cache hits and cache hits for successful fetches from Saturn",
+	}, []string{"resourceType", "cache_status"})
 )
 
 // block metrics
 var (
-	// success cases
-	fetchSpeedPerBlockMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_speed_block"),
-		Help:    "Speed observed during caboose fetches for a block across multiple peers and retries in bytes/ms",
-		Buckets: speedBytesPerMsHistogram,
-	})
-
-	fetchSpeedPerBlockPerPeerMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_speed_block_peer"),
-		Help:    "Speed observed during caboose fetches for fetching a block from a single peer in bytes/ms",
-		Buckets: speedBytesPerMsHistogram,
-	}, []string{"cache_status"})
-
 	fetchDurationPerBlockPerPeerSuccessMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_block_peer_success"),
 		Help:    "Latency observed during successful caboose fetches from a single peer in milliseconds",
-		Buckets: durationMsPerBlockPerPeerHistogram,
+		Buckets: durationMsPerBlockHistogram,
 	}, []string{"cache_status"})
 
 	fetchDurationBlockSuccessMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -97,14 +92,14 @@ var (
 	fetchTTFBPerBlockPerPeerSuccessMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_ttfb_block_peer_success"),
 		Help:    "TTFB observed during a successful caboose fetch from a single peer in milliseconds",
-		Buckets: durationMsPerBlockPerPeerHistogram,
+		Buckets: durationMsPerBlockHistogram,
 	}, []string{"cache_status"})
 
 	// failures
 	fetchDurationPerBlockPerPeerFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_block_peer_failure"),
 		Help:    "Latency observed during failed caboose fetches from a single peer in milliseconds",
-		Buckets: durationMsPerBlockPerPeerHistogram,
+		Buckets: durationMsPerBlockHistogram,
 	})
 
 	fetchDurationBlockFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -116,13 +111,6 @@ var (
 
 // CAR metrics
 var (
-	// success
-	fetchSpeedPerCarPerPeerMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_speed_car_peer"),
-		Help:    "Speed observed during caboose fetches for fetching a car from a single peer in bytes/ms",
-		Buckets: speedBytesPerMsHistogram,
-	}, []string{"cache_status"})
-
 	fetchDurationPerCarPerPeerSuccessMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_car_peer_success"),
 		Help:    "Latency observed during successful caboose car fetches from a single peer in milliseconds",
@@ -155,6 +143,25 @@ var (
 	})
 )
 
+// Saturn Server-timings
+var (
+	// ---------------------- For successful fetches ONLY for now----------------------
+	// L1 server timings
+	// nginx + l1 compute + lassie
+	fetchDurationPerPeerSuccessTotalL1NodeMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_peer_total_saturn_l1"),
+		Help:    "Total time spent on an L1 node for a successful fetch per peer in milliseconds",
+		Buckets: durationMsPerCarHistogram,
+	}, []string{"resourceType", "cache_status"})
+
+	// total only on lassie
+	fetchDurationPerPeerSuccessCacheMissTotalLassieMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_peer_cache_miss_total_lassie"),
+		Help:    "Time spent in Lassie for a Saturn L1 Nginx cache miss for a successful fetch per peer in milliseconds",
+		Buckets: durationMsPerCarHistogram,
+	}, []string{"resourceType"})
+)
+
 var CabooseMetrics = prometheus.NewRegistry()
 
 func init() {
@@ -165,11 +172,7 @@ func init() {
 
 	CabooseMetrics.MustRegister(fetchResponseCodeMetric)
 	CabooseMetrics.MustRegister(fetchSizeMetric)
-
-	CabooseMetrics.MustRegister(fetchSpeedPerBlockMetric)
-	CabooseMetrics.MustRegister(fetchSpeedPerBlockPerPeerMetric)
-
-	CabooseMetrics.MustRegister(fetchSpeedPerCarPerPeerMetric)
+	CabooseMetrics.MustRegister(fetchSpeedPerPeerSuccessMetric)
 
 	CabooseMetrics.MustRegister(fetchDurationPerBlockPerPeerSuccessMetric)
 	CabooseMetrics.MustRegister(fetchDurationPerCarPerPeerSuccessMetric)
@@ -181,4 +184,9 @@ func init() {
 	CabooseMetrics.MustRegister(fetchDurationCarFailureMetric)
 	CabooseMetrics.MustRegister(fetchTTFBPerBlockPerPeerSuccessMetric)
 	CabooseMetrics.MustRegister(fetchTTFBPerCARPerPeerSuccessMetric)
+
+	CabooseMetrics.MustRegister(fetchCacheCountSuccessTotalMetric)
+
+	CabooseMetrics.MustRegister(fetchDurationPerPeerSuccessTotalL1NodeMetric)
+	CabooseMetrics.MustRegister(fetchDurationPerPeerSuccessCacheMissTotalLassieMetric)
 }
