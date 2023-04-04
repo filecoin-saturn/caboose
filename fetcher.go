@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/influxdata/tdigest"
+
 	"github.com/google/uuid"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -70,6 +72,18 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	if mime == "application/vnd.ipld.raw" {
 		resourceType = "block"
 	}
+
+	p.lk.Lock()
+	if _, ok := p.nodesPerf[from]; !ok {
+		p.nodesPerf[from] = &nodePerf{
+			latencyDigest:    tdigest.NewWithCompression(1000),
+			throughputDigest: tdigest.NewWithCompression(1000),
+			nRequests:        uint64(1),
+		}
+	} else {
+		p.nodesPerf[from].nRequests++
+	}
+	p.lk.Unlock()
 
 	requestId := uuid.NewString()
 	goLogger.Debugw("doing fetch", "from", from, "of", resource, "mime", mime, "requestId", requestId)
@@ -137,7 +151,21 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				fetchDurationPerCarPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
 			}
 
-			updateSuccessServerTimingMetrics(respHeader.Values(servertiming.HeaderKey), resourceType, isCacheHit, durationMs, ttfbMs, received)
+			latencyMillis, speedBytesPerMs := updateSuccessServerTimingMetrics(respHeader.Values(servertiming.HeaderKey), resourceType, isCacheHit, durationMs, ttfbMs, received)
+
+			if latencyMillis > 0 && speedBytesPerMs > 0 {
+				p.lk.Lock()
+				node := p.nodesPerf[from]
+				node.nSuccess++
+				node.latencyDigest.Add(latencyMillis, 1)
+				node.throughputDigest.Add(speedBytesPerMs, 1)
+				pct := (node.nSuccess * 100) / node.nRequests
+				if pct >= 75 && node.nRequests >= 5 {
+					fetchPeerP90LatencyDistributionMetric.Observe(node.latencyDigest.Quantile(0.90))
+					fetchPeerP90SpeedDistributionMetric.Observe(node.throughputDigest.Quantile(0.90))
+				}
+				p.lk.Unlock()
+			}
 		} else {
 			if isBlockRequest {
 				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
@@ -270,7 +298,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 }
 
 // todo: refactor for dryness
-func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType string, isCacheHit bool, totalTimeMs, ttfbMs int64, recieved int) {
+func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType string, isCacheHit bool, totalTimeMs, ttfbMs int64, recieved int) (latencyMillis, speedBytesPerMs float64) {
 	if len(timingHeaders) == 0 {
 		goLogger.Debug("no timing headers in request response.")
 		return
@@ -295,12 +323,16 @@ func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType strin
 						}
 						networkLatencyMs := ttfbMs - m.Duration.Milliseconds()
 						fetchNetworkLatencyPeerSuccessMetric.WithLabelValues(resourceType).Observe(float64(networkLatencyMs))
+						latencyMillis = float64(networkLatencyMs)
+						speedBytesPerMs = (float64(recieved) / float64(networkTimeMs))
 					}
 				default:
 				}
 			}
 		}
 	}
+
+	return
 }
 
 func getCacheStatus(isCacheHit bool) string {

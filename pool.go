@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/influxdata/tdigest"
+
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/patrickmn/go-cache"
@@ -41,6 +43,13 @@ func (p *pool) loadPool() ([]string, error) {
 	return responses, nil
 }
 
+type nodePerf struct {
+	latencyDigest    *tdigest.TDigest
+	throughputDigest *tdigest.TDigest
+	nRequests        uint64
+	nSuccess         uint64
+}
+
 type pool struct {
 	config *Config
 	logger *logger
@@ -54,11 +63,12 @@ type pool struct {
 	fetchKeyCoolDownCache *cache.Cache // guarded by fetchKeyLk
 
 	lk               sync.RWMutex
-	endpoints        MemberList         // guarded by lk
-	c                *hashring.HashRing // guarded by lk
-	removedTimeCache *cache.Cache       // guarded by lk
-	coolOffCount     map[string]int     // guarded by lk
-	coolOffCache     *cache.Cache       // guarded by lk
+	endpoints        MemberList           // guarded by lk
+	c                *hashring.HashRing   // guarded by lk
+	removedTimeCache *cache.Cache         // guarded by lk
+	coolOffCount     map[string]int       // guarded by lk
+	coolOffCache     *cache.Cache         // guarded by lk
+	nodesPerf        map[string]*nodePerf // guarded by lk
 }
 
 // MemberList is the list of Saturn endpoints that are currently members of the Caboose consistent hashing ring
@@ -142,6 +152,8 @@ func newPool(c *Config) *pool {
 
 		coolOffCount: make(map[string]int),
 		coolOffCache: cache.New(c.SaturnNodeCoolOff, cache.DefaultExpiration),
+
+		nodesPerf: make(map[string]*nodePerf),
 	}
 
 	return &p
@@ -510,6 +522,7 @@ func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path str
 }
 
 func (p *pool) commonUpdate(node string, err error) (ferr error) {
+
 	ferr = err
 	if err == nil {
 		p.changeWeight(node, false)
@@ -581,6 +594,7 @@ func (p *pool) changeWeight(node string, failure bool) {
 	// update pool with new weights
 	if nm.weight == 0 {
 		delete(p.coolOffCount, nm.url)
+		delete(p.nodesPerf, nm.url)
 		p.coolOffCache.Delete(nm.url)
 
 		p.c = p.c.RemoveNode(nm.url)

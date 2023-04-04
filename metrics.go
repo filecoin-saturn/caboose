@@ -173,6 +173,18 @@ var (
 		Help:    "Network latency observed during successful caboose fetches from a single peer in milliseconds",
 		Buckets: durationMsPerCarHistogram,
 	}, []string{"resourceType"})
+
+	fetchPeerP90LatencyDistributionMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_peer_network_latency_success"),
+		Help:    "Distribution of P90 network latency for a peer for network latency buckets for successful fetch from a peer",
+		Buckets: durationMsPerCarHistogram,
+	})
+
+	fetchPeerP90SpeedDistributionMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_peer_network_speed_success"),
+		Help:    "Distribution of P90 network speed for a peer for network speed buckets for successful fetch from a peer",
+		Buckets: speedBytesPerMsHistogram,
+	})
 )
 
 var CabooseMetrics = prometheus.NewRegistry()
@@ -205,4 +217,7 @@ func init() {
 
 	CabooseMetrics.MustRegister(fetchNetworkSpeedPerPeerSuccessMetric)
 	CabooseMetrics.MustRegister(fetchNetworkLatencyPeerSuccessMetric)
+
+	CabooseMetrics.MustRegister(fetchPeerP90LatencyDistributionMetric)
+	CabooseMetrics.MustRegister(fetchPeerP90SpeedDistributionMetric)
 }
