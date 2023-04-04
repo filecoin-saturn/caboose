@@ -69,6 +69,9 @@ type pool struct {
 	coolOffCount     map[string]int       // guarded by lk
 	coolOffCache     *cache.Cache         // guarded by lk
 	nodesPerf        map[string]*nodePerf // guarded by lk
+
+	uniquePerfLatency map[string]struct{} // guarded by lk
+	uniquePerfSpeed   map[string]struct{} // guarded by lk
 }
 
 // MemberList is the list of Saturn endpoints that are currently members of the Caboose consistent hashing ring
@@ -153,7 +156,9 @@ func newPool(c *Config) *pool {
 		coolOffCount: make(map[string]int),
 		coolOffCache: cache.New(c.SaturnNodeCoolOff, cache.DefaultExpiration),
 
-		nodesPerf: make(map[string]*nodePerf),
+		nodesPerf:         make(map[string]*nodePerf),
+		uniquePerfLatency: make(map[string]struct{}),
+		uniquePerfSpeed:   make(map[string]struct{}),
 	}
 
 	return &p

@@ -168,12 +168,18 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 					// latency < 200ms
 					if node.latencyDigest.Quantile(0.90) < 200 {
-						fetchPeerP90GoodLatencyCountMetric.Add(1)
+						if _, ok := p.uniquePerfLatency[from]; !ok {
+							p.uniquePerfLatency[from] = struct{}{}
+							fetchPeerP90GoodLatencyCountMetric.Add(1)
+						}
 					}
 
 					// > 1MB/s
 					if (node.throughputDigest.Quantile(0.90) * 1000) > Mb {
-						fetchPeerP90GoodSpeedCountMetric.Add(1)
+						if _, ok := p.uniquePerfSpeed[from]; !ok {
+							p.uniquePerfSpeed[from] = struct{}{}
+							fetchPeerP90GoodSpeedCountMetric.Add(1)
+						}
 					}
 
 				}
