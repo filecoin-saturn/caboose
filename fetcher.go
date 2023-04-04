@@ -25,6 +25,8 @@ var (
 	saturnCacheHitKey   = "Saturn-Cache-Status"
 	saturnCacheHit      = "HIT"
 	saturnRetryAfterKey = "Retry-After"
+
+	Mb = float64(1024 * 1024)
 )
 
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
@@ -163,6 +165,17 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				if pct >= 75 && node.nRequests >= 5 {
 					fetchPeerP90LatencyDistributionMetric.Observe(node.latencyDigest.Quantile(0.90))
 					fetchPeerP90SpeedDistributionMetric.Observe(node.throughputDigest.Quantile(0.90))
+
+					// latency < 200ms
+					if node.latencyDigest.Quantile(0.90) < 200 {
+						fetchPeerP90GoodLatencyCountMetric.Add(1)
+					}
+
+					// > 1MB/s
+					if (node.throughputDigest.Quantile(0.90) * 1000) > Mb {
+						fetchPeerP90GoodSpeedCountMetric.Add(1)
+					}
+
 				}
 				p.lk.Unlock()
 			}

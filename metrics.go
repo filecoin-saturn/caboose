@@ -185,6 +185,14 @@ var (
 		Help:    "Distribution of P90 network speed for a peer for network speed buckets for successful fetch from a peer",
 		Buckets: speedBytesPerMsHistogram,
 	})
+
+	fetchPeerP90GoodLatencyCountMetric = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "fetch_peer_good_p90_latency_total"),
+	})
+
+	fetchPeerP90GoodSpeedCountMetric = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "fetch_peer_good_p90_speed_total"),
+	})
 )
 
 var CabooseMetrics = prometheus.NewRegistry()
@@ -220,4 +228,7 @@ func init() {
 
 	CabooseMetrics.MustRegister(fetchPeerP90LatencyDistributionMetric)
 	CabooseMetrics.MustRegister(fetchPeerP90SpeedDistributionMetric)
+
+	CabooseMetrics.MustRegister(fetchPeerP90GoodLatencyCountMetric)
+	CabooseMetrics.MustRegister(fetchPeerP90GoodSpeedCountMetric)
 }
