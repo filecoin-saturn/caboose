@@ -157,31 +157,36 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 			if latencyMillis > 0 && speedBytesPerMs > 0 {
 				p.lk.Lock()
-				node := p.nodesPerf[from]
-				node.nSuccess++
-				node.latencyDigest.Add(latencyMillis, 1)
-				node.throughputDigest.Add(speedBytesPerMs, 1)
-				pct := (node.nSuccess * 100) / node.nRequests
-				if pct >= 75 && node.nRequests >= 5 {
-					fetchPeerP90LatencyDistributionMetric.Observe(node.latencyDigest.Quantile(0.90))
-					fetchPeerP90SpeedDistributionMetric.Observe(node.throughputDigest.Quantile(0.90))
+				if _, ok := p.uniquePerf[from]; !ok {
+					node := p.nodesPerf[from]
+					node.nSuccess++
+					node.latencyDigest.Add(latencyMillis, 1)
+					node.throughputDigest.Add(speedBytesPerMs, 1)
+					pct := (node.nSuccess * 100) / node.nRequests
+					if pct >= 70 && node.nRequests >= 30 {
+						p.uniquePerf[from] = struct{}{}
+						fetchPeerLatencyDistributionMetric.WithLabelValues("P25").Observe(node.latencyDigest.Quantile(0.25))
+						fetchPeerLatencyDistributionMetric.WithLabelValues("P50").Observe(node.latencyDigest.Quantile(0.50))
+						fetchPeerLatencyDistributionMetric.WithLabelValues("P75").Observe(node.latencyDigest.Quantile(0.75))
+						fetchPeerLatencyDistributionMetric.WithLabelValues("P90").Observe(node.latencyDigest.Quantile(0.90))
+						fetchPeerLatencyDistributionMetric.WithLabelValues("P95").Observe(node.latencyDigest.Quantile(0.95))
+						fetchPeerLatencyDistributionMetric.WithLabelValues("P99").Observe(node.latencyDigest.Quantile(0.99))
 
-					// latency < 200ms
-					if node.latencyDigest.Quantile(0.90) < 200 {
-						if _, ok := p.uniquePerfLatency[from]; !ok {
-							p.uniquePerfLatency[from] = struct{}{}
+						fetchPeerSpeedDistributionMetric.WithLabelValues("P25").Observe(node.throughputDigest.Quantile(0.25))
+						fetchPeerSpeedDistributionMetric.WithLabelValues("P50").Observe(node.throughputDigest.Quantile(0.50))
+						fetchPeerSpeedDistributionMetric.WithLabelValues("P75").Observe(node.throughputDigest.Quantile(0.75))
+						fetchPeerSpeedDistributionMetric.WithLabelValues("P90").Observe(node.throughputDigest.Quantile(0.90))
+						fetchPeerSpeedDistributionMetric.WithLabelValues("P95").Observe(node.throughputDigest.Quantile(0.95))
+						fetchPeerSpeedDistributionMetric.WithLabelValues("P99").Observe(node.throughputDigest.Quantile(0.99))
+						// latency < 200ms
+						if node.latencyDigest.Quantile(0.90) < 200 {
 							fetchPeerP90GoodLatencyCountMetric.Add(1)
 						}
-					}
-
-					// > 1MB/s
-					if (node.throughputDigest.Quantile(0.90) * 1000) > Mb {
-						if _, ok := p.uniquePerfSpeed[from]; !ok {
-							p.uniquePerfSpeed[from] = struct{}{}
+						// > 1MB/s
+						if (node.throughputDigest.Quantile(0.90) * 1000) > Mb {
 							fetchPeerP90GoodSpeedCountMetric.Add(1)
 						}
 					}
-
 				}
 				p.lk.Unlock()
 			}
