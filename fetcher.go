@@ -74,9 +74,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		resourceType = "block"
 	}
 	fetchCalledTotalMetric.WithLabelValues(resourceType).Add(1)
-	if ctx.Err() != nil {
-		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, ctx.Err().Error(), "init").Add(1)
-		return 0, 0, ctx.Err()
+	if ce := ctx.Err(); ce != nil {
+		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("%t", errors.Is(ce, context.Canceled)), "init").Add(1)
+		return 0, 0, ce
 	}
 
 	requestId := uuid.NewString()
@@ -299,10 +299,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 }
 
 func recordIfContextErr(resourceType string, ctx context.Context, requestState string, start time.Time, timeout time.Duration) {
-	if ctx.Err() != nil {
-		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, ctx.Err().Error(), requestState).Add(1)
+	if ce := ctx.Err(); ce != nil {
+		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("%t", errors.Is(ce, context.Canceled)), requestState).Add(1)
 
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) && time.Since(start) < (timeout-5*time.Second) {
+		if errors.Is(ce, context.DeadlineExceeded) && time.Since(start) < (timeout-5*time.Second) {
 			fetchIncorrectDeadlineErrorTotalMetric.WithLabelValues(resourceType, requestState).Add(1)
 		}
 	}
