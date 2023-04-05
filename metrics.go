@@ -1,10 +1,15 @@
 package caboose
 
 import (
+	"sync"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
+	// needed to sync over these global vars in tests
+	distLk sync.Mutex
+
 	peerLatencyDistribution prometheus.Collector // guarded by pool.lock
 	peerSpeedDistribution   prometheus.Collector // guarded by pool.lock
 )
@@ -49,7 +54,7 @@ var (
 	durationMsPerBlockHistogram = prometheus.ExponentialBucketsRange(50, 60000, 20)
 
 	// buckets to record duration in milliseconds to fetch a CAR,
-	// histogram buckets will be [50ms,.., 30 minutes] -> total 10 buckets +1 prometheus Inf bucket
+	// histogram buckets will be [50ms,.., 30 minutes] -> total 40 buckets +1 prometheus Inf bucket
 	durationMsPerCarHistogram = prometheus.ExponentialBucketsRange(50, 1800000, 40)
 )
 

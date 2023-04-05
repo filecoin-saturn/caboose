@@ -168,6 +168,9 @@ func (p *pool) doRefresh() {
 	if err == nil {
 		p.lk.Lock()
 		defer p.lk.Unlock()
+		// for tests to pass the -race check when accessing global vars
+		distLk.Lock()
+		defer distLk.Unlock()
 
 		// Update aggregate latency & speed distribution for peers
 		latencyHist := prometheus.NewHistogramVec(prometheus.HistogramOpts{
