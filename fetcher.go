@@ -26,10 +26,10 @@ var (
 )
 
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
-func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, latencyMs, speedPerSec float64, e error) {
+func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, latencyMs, speedPerMs float64, e error) {
 	reqUrl := fmt.Sprintf(saturnReqTmpl, c)
 
-	latencyMs, speedPerSec, e = p.fetchResource(ctx, from, reqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {
+	latencyMs, speedPerMs, e = p.fetchResource(ctx, from, reqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {
 		block, err := io.ReadAll(io.LimitReader(r, maxBlockSize))
 		if err != nil {
 			switch {
@@ -66,7 +66,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 }
 
 // TODO Refactor to use a metrics collector that encapsulates block vs CAR and metrics being collected from the request making
-func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (latencyMs, speedPerSec float64, err error) {
+func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (latencyMs, speedPerMs float64, err error) {
 	resourceType := "car"
 	if mime == "application/vnd.ipld.raw" {
 		resourceType = "block"
@@ -145,7 +145,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				fetchDurationPerCarPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
 			}
 
-			latencyMs, speedPerSec = updateSuccessServerTimingMetrics(respHeader.Values(servertiming.HeaderKey), resourceType, isCacheHit, durationMs, ttfbMs, received)
+			latencyMs, speedPerMs = updateSuccessServerTimingMetrics(respHeader.Values(servertiming.HeaderKey), resourceType, isCacheHit, durationMs, ttfbMs, received)
 		} else {
 			if isBlockRequest {
 				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
@@ -274,7 +274,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 }
 
 // todo: refactor for dryness
-func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType string, isCacheHit bool, totalTimeMs, ttfbMs int64, recieved int) (latencyMs, speedPerSec float64) {
+func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType string, isCacheHit bool, totalTimeMs, ttfbMs int64, recieved int) (latencyMs, speedPerMs float64) {
 	if len(timingHeaders) == 0 {
 		goLogger.Debug("no timing headers in request response.")
 		return
@@ -297,7 +297,7 @@ func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType strin
 						if networkTimeMs > 0 {
 							s := float64(recieved) / float64(networkTimeMs)
 							fetchNetworkSpeedPerPeerSuccessMetric.WithLabelValues(resourceType).Observe(s)
-							speedPerSec = s * 1000
+							speedPerMs = s
 						}
 						networkLatencyMs := ttfbMs - m.Duration.Milliseconds()
 						fetchNetworkLatencyPeerSuccessMetric.WithLabelValues(resourceType).Observe(float64(networkLatencyMs))
