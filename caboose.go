@@ -76,7 +76,6 @@ type Config struct {
 }
 
 const DefaultLoggingInterval = 5 * time.Second
-const DefaultSaturnLoggerRequestTimeout = 1 * time.Minute
 
 const DefaultSaturnOrchestratorRequestTimeout = 30 * time.Second
 

@@ -11,6 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/influxdata/tdigest"
+
+	"github.com/prometheus/client_golang/prometheus"
+
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	"github.com/patrickmn/go-cache"
@@ -41,6 +45,11 @@ func (p *pool) loadPool() ([]string, error) {
 	return responses, nil
 }
 
+type perf struct {
+	latencyDigest *tdigest.TDigest
+	speedDigest   *tdigest.TDigest
+}
+
 type pool struct {
 	config *Config
 	logger *logger
@@ -59,6 +68,7 @@ type pool struct {
 	removedTimeCache *cache.Cache       // guarded by lk
 	coolOffCount     map[string]int     // guarded by lk
 	coolOffCache     *cache.Cache       // guarded by lk
+	nodePerf         map[string]*perf   // guarded by lk
 }
 
 // MemberList is the list of Saturn endpoints that are currently members of the Caboose consistent hashing ring
@@ -142,6 +152,8 @@ func newPool(c *Config) *pool {
 
 		coolOffCount: make(map[string]int),
 		coolOffCache: cache.New(c.SaturnNodeCoolOff, cache.DefaultExpiration),
+
+		nodePerf: make(map[string]*perf),
 	}
 
 	return &p
@@ -156,6 +168,35 @@ func (p *pool) doRefresh() {
 	if err == nil {
 		p.lk.Lock()
 		defer p.lk.Unlock()
+		// for tests to pass the -race check when accessing global vars
+		distLk.Lock()
+		defer distLk.Unlock()
+
+		// Update aggregate latency & speed distribution for peers
+		latencyHist := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_peer_latency_dist"),
+			Help:    "Fetch latency distribution for peers in millis",
+			Buckets: durationMsPerCarHistogram,
+		}, []string{"percentile"})
+
+		speedHist := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_peer_speed_dist"),
+			Help:    "Fetch speed distribution for peers (bytes/millis)",
+			Buckets: speedBytesPerMsHistogram,
+		}, []string{"percentile"})
+
+		percentiles := []float64{0.25, 0.5, 0.75, 0.9, 0.95}
+
+		for _, perf := range p.nodePerf {
+			perf := perf
+			for _, pt := range percentiles {
+				latencyHist.WithLabelValues(fmt.Sprintf("P%f", pt)).Observe(perf.latencyDigest.Quantile(pt))
+				speedHist.WithLabelValues(fmt.Sprintf("P%f", pt)).Observe(perf.speedDigest.Quantile(pt))
+			}
+		}
+
+		peerLatencyDistribution = latencyHist
+		peerSpeedDistribution = speedHist
 
 		// TODO: The orchestrator periodically prunes "bad" L1s based on a reputation system
 		// it owns and runs. We should probably just forget about the Saturn endpoints that were
@@ -490,29 +531,29 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 }
 
 func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int) (blk blocks.Block, err error) {
-	blk, err = p.doFetch(ctx, node, c, attempt)
+	blk, latencyMs, speedPerMs, err := p.doFetch(ctx, node, c, attempt)
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
 	}
 
-	err = p.commonUpdate(node, err)
+	err = p.commonUpdate(node, err, latencyMs, speedPerMs)
 	return
 }
 
 func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path string, attempt int, cb DataCallback) (err error) {
-	err = p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
+	latencyMs, speedPerMs, err := p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", path, "error", err)
 	}
 
-	p.commonUpdate(node, err)
+	p.commonUpdate(node, err, latencyMs, speedPerMs)
 	return
 }
 
-func (p *pool) commonUpdate(node string, err error) (ferr error) {
+func (p *pool) commonUpdate(node string, err error, latencyMs, speedPerMs float64) (ferr error) {
 	ferr = err
 	if err == nil {
-		p.changeWeight(node, false)
+		p.changeWeight(node, false, latencyMs, speedPerMs)
 		// Saturn fetch worked, we return the block.
 		return
 	}
@@ -532,7 +573,7 @@ func (p *pool) commonUpdate(node string, err error) (ferr error) {
 	}
 
 	// Saturn fetch failed, we downvote the failing member.
-	p.changeWeight(node, true)
+	p.changeWeight(node, true, latencyMs, speedPerMs)
 	return
 }
 
@@ -556,9 +597,21 @@ func (p *pool) isCoolOffLocked(node string) bool {
 }
 
 // returns the updated weight mapping for tests
-func (p *pool) changeWeight(node string, failure bool) {
+func (p *pool) changeWeight(node string, failure bool, latencyMs, speedPerMs float64) {
 	p.lk.Lock()
 	defer p.lk.Unlock()
+
+	if !failure {
+		if _, ok := p.nodePerf[node]; !ok {
+			p.nodePerf[node] = &perf{
+				latencyDigest: tdigest.NewWithCompression(1000),
+				speedDigest:   tdigest.NewWithCompression(1000),
+			}
+		}
+		perf := p.nodePerf[node]
+		perf.latencyDigest.Add(latencyMs, 1)
+		perf.speedDigest.Add(speedPerMs, 1)
+	}
 
 	// build new member
 	idx := -1
