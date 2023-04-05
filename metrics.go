@@ -5,6 +5,33 @@ import (
 )
 
 var (
+	peerLatencyDistribution prometheus.Collector // guarded by pool.lock
+	peerSpeedDistribution   prometheus.Collector // guarded by pool.lock
+)
+
+type m_collector struct {
+	m *prometheus.Collector
+}
+
+func (mc m_collector) Describe(ch chan<- *prometheus.Desc) {
+	if (*mc.m) != nil {
+		(*mc.m).Describe(ch)
+	}
+}
+
+func (mc m_collector) Collect(ch chan<- prometheus.Metric) {
+	if (*mc.m) != nil {
+		(*mc.m).Collect(ch)
+	}
+}
+
+var (
+	// size buckets from 256 KiB to ~8Gib
+	// histogram buckets will be [256KiB, 512KiB, 1Mib, , ... 8GiB] -> total 16 buckets +1 prometheus Inf bucket
+	carSizeHistogram = prometheus.ExponentialBuckets(256.0*1024, 2, 16)
+)
+
+var (
 	// size buckets from 256 KiB (default chunk in Kubo) to 4MiB (maxBlockSize), 256 KiB  wide each
 	// histogram buckets will be [256KiB, 512KiB, 768KiB, 1MiB, ... 4MiB] -> total 16 buckets +1 prometheus Inf bucket
 	blockSizeHistogram = prometheus.LinearBuckets(262144, 262144, 16)
@@ -56,12 +83,6 @@ var (
 		Help: "Response codes observed during caboose fetches for a block",
 	}, []string{"resourceType", "code"})
 
-	fetchSizeMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_size"),
-		Help:    "Size in bytes of caboose block fetches",
-		Buckets: blockSizeHistogram,
-	}, []string{"resourceType"})
-
 	// success cases
 	fetchSpeedPerPeerSuccessMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_speed_peer_success"),
@@ -107,6 +128,12 @@ var (
 		Help:    "Latency observed during failed caboose fetches for a block across multiple peers and retries in milliseconds",
 		Buckets: durationMsPerBlockHistogram,
 	})
+
+	fetchSizeBlockMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_size_block"),
+		Help:    "Size in bytes of caboose block fetches",
+		Buckets: blockSizeHistogram,
+	})
 )
 
 // CAR metrics
@@ -140,6 +167,12 @@ var (
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_car_failure"),
 		Help:    "Latency observed during failed caboose fetches for a car across multiple peers and retries in milliseconds",
 		Buckets: durationMsPerCarHistogram,
+	})
+
+	fetchSizeCarMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_size_car"),
+		Help:    "Size in bytes of caboose CAR fetches",
+		Buckets: carSizeHistogram,
 	})
 )
 
@@ -184,7 +217,6 @@ func init() {
 	CabooseMetrics.MustRegister(poolNewMembersMetric)
 
 	CabooseMetrics.MustRegister(fetchResponseCodeMetric)
-	CabooseMetrics.MustRegister(fetchSizeMetric)
 	CabooseMetrics.MustRegister(fetchSpeedPerPeerSuccessMetric)
 
 	CabooseMetrics.MustRegister(fetchDurationPerBlockPerPeerSuccessMetric)
@@ -205,4 +237,10 @@ func init() {
 
 	CabooseMetrics.MustRegister(fetchNetworkSpeedPerPeerSuccessMetric)
 	CabooseMetrics.MustRegister(fetchNetworkLatencyPeerSuccessMetric)
+
+	CabooseMetrics.MustRegister(m_collector{&peerLatencyDistribution})
+	CabooseMetrics.MustRegister(m_collector{&peerSpeedDistribution})
+
+	CabooseMetrics.MustRegister(fetchSizeCarMetric)
+	CabooseMetrics.MustRegister(fetchSizeBlockMetric)
 }

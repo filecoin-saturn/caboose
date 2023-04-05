@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	github.com/google/uuid v1.3.0
+	github.com/influxdata/tdigest v0.0.1
 	github.com/ipfs/boxo v0.8.0-rc2.0.20230329082438-360b031ed895
 	github.com/ipfs/go-block-format v0.1.2
 	github.com/ipfs/go-cid v0.4.0
