@@ -283,17 +283,17 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	response_success_end = time.Now()
-	{
-		// trace-metrics
-		// request life-cycle metrics
-		cacheHit := respHeader.Get(saturnCacheHitKey)
-		if cacheHit == saturnCacheHit {
-			isCacheHit = true
-		}
-		fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tcp_connection").Observe(float64(result.TCPConnection.Milliseconds()))
-		fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tls_handshake").Observe(float64(result.TLSHandshake.Milliseconds()))
-		fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "wait_after_request_sent_for_header").Observe(float64(result.ServerProcessing.Milliseconds()))
+
+	// trace-metrics
+	// request life-cycle metrics
+	cacheHit := respHeader.Get(saturnCacheHitKey)
+	if cacheHit == saturnCacheHit {
+		isCacheHit = true
 	}
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tcp_connection").Observe(float64(result.TCPConnection.Milliseconds()))
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tls_handshake").Observe(float64(result.TLSHandshake.Milliseconds()))
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "wait_after_request_sent_for_header").Observe(float64(result.ServerProcessing.Milliseconds()))
+
 	return
 }
 
