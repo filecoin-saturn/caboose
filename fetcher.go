@@ -65,7 +65,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	return
 }
 
-// TODO Refactor to use a metrics collector that encapsulates block vs CAR and metrics being collected from the request making
+// TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
 func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (latencyMs, speedPerMs float64, err error) {
 	resourceType := "car"
 	if mime == "application/vnd.ipld.raw" {
