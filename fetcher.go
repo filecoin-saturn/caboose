@@ -2,6 +2,7 @@ package caboose
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -194,7 +195,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
 	if err != nil {
-		recordIfContextErr(resourceType, reqCtx, "build-request")
+		recordIfContextErr(resourceType, reqCtx, "build-request", start, requestTimeout)
 		return 0, 0, err
 	}
 
@@ -213,7 +214,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	var resp *http.Response
 	resp, err = p.config.SaturnClient.Do(req)
 	if err != nil {
-		recordIfContextErr(resourceType, reqCtx, "send-request")
+		recordIfContextErr(resourceType, reqCtx, "send-request", start, requestTimeout)
 
 		networkError = err.Error()
 		return 0, 0, fmt.Errorf("http request failed: %w", err)
@@ -271,7 +272,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	wrapped := TrackingReader{resp.Body, time.Time{}, 0}
 	err = cb(resource, &wrapped)
-	recordIfContextErr(resourceType, reqCtx, "read-response")
+	recordIfContextErr(resourceType, reqCtx, "read-response", start, requestTimeout)
 
 	fb = wrapped.firstByte
 	received = wrapped.len
@@ -297,9 +298,13 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	return
 }
 
-func recordIfContextErr(resourceType string, ctx context.Context, requestState string) {
+func recordIfContextErr(resourceType string, ctx context.Context, requestState string, start time.Time, timeout time.Duration) {
 	if ctx.Err() != nil {
 		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, ctx.Err().Error(), requestState).Add(1)
+
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) && time.Since(start) < (timeout-5*time.Second) {
+			fetchIncorrectDeadlineErrorTotalMetric.WithLabelValues(resourceType, requestState).Add(1)
+		}
 	}
 }
 
