@@ -213,6 +213,21 @@ var (
 	}, []string{"resourceType"})
 )
 
+var (
+	fetchCalledTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "fetch_called_total"),
+	}, []string{"resourceType"})
+
+	fetchRequestContextErrorTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "fetch_request_context_error_total"),
+	}, []string{"resourceType", "errorType", "requestStage"})
+
+	fetchRequestSuccessTimeTraceMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_request_success_time_trace"),
+		Buckets: durationMsPerCarHistogram,
+	}, []string{"resourceType", "cache_status", "lifecycleStage"})
+)
+
 var CabooseMetrics = prometheus.NewRegistry()
 
 func init() {
@@ -248,4 +263,8 @@ func init() {
 
 	CabooseMetrics.MustRegister(fetchSizeCarMetric)
 	CabooseMetrics.MustRegister(fetchSizeBlockMetric)
+
+	CabooseMetrics.MustRegister(fetchRequestContextErrorTotalMetric)
+	CabooseMetrics.MustRegister(fetchCalledTotalMetric)
+	CabooseMetrics.MustRegister(fetchRequestSuccessTimeTraceMetric)
 }

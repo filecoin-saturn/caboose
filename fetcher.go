@@ -13,6 +13,7 @@ import (
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
 	servertiming "github.com/mitchellh/go-server-timing"
+	"github.com/tcnksm/go-httpstat"
 )
 
 var saturnReqTmpl = "/ipfs/%s?format=raw"
@@ -71,6 +72,11 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	if mime == "application/vnd.ipld.raw" {
 		resourceType = "block"
 	}
+	fetchCalledTotalMetric.WithLabelValues(resourceType).Add(1)
+	if ctx.Err() != nil {
+		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, ctx.Err().Error(), "init").Add(1)
+		return 0, 0, ctx.Err()
+	}
 
 	requestId := uuid.NewString()
 	goLogger.Debugw("doing fetch", "from", from, "of", resource, "mime", mime, "requestId", requestId)
@@ -102,6 +108,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		timingMetric = timing.NewMetric("fetch").Start()
 		defer timingMetric.Stop()
 	}
+	var result httpstat.Result
 
 	defer func() {
 		if respHeader != nil {
@@ -187,6 +194,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
 	if err != nil {
+		recordIfContextErr(resourceType, reqCtx, "build-request")
 		return 0, 0, err
 	}
 
@@ -199,9 +207,14 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 	}
 
+	//trace
+	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
+
 	var resp *http.Response
 	resp, err = p.config.SaturnClient.Do(req)
 	if err != nil {
+		recordIfContextErr(resourceType, reqCtx, "send-request")
+
 		networkError = err.Error()
 		return 0, 0, fmt.Errorf("http request failed: %w", err)
 	}
@@ -258,19 +271,36 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	wrapped := TrackingReader{resp.Body, time.Time{}, 0}
 	err = cb(resource, &wrapped)
+	recordIfContextErr(resourceType, reqCtx, "read-response")
 
 	fb = wrapped.firstByte
 	received = wrapped.len
 
 	// drain body so it can be re-used.
 	_, _ = io.Copy(io.Discard, resp.Body)
-
 	if err != nil {
 		return
 	}
 
 	response_success_end = time.Now()
+	{
+		// trace-metrics
+		// request life-cycle metrics
+		cacheHit := respHeader.Get(saturnCacheHitKey)
+		if cacheHit == saturnCacheHit {
+			isCacheHit = true
+		}
+		fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tcp_connection").Observe(float64(result.TCPConnection.Milliseconds()))
+		fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tls_handshake").Observe(float64(result.TLSHandshake.Milliseconds()))
+		fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "wait_after_request_sent_for_header").Observe(float64(result.ServerProcessing.Milliseconds()))
+	}
 	return
+}
+
+func recordIfContextErr(resourceType string, ctx context.Context, requestState string) {
+	if ctx.Err() != nil {
+		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, ctx.Err().Error(), requestState).Add(1)
+	}
 }
 
 // todo: refactor for dryness
