@@ -176,7 +176,7 @@ func (p *pool) doRefresh() {
 		latencyHist := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_peer_latency_dist"),
 			Help:    "Fetch latency distribution for peers in millis",
-			Buckets: durationMsPerCarHistogram,
+			Buckets: latencyDistMsHistogram,
 		}, []string{"percentile"})
 
 		speedHist := prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -190,8 +190,13 @@ func (p *pool) doRefresh() {
 		for _, perf := range p.nodePerf {
 			perf := perf
 			for _, pt := range percentiles {
-				latencyHist.WithLabelValues(fmt.Sprintf("P%f", pt)).Observe(perf.latencyDigest.Quantile(pt))
-				speedHist.WithLabelValues(fmt.Sprintf("P%f", pt)).Observe(perf.speedDigest.Quantile(pt))
+				// only consider peers with more than a 100 successful retrievals
+				if perf.latencyDigest.Count() > 100 {
+					latencyHist.WithLabelValues(fmt.Sprintf("P%f", pt)).Observe(perf.latencyDigest.Quantile(pt))
+				}
+				if perf.speedDigest.Count() > 100 {
+					speedHist.WithLabelValues(fmt.Sprintf("P%f", pt)).Observe(perf.speedDigest.Quantile(pt))
+				}
 			}
 		}
 
@@ -531,29 +536,29 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 }
 
 func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int) (blk blocks.Block, err error) {
-	blk, latencyMs, speedPerMs, err := p.doFetch(ctx, node, c, attempt)
+	blk, err = p.doFetch(ctx, node, c, attempt)
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
 	}
 
-	err = p.commonUpdate(node, err, latencyMs, speedPerMs)
+	err = p.commonUpdate(node, err)
 	return
 }
 
 func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path string, attempt int, cb DataCallback) (err error) {
-	latencyMs, speedPerMs, err := p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
+	err = p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", path, "error", err)
 	}
 
-	p.commonUpdate(node, err, latencyMs, speedPerMs)
+	p.commonUpdate(node, err)
 	return
 }
 
-func (p *pool) commonUpdate(node string, err error, latencyMs, speedPerMs float64) (ferr error) {
+func (p *pool) commonUpdate(node string, err error) (ferr error) {
 	ferr = err
 	if err == nil {
-		p.changeWeight(node, false, latencyMs, speedPerMs)
+		p.changeWeight(node, false)
 		// Saturn fetch worked, we return the block.
 		return
 	}
@@ -573,7 +578,7 @@ func (p *pool) commonUpdate(node string, err error, latencyMs, speedPerMs float6
 	}
 
 	// Saturn fetch failed, we downvote the failing member.
-	p.changeWeight(node, true, latencyMs, speedPerMs)
+	p.changeWeight(node, true)
 	return
 }
 
@@ -597,21 +602,9 @@ func (p *pool) isCoolOffLocked(node string) bool {
 }
 
 // returns the updated weight mapping for tests
-func (p *pool) changeWeight(node string, failure bool, latencyMs, speedPerMs float64) {
+func (p *pool) changeWeight(node string, failure bool) {
 	p.lk.Lock()
 	defer p.lk.Unlock()
-
-	if !failure {
-		if _, ok := p.nodePerf[node]; !ok {
-			p.nodePerf[node] = &perf{
-				latencyDigest: tdigest.NewWithCompression(1000),
-				speedDigest:   tdigest.NewWithCompression(1000),
-			}
-		}
-		perf := p.nodePerf[node]
-		perf.latencyDigest.Add(latencyMs, 1)
-		perf.speedDigest.Add(speedPerMs, 1)
-	}
 
 	// build new member
 	idx := -1

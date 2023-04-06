@@ -41,7 +41,7 @@ func TestUpdateWeightWithRefresh(t *testing.T) {
 			break
 		}
 	}
-	ph.pool.changeWeight(ph.eps[0], true, 0, 0)
+	ph.pool.changeWeight(ph.eps[0], true)
 
 	// when node is downvoted to zero, it will be added back by a refresh with a weight of 10% max as it has been removed recently.
 
@@ -66,7 +66,7 @@ func TestUpdateWeightWithMembershipDebounce(t *testing.T) {
 			break
 		}
 	}
-	ph.pool.changeWeight(ph.eps[0], true, 0, 0)
+	ph.pool.changeWeight(ph.eps[0], true)
 
 	// node is added back but with 10% max weight.
 	require.Eventually(t, func() bool {
@@ -152,17 +152,17 @@ func (ph *poolHarness) assertRemoved(t *testing.T, url string) {
 }
 
 func (ph *poolHarness) downvoteAndAssertRemoved(t *testing.T, url string) {
-	ph.pool.changeWeight(url, true, 0, 0)
+	ph.pool.changeWeight(url, true)
 	ph.assertRemoved(t, url)
 }
 
 func (ph *poolHarness) downvoteAndAssertDownvoted(t *testing.T, url string, expected int) {
-	ph.pool.changeWeight(url, true, 0, 0)
+	ph.pool.changeWeight(url, true)
 	ph.assertWeight(t, url, expected)
 }
 
 func (ph *poolHarness) upvoteAndAssertUpvoted(t *testing.T, url string, expected int) {
-	ph.pool.changeWeight(url, false, 0, 0)
+	ph.pool.changeWeight(url, false)
 	ph.assertWeight(t, url, expected)
 }
 
