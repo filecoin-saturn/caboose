@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/influxdata/tdigest"
+
 	"github.com/google/uuid"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -28,10 +30,10 @@ var (
 )
 
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
-func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, latencyMs, speedPerMs float64, e error) {
+func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, e error) {
 	reqUrl := fmt.Sprintf(saturnReqTmpl, c)
 
-	latencyMs, speedPerMs, e = p.fetchResource(ctx, from, reqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {
+	e = p.fetchResource(ctx, from, reqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {
 		block, err := io.ReadAll(io.LimitReader(r, maxBlockSize))
 		if err != nil {
 			switch {
@@ -68,7 +70,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 }
 
 // TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
-func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (latencyMs, speedPerMs float64, err error) {
+func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (err error) {
 	resourceType := "car"
 	if mime == "application/vnd.ipld.raw" {
 		resourceType = "block"
@@ -76,7 +78,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	fetchCalledTotalMetric.WithLabelValues(resourceType).Add(1)
 	if ce := ctx.Err(); ce != nil {
 		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("%t", errors.Is(ce, context.Canceled)), "init").Add(1)
-		return 0, 0, ce
+		return ce
 	}
 
 	requestId := uuid.NewString()
@@ -153,7 +155,24 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				fetchDurationPerCarPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
 			}
 
-			latencyMs, speedPerMs = updateSuccessServerTimingMetrics(respHeader.Values(servertiming.HeaderKey), resourceType, isCacheHit, durationMs, ttfbMs, received)
+			// update L1 server timings
+			updateSuccessServerTimingMetrics(respHeader.Values(servertiming.HeaderKey), resourceType, isCacheHit, durationMs, ttfbMs, received)
+
+			// record latency & speed dist for cache hits as we know that the observed fetch latency & speed correlates
+			// with the network latency & speed here.
+			if isCacheHit {
+				p.lk.Lock()
+				if _, ok := p.nodePerf[from]; !ok {
+					p.nodePerf[from] = &perf{
+						latencyDigest: tdigest.NewWithCompression(1000),
+						speedDigest:   tdigest.NewWithCompression(1000),
+					}
+				}
+				perf := p.nodePerf[from]
+				perf.latencyDigest.Add(float64(ttfbMs), 1)
+				perf.speedDigest.Add(float64(received)/float64(durationMs), 1)
+				p.lk.Unlock()
+			}
 		} else {
 			if isBlockRequest {
 				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
@@ -196,7 +215,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
 	if err != nil {
 		recordIfContextErr(resourceType, reqCtx, "build-request", start, requestTimeout)
-		return 0, 0, err
+		return err
 	}
 
 	req.Header.Add("Accept", mime)
@@ -217,7 +236,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		recordIfContextErr(resourceType, reqCtx, "send-request", start, requestTimeout)
 
 		networkError = err.Error()
-		return 0, 0, fmt.Errorf("http request failed: %w", err)
+		return fmt.Errorf("http request failed: %w", err)
 	}
 	respHeader = resp.Header
 	defer resp.Body.Close()
@@ -253,26 +272,25 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				retryAfter = p.config.SaturnNodeCoolOff
 			}
 
-			return 0, 0, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, &ErrSaturnTooManyRequests{retryAfter: retryAfter, Node: from})
+			return fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, &ErrSaturnTooManyRequests{retryAfter: retryAfter, Node: from})
 		}
 
 		// empty body so it can be re-used.
 		_, _ = io.Copy(io.Discard, resp.Body)
 		if resp.StatusCode == http.StatusGatewayTimeout {
-			return 0, 0, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
+			return fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
 		}
 
 		// This should only be 502, but L1s were not translating 404 from Lassie, so we have to support both for now.
 		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadGateway {
-			return 0, 0, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrContentProviderNotFound)
+			return fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrContentProviderNotFound)
 		}
 
-		return 0, 0, fmt.Errorf("http error from strn: %d", resp.StatusCode)
+		return fmt.Errorf("http error from strn: %d", resp.StatusCode)
 	}
 
 	wrapped := TrackingReader{resp.Body, time.Time{}, 0}
 	err = cb(resource, &wrapped)
-	recordIfContextErr(resourceType, reqCtx, "read-response", start, requestTimeout)
 
 	fb = wrapped.firstByte
 	received = wrapped.len
@@ -280,6 +298,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	// drain body so it can be re-used.
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if err != nil {
+		recordIfContextErr(resourceType, reqCtx, "read-response", start, requestTimeout)
 		return
 	}
 
@@ -309,7 +328,7 @@ func recordIfContextErr(resourceType string, ctx context.Context, requestState s
 }
 
 // todo: refactor for dryness
-func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType string, isCacheHit bool, totalTimeMs, ttfbMs int64, recieved int) (latencyMs, speedPerMs float64) {
+func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType string, isCacheHit bool, totalTimeMs, ttfbMs int64, recieved int) {
 	if len(timingHeaders) == 0 {
 		goLogger.Debug("no timing headers in request response.")
 		return
@@ -332,18 +351,15 @@ func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType strin
 						if networkTimeMs > 0 {
 							s := float64(recieved) / float64(networkTimeMs)
 							fetchNetworkSpeedPerPeerSuccessMetric.WithLabelValues(resourceType).Observe(s)
-							speedPerMs = s
 						}
 						networkLatencyMs := ttfbMs - m.Duration.Milliseconds()
 						fetchNetworkLatencyPeerSuccessMetric.WithLabelValues(resourceType).Observe(float64(networkLatencyMs))
-						latencyMs = float64(networkLatencyMs)
 					}
 				default:
 				}
 			}
 		}
 	}
-	return
 }
 
 func getCacheStatus(isCacheHit bool) string {
