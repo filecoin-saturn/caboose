@@ -360,7 +360,6 @@ func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType strin
 			}
 		}
 	}
-	return
 }
 
 func getCacheStatus(isCacheHit bool) string {
