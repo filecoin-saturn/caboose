@@ -520,6 +520,9 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 			// for now: reset i on partials so we also give them a chance to retry.
 			i = -1
 		}
+		if ce := ctx.Err(); ce != nil {
+			return ce
+		}
 	}
 
 	fetchDurationCarFailureMetric.Observe(float64(time.Since(carFetchStart).Milliseconds()))
