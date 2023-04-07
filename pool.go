@@ -373,9 +373,6 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 
 			return
 		}
-		if ce := ctx.Err(); ce != nil {
-			return nil, ce
-		}
 	}
 
 	fetchDurationBlockFailureMetric.Observe(float64(time.Since(blockFetchStart).Milliseconds()))
