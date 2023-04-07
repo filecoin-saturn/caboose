@@ -84,6 +84,10 @@ var (
 		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_new_members"),
 		Help: "New members added to the Caboose pool",
 	}, []string{"weight"})
+
+	poolWeightBumpMetric = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_weight_bump"),
+	})
 )
 
 var (
@@ -222,10 +226,6 @@ var (
 		Name: prometheus.BuildFQName("ipfs", "caboose", "fetch_called_total"),
 	}, []string{"resourceType"})
 
-	fetchIncorrectDeadlineErrorTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "fetch_incorrect_deadline_error_total"),
-	}, []string{"resourceType", "requestStage"})
-
 	fetchRequestContextErrorTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "fetch_request_context_error_total"),
 	}, []string{"resourceType", "errorType", "requestStage"})
@@ -276,5 +276,5 @@ func init() {
 	CabooseMetrics.MustRegister(fetchCalledTotalMetric)
 	CabooseMetrics.MustRegister(fetchRequestSuccessTimeTraceMetric)
 
-	CabooseMetrics.MustRegister(fetchIncorrectDeadlineErrorTotalMetric)
+	CabooseMetrics.MustRegister(poolWeightBumpMetric)
 }

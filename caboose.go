@@ -256,6 +256,10 @@ func (c *Caboose) Close() {
 
 // Fetch allows fetching car archives by a path of the form `/ipfs/<cid>[/path/to/file]`
 func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error {
+	fetchCalledTotalMetric.WithLabelValues(resourceTypeCar).Add(1)
+	if recordIfContextErr(resourceTypeCar, ctx, "FetchApi") {
+		return ctx.Err()
+	}
 	return c.pool.fetchResourceWith(ctx, path, cb, c.getAffinity(ctx))
 }
 
@@ -268,6 +272,10 @@ func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
 }
 
 func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
+	fetchCalledTotalMetric.WithLabelValues(resourceTypeBlock).Add(1)
+	if recordIfContextErr(resourceTypeBlock, ctx, "FetchBlockApi") {
+		return nil, ctx.Err()
+	}
 	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
 		return nil, err
