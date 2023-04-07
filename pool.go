@@ -23,6 +23,12 @@ import (
 
 const maxPoolSize = 300
 
+var (
+	latencyPercentile       = 0.75
+	maxLatency              = float64(200)
+	minSuccessfulRetrievals = 100
+)
+
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
 func (p *pool) loadPool() ([]string, error) {
@@ -246,7 +252,7 @@ func (p *pool) doRefresh() {
 			if perf, ok := p.nodePerf[m.url]; ok {
 				// Our analysis so far shows that we do have ~10-15 peers with -75 < 200ms latency.
 				// It's not the best but it's a good start and we can tune as we go along.
-				if perf.latencyDigest.Count() > 100 && perf.latencyDigest.Quantile(0.75) <= 200 {
+				if perf.latencyDigest.Count() > float64(minSuccessfulRetrievals) && perf.latencyDigest.Quantile(latencyPercentile) <= maxLatency {
 					poolWeightBumpMetric.Add(1)
 					m.weight = maxWeight
 				}
