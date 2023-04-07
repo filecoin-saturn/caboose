@@ -342,6 +342,7 @@ func cidToKey(c cid.Cid) string {
 }
 
 func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk blocks.Block, err error) {
+	fetchCalledTotalMetric.WithLabelValues(resourceTypeBlock).Add(1)
 	if recordIfContextErr(resourceTypeBlock, ctx, "fetchBlockWith") {
 		return nil, ctx.Err()
 	}
@@ -487,6 +488,7 @@ func (p *pool) getNodesToFetch(key string, with string) ([]string, error) {
 }
 
 func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallback, with string) (err error) {
+	fetchCalledTotalMetric.WithLabelValues(resourceTypeCar).Add(1)
 	if recordIfContextErr(resourceTypeCar, ctx, "fetchResourceWith") {
 		return ctx.Err()
 	}

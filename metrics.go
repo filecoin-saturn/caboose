@@ -58,8 +58,8 @@ var (
 	durationMsPerCarHistogram = prometheus.ExponentialBucketsRange(50, 1800000, 40)
 
 	// buckets to measure latency between a caboose peer a Saturn L1,
-	// [50ms, 100ms, 200ms, ...,  ~25 seconds]
-	latencyDistMsHistogram = prometheus.ExponentialBuckets(50, 2, 10)
+	// [50ms, 75ms, 100ms, ...,  525 ms]
+	latencyDistMsHistogram = prometheus.LinearBuckets(50, 25, 20)
 )
 
 // pool metrics
