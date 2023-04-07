@@ -21,12 +21,14 @@ import (
 
 var saturnReqTmpl = "/ipfs/%s?format=raw"
 
-var (
+const (
 	saturnNodeIdKey     = "Saturn-Node-Id"
 	saturnTransferIdKey = "Saturn-Transfer-Id"
 	saturnCacheHitKey   = "Saturn-Cache-Status"
 	saturnCacheHit      = "HIT"
 	saturnRetryAfterKey = "Retry-After"
+	resourceTypeCar     = "car"
+	resourceTypeBlock   = "block"
 )
 
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
@@ -71,13 +73,12 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 
 // TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
 func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (err error) {
-	resourceType := "car"
+	resourceType := resourceTypeCar
 	if mime == "application/vnd.ipld.raw" {
-		resourceType = "block"
+		resourceType = resourceTypeBlock
 	}
-	fetchCalledTotalMetric.WithLabelValues(resourceType).Add(1)
 	if ce := ctx.Err(); ce != nil {
-		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("%t", errors.Is(ce, context.Canceled)), "init").Add(1)
+		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("%t", errors.Is(ce, context.Canceled)), "fetchResource-init").Add(1)
 		return ce
 	}
 
@@ -214,7 +215,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
 	if err != nil {
-		recordIfContextErr(resourceType, reqCtx, "build-request", start, requestTimeout)
+		recordIfContextErr(resourceType, reqCtx, "build-http-request")
 		return err
 	}
 
@@ -233,7 +234,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	var resp *http.Response
 	resp, err = p.config.SaturnClient.Do(req)
 	if err != nil {
-		recordIfContextErr(resourceType, reqCtx, "send-request", start, requestTimeout)
+		recordIfContextErr(resourceType, reqCtx, "send-http-request")
 
 		networkError = err.Error()
 		return fmt.Errorf("http request failed: %w", err)
@@ -298,7 +299,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	// drain body so it can be re-used.
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if err != nil {
-		recordIfContextErr(resourceType, reqCtx, "read-response", start, requestTimeout)
+		recordIfContextErr(resourceType, reqCtx, "read-http-response")
 		return
 	}
 
@@ -317,14 +318,12 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	return
 }
 
-func recordIfContextErr(resourceType string, ctx context.Context, requestState string, start time.Time, timeout time.Duration) {
+func recordIfContextErr(resourceType string, ctx context.Context, requestState string) bool {
 	if ce := ctx.Err(); ce != nil {
 		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("%t", errors.Is(ce, context.Canceled)), requestState).Add(1)
-
-		if errors.Is(ce, context.DeadlineExceeded) && time.Since(start) < (timeout-5*time.Second) {
-			fetchIncorrectDeadlineErrorTotalMetric.WithLabelValues(resourceType, requestState).Add(1)
-		}
+		return true
 	}
+	return false
 }
 
 // todo: refactor for dryness

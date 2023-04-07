@@ -23,6 +23,12 @@ import (
 
 const maxPoolSize = 300
 
+var (
+	latencyPercentile       = 0.75
+	maxLatency              = float64(200)
+	minSuccessfulRetrievals = 100
+)
+
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
 func (p *pool) loadPool() ([]string, error) {
@@ -202,12 +208,6 @@ func (p *pool) doRefresh() {
 
 		peerLatencyDistribution = latencyHist
 		peerSpeedDistribution = speedHist
-
-		// TODO: The orchestrator periodically prunes "bad" L1s based on a reputation system
-		// it owns and runs. We should probably just forget about the Saturn endpoints that were
-		// previously in the pool but are no longer being returned by the orchestrator. It's highly
-		// likely that the Orchestrator has deemed them to be non-functional/malicious.
-		// Let's just override the old pool with the new endpoints returned here.
 		oldMap := make(map[string]bool)
 		n := make([]*Member, 0, len(newEP))
 		for _, o := range p.endpoints {
@@ -245,6 +245,20 @@ func (p *pool) doRefresh() {
 			}
 		}
 
+		// give weight bumps to low latency peers that have served > 100 successful "low latency" cache hit retrievals.
+		poolWeightBumpMetric.Set(0)
+		for _, m := range n {
+			m := m
+			if perf, ok := p.nodePerf[m.url]; ok {
+				// Our analysis so far shows that we do have ~10-15 peers with -75 < 200ms latency.
+				// It's not the best but it's a good start and we can tune as we go along.
+				if perf.latencyDigest.Count() > float64(minSuccessfulRetrievals) && perf.latencyDigest.Quantile(latencyPercentile) <= maxLatency {
+					poolWeightBumpMetric.Add(1)
+					m.weight = maxWeight
+				}
+			}
+		}
+
 		// If we have more than maxPoolSize nodes, pick the top maxPoolSize sorted by (weight * age).
 		if len(n) > maxPoolSize {
 			sort.Slice(n, func(i, j int) bool {
@@ -262,7 +276,6 @@ func (p *pool) doRefresh() {
 			p.c.UpdateWithWeights(p.endpoints.ToWeights())
 		}
 		poolSizeMetric.Set(float64(len(n)))
-
 		poolNewMembersMetric.Reset()
 		// periodic update of a pool health metric
 		byWeight := make(map[int]int)
@@ -329,6 +342,10 @@ func cidToKey(c cid.Cid) string {
 }
 
 func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk blocks.Block, err error) {
+	fetchCalledTotalMetric.WithLabelValues(resourceTypeBlock).Add(1)
+	if recordIfContextErr(resourceTypeBlock, ctx, "fetchBlockWith") {
+		return nil, ctx.Err()
+	}
 	// wait for pool to be initialised
 	<-p.started
 
@@ -352,6 +369,9 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 
 	blockFetchStart := time.Now()
 	for i := 0; i < len(nodes); i++ {
+		if recordIfContextErr(resourceTypeBlock, ctx, "fetchBlockWithLoop") {
+			return nil, ctx.Err()
+		}
 		blk, err = p.fetchBlockAndUpdate(ctx, nodes[i], c, i)
 
 		if err == nil {
@@ -359,9 +379,6 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 			fetchDurationBlockSuccessMetric.Observe(float64(durationMs))
 
 			return
-		}
-		if ce := ctx.Err(); ce != nil {
-			return nil, ce
 		}
 	}
 
@@ -471,6 +488,11 @@ func (p *pool) getNodesToFetch(key string, with string) ([]string, error) {
 }
 
 func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallback, with string) (err error) {
+	fetchCalledTotalMetric.WithLabelValues(resourceTypeCar).Add(1)
+	if recordIfContextErr(resourceTypeCar, ctx, "fetchResourceWith") {
+		return ctx.Err()
+	}
+
 	// wait for pool to be initialised
 	<-p.started
 
@@ -496,6 +518,10 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 
 	pq := []string{path}
 	for i := 0; i < len(nodes); i++ {
+		if recordIfContextErr(resourceTypeCar, ctx, "fetchResourceWithLoop") {
+			return ctx.Err()
+		}
+
 		err = p.fetchResourceAndUpdate(ctx, nodes[i], pq[0], i, cb)
 
 		var epr = ErrPartialResponse{}
@@ -527,9 +553,6 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 
 			// for now: reset i on partials so we also give them a chance to retry.
 			i = -1
-		}
-		if ce := ctx.Err(); ce != nil {
-			return ce
 		}
 	}
 
