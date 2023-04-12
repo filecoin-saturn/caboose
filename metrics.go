@@ -62,34 +62,6 @@ var (
 	latencyDistMsHistogram = prometheus.LinearBuckets(25, 25, 20)
 )
 
-// pool metrics
-var (
-	poolErrorMetric = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_errors"),
-		Help: "Number of errors refreshing the caboose pool",
-	})
-
-	// The below metrics are only updated periodically on every Caboose pool refresh
-	poolSizeMetric = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_size"),
-		Help: "Number of active caboose peers",
-	})
-
-	poolHealthMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_health"),
-		Help: "Health of the caboose pool",
-	}, []string{"weight"})
-
-	poolNewMembersMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_new_members"),
-		Help: "New members added to the Caboose pool",
-	}, []string{"weight"})
-
-	poolWeightBumpMetric = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_weight_bump"),
-	})
-)
-
 var (
 	fetchResponseCodeMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "fetch_response_code"),
@@ -253,10 +225,10 @@ var (
 var CabooseMetrics = prometheus.NewRegistry()
 
 func init() {
-	CabooseMetrics.MustRegister(poolErrorMetric)
+	CabooseMetrics.MustRegister(poolRefreshErrorMetric)
 	CabooseMetrics.MustRegister(poolSizeMetric)
-	CabooseMetrics.MustRegister(poolHealthMetric)
 	CabooseMetrics.MustRegister(poolNewMembersMetric)
+	CabooseMetrics.MustRegister(poolRemovedCorrectnessTotalMetric)
 
 	CabooseMetrics.MustRegister(fetchResponseCodeMetric)
 	CabooseMetrics.MustRegister(fetchSpeedPerPeerSuccessMetric)
@@ -289,8 +261,6 @@ func init() {
 	CabooseMetrics.MustRegister(fetchRequestContextErrorTotalMetric)
 	CabooseMetrics.MustRegister(fetchCalledTotalMetric)
 	CabooseMetrics.MustRegister(fetchRequestSuccessTimeTraceMetric)
-
-	CabooseMetrics.MustRegister(poolWeightBumpMetric)
 
 	CabooseMetrics.MustRegister(saturnCallsTotalMetric)
 	CabooseMetrics.MustRegister(saturnCallsFailureTotalMetric)

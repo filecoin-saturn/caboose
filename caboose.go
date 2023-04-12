@@ -17,8 +17,7 @@ import (
 )
 
 const (
-	BifrostProd    = "bifrost-prod"
-	BifrostStaging = "bifrost-staging"
+	EnvironmentKey = "STRN_ENV_TAG"
 )
 
 type Config struct {
@@ -78,9 +77,6 @@ type Config struct {
 
 	// MaxNCoolOff is the number of times we will cool off a node before downvoting it.
 	MaxNCoolOff int
-
-	// Environment tells us whether is prod or staging
-	Environment string
 }
 
 const DefaultLoggingInterval = 5 * time.Second
@@ -93,7 +89,7 @@ const DefaultSaturnCarRequestTimeout = 30 * time.Minute
 const DefaultMaxRetries = 3
 const DefaultPoolFailureDownvoteDebounce = 1 * time.Minute
 const DefaultPoolMembershipDebounce = 3 * DefaultPoolRefreshInterval
-const DefaultPoolLowWatermark = 5
+const DefaultPoolLowWatermark = maxPoolSize / 2
 
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
@@ -240,10 +236,6 @@ func NewCaboose(config *Config) (*Caboose, error) {
 		c.config.MaxRetrievalAttempts = DefaultMaxRetries
 	}
 
-	if c.config.Environment == "" {
-		c.config.Environment = BifrostProd
-	}
-
 	// start the pool
 	c.pool.Start()
 
@@ -252,14 +244,6 @@ func NewCaboose(config *Config) (*Caboose, error) {
 
 // Caboose is a blockstore.
 var _ ipfsblockstore.Blockstore = (*Caboose)(nil)
-
-// GetMemberWeights is for testing ONLY
-func (c *Caboose) GetMemberWeights() map[string]int {
-	c.pool.lk.RLock()
-	defer c.pool.lk.RUnlock()
-
-	return c.pool.endpoints.ToWeights()
-}
 
 func (c *Caboose) Close() {
 	c.pool.Close()

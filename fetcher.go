@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -220,7 +221,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			}
 		}
 	}
-	req.Header.Add("User-Agent", p.config.Environment)
+	req.Header.Add("User-Agent", os.Getenv(EnvironmentKey))
 
 	//trace
 	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
