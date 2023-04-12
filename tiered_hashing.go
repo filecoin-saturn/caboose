@@ -205,12 +205,12 @@ func (t *TieredHashing) AddNodes(nodes []string) {
 
 func (t *TieredHashing) GetNodes(key string, n int) []string {
 	// TODO Replace this with mirroring once we have some metrics and correctness info
-	// Pick nodes from the unknown set 1 in every 6 times
+	// Pick nodes from the unknown set 1 in every 5 times
 	fl := rand.Float64()
 	var nodes []string
 	var ok bool
 
-	if fl <= 1/6 {
+	if fl <= 1/5 {
 		nodes, ok = t.unknownSet.GetNodes(key, n)
 		if !ok {
 			nodes2, _ := t.mainSet.GetNodes(key, n-len(nodes))
