@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"os"
 	"strings"
 	"sync"
@@ -17,10 +16,6 @@ import (
 	"github.com/ipfs/go-cid"
 	"github.com/patrickmn/go-cache"
 )
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
 
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
