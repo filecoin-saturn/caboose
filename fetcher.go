@@ -205,7 +205,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		if recordIfContextErr(resourceType, reqCtx, "build-http-request") {
 			return nil, reqCtx.Err()
 		}
-		return nil, err
+		return &responseMetrics{reqBuildError: true}, err
 	}
 
 	req.Header.Add("Accept", mime)
@@ -221,12 +221,13 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
 
 	var resp *http.Response
+	saturnCallsTotalMetric.WithLabelValues(resourceType).Add(1)
 	resp, err = p.config.SaturnClient.Do(req)
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
 			return nil, reqCtx.Err()
 		}
-
+		saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure", "0").Add(1)
 		networkError = err.Error()
 		return &responseMetrics{
 			connFailure: true,
@@ -237,7 +238,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	rm = &responseMetrics{}
 	code = resp.StatusCode
-	rm.respondeCode = code
+	rm.responseCode = code
 	proto = resp.Proto
 	respReq = resp.Request
 
@@ -255,6 +256,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "non-2xx", fmt.Sprintf("%d", resp.StatusCode)).Add(1)
 		if resp.StatusCode == http.StatusTooManyRequests {
 			var retryAfter time.Duration
 			if strnRetryHint := respHeader.Get(saturnRetryAfterKey); strnRetryHint != "" {
@@ -293,6 +295,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		if recordIfContextErr(resourceType, reqCtx, "read-http-response") {
 			return nil, reqCtx.Err()
 		}
+		saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "failed-response-read", "200").Add(1)
 		networkError = err.Error()
 		rm.networkError = true
 		return rm, err

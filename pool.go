@@ -373,6 +373,9 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 			return nil, ctx.Err()
 		}
 		blk, err = p.fetchBlockAndUpdate(ctx, nodes[i], c, i)
+		if err != nil && errors.Is(err, context.Canceled) {
+			return nil, err
+		}
 
 		if err == nil {
 			durationMs := time.Since(blockFetchStart).Milliseconds()
@@ -523,6 +526,9 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 		}
 
 		err = p.fetchResourceAndUpdate(ctx, nodes[i], pq[0], i, cb)
+		if err != nil && errors.Is(err, context.Canceled) {
+			return err
+		}
 
 		var epr = ErrPartialResponse{}
 		if err == nil {
@@ -565,27 +571,33 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 
 func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int) (blk blocks.Block, err error) {
 	blk, rm, err := p.doFetch(ctx, node, c, attempt)
+	if err != nil && errors.Is(err, context.Canceled) {
+		return nil, err
+	}
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
 	}
 
-	err = p.commonUpdate(node, err)
+	err = p.commonUpdate(node, rm, err)
 	return
 }
 
 func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path string, attempt int, cb DataCallback) (err error) {
-	_, err = p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
+	rm, err := p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
+	if err != nil && errors.Is(err, context.Canceled) {
+		return err
+	}
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", path, "error", err)
 	}
 
-	p.commonUpdate(node, err)
+	p.commonUpdate(node, rm, err)
 	return
 }
 
-func (p *pool) commonUpdate(node string, err error) (ferr error) {
+func (p *pool) commonUpdate(node string, rm *responseMetrics, err error) (ferr error) {
 	ferr = err
-	if err == nil {
+	if err == nil && rm.success {
 		p.changeWeight(node, false)
 		// Saturn fetch worked, we return the block.
 		return

@@ -1,13 +1,14 @@
 package caboose
 
 type responseMetrics struct {
-	connFailure  bool
-	networkError bool
+	reqBuildError bool
+	connFailure   bool
+	networkError  bool
+	responseCode  int
 
 	success  bool
 	cacheHit bool
 
-	respondeCode int
-	ttfbMS       float64
-	speedPerSec  float64
+	ttfbMS      float64
+	speedPerSec float64
 }
