@@ -565,7 +565,8 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 }
 
 func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int) (blk blocks.Block, err error) {
-	blk, err = p.doFetch(ctx, node, c, attempt)
+	blk, rm, err := p.doFetch(ctx, node, c, attempt)
+	fmt.Printf("rm %+v", rm)
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
 	}
@@ -575,7 +576,7 @@ func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, 
 }
 
 func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path string, attempt int, cb DataCallback) (err error) {
-	err = p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
+	_, err = p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", path, "error", err)
 	}
