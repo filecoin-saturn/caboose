@@ -241,6 +241,10 @@ var (
 		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_total"),
 	}, []string{"resourceType"})
 
+	saturnCallsSuccessTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_success_total"),
+	}, []string{"resourceType", "cache_status"})
+
 	saturnCallsFailureTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_failure_total"),
 	}, []string{"resourceType", "reason", "code"})
@@ -290,4 +294,6 @@ func init() {
 
 	CabooseMetrics.MustRegister(saturnCallsTotalMetric)
 	CabooseMetrics.MustRegister(saturnCallsFailureTotalMetric)
+
+	CabooseMetrics.MustRegister(saturnCallsSuccessTotalMetric)
 }

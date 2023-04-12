@@ -5,6 +5,7 @@ type responseMetrics struct {
 	connFailure   bool
 	networkError  bool
 	responseCode  int
+	isTimeout     bool
 
 	success  bool
 	cacheHit bool

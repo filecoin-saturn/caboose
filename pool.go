@@ -595,7 +595,7 @@ func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path str
 	return
 }
 
-func (p *pool) commonUpdate(node string, rm *responseMetrics, err error) (ferr error) {
+func (p *pool) commonUpdate(node string, rm responseMetrics, err error) (ferr error) {
 	ferr = err
 	if err == nil && rm.success {
 		p.changeWeight(node, false)

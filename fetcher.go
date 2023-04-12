@@ -30,7 +30,7 @@ const (
 )
 
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
-func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, rm *responseMetrics, e error) {
+func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, rm responseMetrics, e error) {
 	reqUrl := fmt.Sprintf(saturnReqTmpl, c)
 
 	rm, e = p.fetchResource(ctx, from, reqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {
@@ -71,14 +71,16 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 
 // TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
 // rm will be nil only for context cancellation errors
-func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (rm *responseMetrics, err error) {
+func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (rm responseMetrics, err error) {
+	rm = responseMetrics{}
 	resourceType := resourceTypeCar
 	if mime == "application/vnd.ipld.raw" {
 		resourceType = resourceTypeBlock
 	}
+	// if the context is already cancelled, there's nothing we can do here.
 	if ce := ctx.Err(); ce != nil {
 		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("%t", errors.Is(ce, context.Canceled)), "fetchResource-init").Add(1)
-		return nil, ce
+		return rm, ce
 	}
 
 	requestId := uuid.NewString()
@@ -204,9 +206,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "build-http-request") {
-			return nil, reqCtx.Err()
+			return rm, reqCtx.Err()
 		}
-		return &responseMetrics{reqBuildError: true}, err
+		rm.reqBuildError = true
+		return rm, err
 	}
 
 	req.Header.Add("Accept", mime)
@@ -223,14 +226,21 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
 
 	var resp *http.Response
-	rm = &responseMetrics{}
 	saturnCallsTotalMetric.WithLabelValues(resourceType).Add(1)
 	resp, err = p.config.SaturnClient.Do(req)
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
-			return nil, reqCtx.Err()
+			if errors.Is(err, context.Canceled) {
+				return rm, reqCtx.Err()
+			}
 		}
-		saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure", "0").Add(1)
+
+		if errors.Is(err, context.DeadlineExceeded) {
+			rm.isTimeout = true
+			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure-timeout", "0").Add(1)
+		} else {
+			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure", "0").Add(1)
+		}
 		networkError = err.Error()
 		rm.connFailure = true
 		return rm, fmt.Errorf("http request failed: %w", err)
@@ -294,9 +304,18 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "read-http-response") {
-			return nil, reqCtx.Err()
+			if errors.Is(err, context.Canceled) {
+				return rm, reqCtx.Err()
+			}
 		}
-		saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "failed-response-read", "200").Add(1)
+
+		if errors.Is(err, context.DeadlineExceeded) {
+			rm.isTimeout = true
+			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "failed-response-read-timeout", fmt.Sprintf("%d", code)).Add(1)
+		} else {
+			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "failed-response-read", fmt.Sprintf("%d", code)).Add(1)
+		}
+
 		networkError = err.Error()
 		rm.networkError = true
 		return rm, err
@@ -320,6 +339,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	rm.success = true
 	rm.cacheHit = isCacheHit
 	rm.speedPerSec = float64(received) / float64(response_success_end.Sub(start).Seconds())
+	saturnCallsSuccessTotalMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit)).Add(1)
 
 	return rm, nil
 }
