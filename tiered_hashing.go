@@ -210,7 +210,7 @@ func (t *TieredHashing) GetNodes(key string, n int) []string {
 	var nodes []string
 	var ok bool
 
-	if fl <= 1/5 {
+	if fl <= 0.2 {
 		nodes, ok = t.unknownSet.GetNodes(key, n)
 		if !ok {
 			nodes2, _ := t.mainSet.GetNodes(key, n-len(nodes))
