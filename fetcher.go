@@ -70,6 +70,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 }
 
 // TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
+// rm will be nil only for context cancellation errors
 func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (rm *responseMetrics, err error) {
 	resourceType := resourceTypeCar
 	if mime == "application/vnd.ipld.raw" {
@@ -217,12 +218,12 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 	}
 	req.Header.Add("User-Agent", p.config.Environment)
-	fmt.Println("req", req.Header)
 
 	//trace
 	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
 
 	var resp *http.Response
+	rm = &responseMetrics{}
 	saturnCallsTotalMetric.WithLabelValues(resourceType).Add(1)
 	resp, err = p.config.SaturnClient.Do(req)
 	if err != nil {
@@ -231,14 +232,12 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 		saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure", "0").Add(1)
 		networkError = err.Error()
-		return &responseMetrics{
-			connFailure: true,
-		}, fmt.Errorf("http request failed: %w", err)
+		rm.connFailure = true
+		return rm, fmt.Errorf("http request failed: %w", err)
 	}
 	respHeader = resp.Header
 	defer resp.Body.Close()
 
-	rm = &responseMetrics{}
 	code = resp.StatusCode
 	rm.responseCode = code
 	proto = resp.Proto
