@@ -216,6 +216,8 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			}
 		}
 	}
+	req.Header.Add("User-Agent", p.config.Environment)
+	fmt.Println("req", req.Header)
 
 	//trace
 	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))

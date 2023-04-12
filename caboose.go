@@ -16,6 +16,11 @@ import (
 	"github.com/ipfs/go-cid"
 )
 
+const (
+	BifrostProd    = "bifrost-prod"
+	BifrostStaging = "bifrost-staging"
+)
+
 type Config struct {
 	// OrchestratorEndpoint is the URL of the Saturn orchestrator.
 	OrchestratorEndpoint *url.URL
@@ -73,6 +78,9 @@ type Config struct {
 
 	// MaxNCoolOff is the number of times we will cool off a node before downvoting it.
 	MaxNCoolOff int
+
+	// Environment tells us whether is prod or staging
+	Environment string
 }
 
 const DefaultLoggingInterval = 5 * time.Second
@@ -230,6 +238,10 @@ func NewCaboose(config *Config) (*Caboose, error) {
 	}
 	if c.config.MaxRetrievalAttempts == 0 {
 		c.config.MaxRetrievalAttempts = DefaultMaxRetries
+	}
+
+	if c.config.Environment == "" {
+		c.config.Environment = BifrostProd
 	}
 
 	// start the pool
