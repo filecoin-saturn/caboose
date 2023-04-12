@@ -557,7 +557,6 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 	}
 
 	fetchDurationCarFailureMetric.Observe(float64(time.Since(carFetchStart).Milliseconds()))
-
 	p.updateFetchKeyCoolDown(path)
 
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
@@ -566,7 +565,6 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 
 func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int) (blk blocks.Block, err error) {
 	blk, rm, err := p.doFetch(ctx, node, c, attempt)
-	fmt.Printf("rm %+v", rm)
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
 	}
