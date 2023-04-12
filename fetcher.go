@@ -297,6 +297,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 		return rm, fmt.Errorf("http error from strn: %d", resp.StatusCode)
 	}
+	if respHeader.Get(saturnCacheHitKey) == saturnCacheHit {
+		isCacheHit = true
+	}
 
 	wrapped := TrackingReader{resp.Body, time.Time{}, 0}
 	err = cb(resource, &wrapped)
@@ -311,9 +314,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 		if errors.Is(err, context.DeadlineExceeded) {
 			rm.isTimeout = true
-			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "failed-response-read-timeout", fmt.Sprintf("%d", code)).Add(1)
+			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-timeout-%s", getCacheStatus(isCacheHit)),
+				fmt.Sprintf("%d", code)).Add(1)
 		} else {
-			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "failed-response-read", fmt.Sprintf("%d", code)).Add(1)
+			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-%s", getCacheStatus(isCacheHit)), fmt.Sprintf("%d", code)).Add(1)
 		}
 
 		networkError = err.Error()
@@ -327,10 +331,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	// trace-metrics
 	// request life-cycle metrics
-	cacheHit := respHeader.Get(saturnCacheHitKey)
-	if cacheHit == saturnCacheHit {
-		isCacheHit = true
-	}
+
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tcp_connection").Observe(float64(result.TCPConnection.Milliseconds()))
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tls_handshake").Observe(float64(result.TLSHandshake.Milliseconds()))
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "wait_after_request_sent_for_header").Observe(float64(result.ServerProcessing.Milliseconds()))
