@@ -139,7 +139,7 @@ func (t *TieredHashing) RecordFailure(node string, rm responseMetrics) {
 		perf.responseCodes++
 	}
 
-	if !t.isCorrectnessPolicy(perf) {
+	if (perf.nFailure+perf.nSuccess >= 100) && !t.isCorrectnessPolicy(perf) {
 		t.remove(node, perf.tier, "correctness")
 
 		poolRemovedConnFailureTotalMetric.WithLabelValues(perf.tier).Add(float64(perf.connFailures))
