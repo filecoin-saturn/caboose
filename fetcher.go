@@ -221,7 +221,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			}
 		}
 	}
-	req.Header.Add("User-Agent", os.Getenv(EnvironmentKey))
+	req.Header.Add("User-Agent", "bifrost-"+os.Getenv(EnvironmentKey))
 
 	//trace
 	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
@@ -237,7 +237,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		if errors.Is(err, context.DeadlineExceeded) {
-			rm.isTimeout = true
+			rm.isConnTimeout = true
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure-timeout", "0").Add(1)
 		} else {
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure", "0").Add(1)
@@ -314,7 +314,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		if errors.Is(err, context.DeadlineExceeded) {
-			rm.isTimeout = true
+			rm.isReadTimeout = true
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-timeout-%s", getCacheStatus(isCacheHit)),
 				fmt.Sprintf("%d", code)).Add(1)
 		} else {
@@ -340,7 +340,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	rm.ttfbMS = float64(wrapped.firstByte.Sub(start).Milliseconds())
 	rm.success = true
 	rm.cacheHit = isCacheHit
-	rm.speedPerSec = float64(received) / float64(response_success_end.Sub(start).Seconds())
+	rm.speedPerMs = float64(received) / float64(response_success_end.Sub(start).Milliseconds())
 	saturnCallsSuccessTotalMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit)).Add(1)
 
 	return rm, nil

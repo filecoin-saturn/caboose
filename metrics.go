@@ -225,10 +225,15 @@ var (
 var CabooseMetrics = prometheus.NewRegistry()
 
 func init() {
+	// POOL Metrics
 	CabooseMetrics.MustRegister(poolRefreshErrorMetric)
 	CabooseMetrics.MustRegister(poolSizeMetric)
 	CabooseMetrics.MustRegister(poolNewMembersMetric)
-	CabooseMetrics.MustRegister(poolRemovedCorrectnessTotalMetric)
+	CabooseMetrics.MustRegister(poolRemovedTotalMetric)
+	CabooseMetrics.MustRegister(poolRemovedConnFailureTotalMetric)
+	CabooseMetrics.MustRegister(poolRemovedReadFailureTotalMetric)
+	CabooseMetrics.MustRegister(poolRemovedNon2xxTotalMetric)
+	CabooseMetrics.MustRegister(poolMembersNotAddedBecauseRemovedMetric)
 
 	CabooseMetrics.MustRegister(fetchResponseCodeMetric)
 	CabooseMetrics.MustRegister(fetchSpeedPerPeerSuccessMetric)

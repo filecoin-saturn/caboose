@@ -5,11 +5,12 @@ type responseMetrics struct {
 	connFailure   bool
 	networkError  bool
 	responseCode  int
-	isTimeout     bool
+	isConnTimeout bool
+	isReadTimeout bool
 
 	success  bool
 	cacheHit bool
 
-	ttfbMS      float64
-	speedPerSec float64
+	ttfbMS     float64
+	speedPerMs float64
 }

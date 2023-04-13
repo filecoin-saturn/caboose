@@ -13,15 +13,13 @@ import (
 // TODO Make config vars for tuning
 const (
 	minAcceptableCorrectnessPct = float64(65)
-	maxPoolSize                 = 50
+	maxPoolSize                 = 30
 
-	PLatency     = 0.75
-	maxLatencyMs = float64(200)
+	PLatency         = 0.75
+	maxLatencyMs     = float64(200)
+	kickOutLatencyMs = float64(1000) // kick out nodes with a P75 TTFB for cache hits > 1 second
 
-	PSpeed         = 0.25
-	minSpeedPerSec = float64(1048576 / 2) // 0.5Mib/s
-
-	failureDebounce = 30 * time.Second // helps shield nodes against bursty failures
+	failureDebounce = 1 * time.Minute // helps shield nodes against bursty failures
 
 	tierMain    = "main"
 	tierUnknown = "unknown"
@@ -31,13 +29,18 @@ type perf struct {
 	latencyDigest *tdigest.TDigest
 	speedDigest   *tdigest.TDigest
 
-	nSuccess       int
-	nFailure       int
-	correctnessPct float64
+	nSuccess int
+	nFailure int
 
-	lastFailureAt time.Time
+	lastBadLatencyAt time.Time
+	lastFailureAt    time.Time
 
 	tier string
+
+	// errors
+	connFailures  int
+	networkErrors int
+	responseCodes int
 }
 
 // locking is left to the caller
@@ -61,19 +64,28 @@ func NewTieredHashing() *TieredHashing {
 
 func (t *TieredHashing) RecordSuccess(node string, rm responseMetrics) {
 	if _, ok := t.nodes[node]; !ok {
-		t.nodes[node] = &perf{
-			latencyDigest: tdigest.NewWithCompression(1000),
-			speedDigest:   tdigest.NewWithCompression(1000),
-			tier:          tierUnknown,
-		}
+		return
 	}
-	perf := t.nodes[node]
 
+	perf := t.nodes[node]
 	perf.nSuccess++
-	perf.correctnessPct = (float64(perf.nSuccess) / float64(perf.nSuccess+perf.nFailure)) * 100
+
 	if rm.cacheHit {
+		perf.speedDigest.Add(rm.speedPerMs, 1)
+		// show some lineancy if the node is having a bad time
+		if rm.ttfbMS > maxLatencyMs && time.Since(perf.lastBadLatencyAt) < failureDebounce {
+			return
+		}
+
 		perf.latencyDigest.Add(rm.ttfbMS, 1)
-		perf.speedDigest.Add(rm.speedPerSec, 1)
+		if rm.ttfbMS > maxLatencyMs {
+			perf.lastBadLatencyAt = time.Now()
+		}
+
+		if perf.latencyDigest.Count() > 100 && perf.latencyDigest.Quantile(PLatency) > kickOutLatencyMs {
+			t.remove(node, perf.tier, "latency")
+			return
+		}
 	}
 
 	if t.isMainSetPolicy(perf) {
@@ -85,6 +97,14 @@ func (t *TieredHashing) RecordSuccess(node string, rm responseMetrics) {
 		t.unknownSet = t.unknownSet.AddNode(node)
 		perf.tier = tierUnknown
 	}
+}
+
+func (t *TieredHashing) remove(node string, tier string, reason string) {
+	t.mainSet = t.mainSet.RemoveNode(node)
+	t.unknownSet = t.unknownSet.RemoveNode(node)
+	delete(t.nodes, node)
+	t.removedNodes[node] = struct{}{}
+	poolRemovedTotalMetric.WithLabelValues(tier, reason).Inc()
 }
 
 func (t *TieredHashing) GetPerf() map[string]*perf {
@@ -107,22 +127,24 @@ func (t *TieredHashing) RecordFailure(node string, rm responseMetrics) {
 		perf.lastFailureAt = time.Now()
 	}
 
-	if rm.isTimeout || rm.connFailure || rm.networkError {
+	if rm.connFailure {
 		recordFailureFnc()
+		perf.connFailures++
+	} else if rm.networkError {
+		recordFailureFnc()
+		perf.networkErrors++
 	} else if rm.responseCode != http.StatusBadGateway && rm.responseCode != http.StatusGatewayTimeout && rm.responseCode != http.StatusTooManyRequests {
 		// TODO Improve this in the next iteration but keep it for now as we are seeing a very high percentage of 502s
-		// remove node from main set
 		recordFailureFnc()
+		perf.responseCodes++
 	}
-	perf.correctnessPct = (float64(perf.nSuccess) / float64(perf.nSuccess+perf.nFailure)) * 100
 
 	if !t.isCorrectnessPolicy(perf) {
-		t.mainSet = t.mainSet.RemoveNode(node)
-		t.unknownSet = t.unknownSet.RemoveNode(node)
-		delete(t.nodes, node)
-		t.removedNodes[node] = struct{}{}
+		t.remove(node, perf.tier, "correctness")
 
-		poolRemovedCorrectnessTotalMetric.WithLabelValues(perf.tier).Inc()
+		poolRemovedConnFailureTotalMetric.WithLabelValues(perf.tier).Add(float64(perf.connFailures))
+		poolRemovedReadFailureTotalMetric.WithLabelValues(perf.tier).Add(float64(perf.networkErrors))
+		poolRemovedNon2xxTotalMetric.WithLabelValues(perf.tier).Add(float64(perf.responseCodes))
 	}
 }
 
@@ -152,8 +174,12 @@ func (t *TieredHashing) GetPoolMetrics() poolMetrics {
 
 func (t *TieredHashing) AddNodes(nodes []string) {
 	currSize := t.GetSize()
+	poolMembersNotAddedBecauseRemovedMetric.Set(0)
 
 	for _, node := range nodes {
+		if len(t.nodes) >= maxPoolSize {
+			return
+		}
 		// do we already have this node ?
 		if _, ok := t.nodes[node]; ok {
 			continue
@@ -161,46 +187,24 @@ func (t *TieredHashing) AddNodes(nodes []string) {
 
 		// have we kicked this node out for bad correctness ?
 		if _, ok := t.removedNodes[node]; ok {
+			poolMembersNotAddedBecauseRemovedMetric.Inc()
 			continue
 		}
 
 		t.nodes[node] = &perf{
 			latencyDigest: tdigest.NewWithCompression(1000),
 			speedDigest:   tdigest.NewWithCompression(1000),
-			tier:          tierUnknown,
 		}
 
 		if currSize == 0 {
+			t.nodes[node].tier = tierMain
 			t.mainSet = t.mainSet.AddNode(node)
 		} else {
+			t.nodes[node].tier = tierUnknown
 			t.unknownSet = t.unknownSet.AddNode(node)
-		}
-
-		if len(t.nodes) >= maxPoolSize {
-			return
 		}
 	}
 
-	for _, node := range nodes {
-		// do we already have this node ?
-		if _, ok := t.nodes[node]; ok {
-			continue
-		}
-		t.nodes[node] = &perf{
-			latencyDigest: tdigest.NewWithCompression(1000),
-			speedDigest:   tdigest.NewWithCompression(1000),
-			tier:          tierUnknown,
-		}
-		if currSize == 0 {
-			t.mainSet = t.mainSet.AddNode(node)
-		} else {
-			t.unknownSet = t.unknownSet.AddNode(node)
-		}
-
-		if len(t.nodes) >= maxPoolSize {
-			return
-		}
-	}
 }
 
 func (t *TieredHashing) GetNodes(key string, n int) []string {
@@ -228,10 +232,10 @@ func (t *TieredHashing) GetNodes(key string, n int) []string {
 }
 
 func (t *TieredHashing) isMainSetPolicy(perf *perf) bool {
-	return perf.latencyDigest.Quantile(PLatency) <= maxLatencyMs &&
-		perf.speedDigest.Quantile(PSpeed) >= minSpeedPerSec
+	return perf.latencyDigest.Quantile(PLatency) <= maxLatencyMs
 }
 
 func (t *TieredHashing) isCorrectnessPolicy(perf *perf) bool {
-	return perf.correctnessPct >= minAcceptableCorrectnessPct
+	correctnessPct := (float64(perf.nSuccess) / float64(perf.nSuccess+perf.nFailure)) * 100
+	return correctnessPct >= minAcceptableCorrectnessPct
 }
