@@ -4,8 +4,8 @@ import "github.com/prometheus/client_golang/prometheus"
 
 // pool metrics
 var (
-	poolRemovedTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_removed_total"),
+	poolRemovedFailureTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_removed_failure_total"),
 	}, []string{"tier", "reason"})
 
 	poolRemovedConnFailureTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -38,5 +38,10 @@ var (
 	poolNewMembersMetric = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_new_members"),
 		Help: "New members added to the Caboose pool",
+	})
+
+	poolOrchRemovedMembersMetric = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_orch_removed_members"),
+		Help: "Members removed from the Caboose pool because the orchestrator does not have them anymore",
 	})
 )

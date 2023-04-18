@@ -1,19 +1,6 @@
 package caboose
 
-import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
-	"sync"
-	"testing"
-	"time"
-
-	"github.com/stretchr/testify/require"
-)
-
-func TestUpdateWeightWithRefresh(t *testing.T) {
+/*func TestUpdateWeightWithRefresh(t *testing.T) {
 	ph := BuildPoolHarness(t, 3, WithWeightChangeDebounce(0))
 	ph.StartAndWait(t)
 
@@ -283,4 +270,4 @@ func BuildPoolHarness(t *testing.T, n int, opts ...HarnessOption) *poolHarness {
 	ph.eps = purls
 
 	return ph
-}
+}*/

@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/filecoin-saturn/caboose/tieredhashing"
+
 	"github.com/google/uuid"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -31,7 +33,7 @@ const (
 )
 
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
-func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, rm responseMetrics, e error) {
+func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, rm tieredhashing.ResponseMetrics, e error) {
 	reqUrl := fmt.Sprintf(saturnReqTmpl, c)
 
 	rm, e = p.fetchResource(ctx, from, reqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {
@@ -72,8 +74,8 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 
 // TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
 // rm will be nil only for context cancellation errors
-func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (rm responseMetrics, err error) {
-	rm = responseMetrics{}
+func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (rm tieredhashing.ResponseMetrics, err error) {
+	rm = tieredhashing.ResponseMetrics{}
 	resourceType := resourceTypeCar
 	if mime == "application/vnd.ipld.raw" {
 		resourceType = resourceTypeBlock
@@ -209,7 +211,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		if recordIfContextErr(resourceType, reqCtx, "build-http-request") {
 			return rm, reqCtx.Err()
 		}
-		rm.reqBuildError = true
 		return rm, err
 	}
 
@@ -237,20 +238,19 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		if errors.Is(err, context.DeadlineExceeded) {
-			rm.isConnTimeout = true
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure-timeout", "0").Add(1)
 		} else {
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure", "0").Add(1)
 		}
 		networkError = err.Error()
-		rm.connFailure = true
+		rm.ConnFailure = true
 		return rm, fmt.Errorf("http request failed: %w", err)
 	}
 	respHeader = resp.Header
 	defer resp.Body.Close()
 
 	code = resp.StatusCode
-	rm.responseCode = code
+	rm.ResponseCode = code
 	proto = resp.Proto
 	respReq = resp.Request
 
@@ -314,7 +314,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		if errors.Is(err, context.DeadlineExceeded) {
-			rm.isReadTimeout = true
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-timeout-%s", getCacheStatus(isCacheHit)),
 				fmt.Sprintf("%d", code)).Add(1)
 		} else {
@@ -322,7 +321,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		networkError = err.Error()
-		rm.networkError = true
+		rm.NetworkError = true
 		return rm, err
 	}
 
@@ -337,10 +336,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tls_handshake").Observe(float64(result.TLSHandshake.Milliseconds()))
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "wait_after_request_sent_for_header").Observe(float64(result.ServerProcessing.Milliseconds()))
 
-	rm.ttfbMS = float64(wrapped.firstByte.Sub(start).Milliseconds())
-	rm.success = true
-	rm.cacheHit = isCacheHit
-	rm.speedPerMs = float64(received) / float64(response_success_end.Sub(start).Milliseconds())
+	rm.TTFBMs = float64(wrapped.firstByte.Sub(start).Milliseconds())
+	rm.Success = true
+	rm.CacheHit = isCacheHit
+	rm.SpeedPerMs = float64(received) / float64(response_success_end.Sub(start).Milliseconds())
 	saturnCallsSuccessTotalMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit)).Add(1)
 
 	return rm, nil

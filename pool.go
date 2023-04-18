@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/filecoin-saturn/caboose/tieredhashing"
+
 	"github.com/prometheus/client_golang/prometheus"
 
 	blocks "github.com/ipfs/go-block-format"
@@ -52,7 +54,7 @@ type pool struct {
 	fetchKeyCoolDownCache *cache.Cache // guarded by fetchKeyLk
 
 	lk sync.Mutex
-	th *TieredHashing
+	th *tieredhashing.TieredHashing
 }
 
 func newPool(c *Config) *pool {
@@ -64,7 +66,7 @@ func newPool(c *Config) *pool {
 
 		fetchKeyCoolDownCache: cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 		fetchKeyFailureCache:  cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
-		th:                    NewTieredHashing(),
+		th:                    tieredhashing.New(),
 	}
 
 	return &p
@@ -102,21 +104,22 @@ func (p *pool) doRefresh() {
 		for _, perf := range p.th.GetPerf() {
 			perf := perf
 			for _, pt := range percentiles {
-				latencyHist.WithLabelValues(fmt.Sprintf("P%f", pt)).Observe(perf.latencyDigest.Quantile(pt))
-				speedHist.WithLabelValues(fmt.Sprintf("P%f", pt)).Observe(perf.speedDigest.Quantile(pt))
+				latencyHist.WithLabelValues(fmt.Sprintf("P%f", pt)).Observe(perf.LatencyDigest.Quantile(pt))
+				speedHist.WithLabelValues(fmt.Sprintf("P%f", pt)).Observe(perf.SpeedDigest.Quantile(pt))
 			}
 		}
 		peerLatencyDistribution = latencyHist
 		peerSpeedDistribution = speedHist
 
-		prev := p.th.GetSize()
-
-		p.th.AddNodes(newEP)
+		added, removed, alreadyRemoved := p.th.AddOrchestratorNodes(newEP)
+		poolNewMembersMetric.Set(float64(added))
+		poolOrchRemovedMembersMetric.Set(float64(removed))
+		poolMembersNotAddedBecauseRemovedMetric.Set(float64(alreadyRemoved))
 
 		mt := p.th.GetPoolMetrics()
 		poolSizeMetric.WithLabelValues("unknown").Set(float64(mt.Unknown))
 		poolSizeMetric.WithLabelValues("main").Set(float64(mt.Main))
-		poolNewMembersMetric.Set(float64(mt.Total - prev))
+
 	} else {
 		poolRefreshErrorMetric.Add(1)
 	}
@@ -361,19 +364,26 @@ func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path str
 	return
 }
 
-func (p *pool) commonUpdate(node string, rm responseMetrics, err error) (ferr error) {
+func (p *pool) commonUpdate(node string, rm tieredhashing.ResponseMetrics, err error) (ferr error) {
 	p.lk.Lock()
 	defer p.lk.Unlock()
 
 	ferr = err
-	if err == nil && rm.success {
+	if err == nil && rm.Success {
 		p.th.RecordSuccess(node, rm)
 		// Saturn fetch worked, we return the block.
 		return
 	}
 
-	p.th.RecordFailure(node, rm)
-	if p.th.GetSize() < p.config.PoolLowWatermark {
+	fr := p.th.RecordFailure(node, rm)
+	if fr != nil {
+		poolRemovedFailureTotalMetric.WithLabelValues(fr.Tier, fr.Reason).Inc()
+		poolRemovedConnFailureTotalMetric.WithLabelValues(fr.Tier).Add(float64(fr.ConnErrors))
+		poolRemovedReadFailureTotalMetric.WithLabelValues(fr.Tier).Add(float64(fr.NetworkErrors))
+		poolRemovedNon2xxTotalMetric.WithLabelValues(fr.Tier).Add(float64(fr.ResponseCodes))
+	}
+
+	if p.th.DoRefresh() {
 		select {
 		case p.refresh <- struct{}{}:
 		default:
