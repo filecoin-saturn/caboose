@@ -14,23 +14,23 @@ import (
 
 // TODO Make config vars for tuning
 const (
-	maxPoolSize        = 50
+	maxPoolSize        = 100
 	maxPoolSizeIfEmpty = 300
 
 	PLatency                   = 0.75
-	maxLatencyForMainSetMillis = float64(300)
+	maxLatencyForMainSetMillis = float64(200)
 	tierMain                   = "main"
 	tierUnknown                = "unknown"
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum fetch requests to a node before we make a call on it's correctness
-	minObservationsForCorrectness = 120
+	minObservationsForCorrectness = 100
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
 	minAcceptableCorrectnessPct = float64(70)
 	// helps shield nodes against bursty failures
-	failureDebounce   = 10 * time.Second
+	failureDebounce   = 5 * time.Second
 	removalDuration   = 48 * time.Hour
-	maxWindowDuration = 30 * time.Minute
+	maxWindowDuration = 60 * time.Minute
 )
 
 type NodePerf struct {
