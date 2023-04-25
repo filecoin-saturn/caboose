@@ -258,14 +258,14 @@ func (c *Caboose) Close() {
 
 // Fetch allows fetching car archives by a path of the form `/ipfs/<cid>[/path/to/file]`
 func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error {
-	ctx, span := spanTrace(ctx, "Blockstore.Fetch", trace.WithAttributes(attribute.String("path", path)))
+	ctx, span := spanTrace(ctx, "Fetch", trace.WithAttributes(attribute.String("path", path)))
 	defer span.End()
 
 	return c.pool.fetchResourceWith(ctx, path, cb, c.getAffinity(ctx))
 }
 
 func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
-	ctx, span := spanTrace(ctx, "Blockstore.Has", trace.WithAttributes(attribute.Stringer("cid", it)))
+	ctx, span := spanTrace(ctx, "Has", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
 	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
@@ -276,7 +276,7 @@ func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
 }
 
 func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
-	ctx, span := spanTrace(ctx, "Blockstore.Get", trace.WithAttributes(attribute.Stringer("cid", it)))
+	ctx, span := spanTrace(ctx, "Get", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
 	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
@@ -288,7 +288,7 @@ func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
 
 // GetSize returns the CIDs mapped BlockSize
 func (c *Caboose) GetSize(ctx context.Context, it cid.Cid) (int, error) {
-	ctx, span := spanTrace(ctx, "Blockstore.GetSize", trace.WithAttributes(attribute.Stringer("cid", it)))
+	ctx, span := spanTrace(ctx, "GetSize", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
 	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
