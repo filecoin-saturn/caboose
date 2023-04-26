@@ -51,25 +51,18 @@ func TestRecordSuccess(t *testing.T) {
 
 	// node gets removed for unacceptable latency
 	rm := th.h.RecordSuccess(unknownNode, ResponseMetrics{CacheHit: true, TTFBMs: 600})
-	require.NotNil(t, rm)
-	require.EqualValues(t, tierUnknown, rm.Tier)
-	require.EqualValues(t, reasonLatency, rm.Reason)
-	th.assertSize(t, 0, 0)
+	require.Nil(t, rm)
+	th.assertSize(t, 0, 1)
 
 	// node does not get removed for unacceptable latency if not enough observations
 	unknownNode = th.genAndAddAll(t, 1)[0]
-	th.assertSize(t, 0, 1)
+	th.assertSize(t, 0, 2)
 	rm = th.h.RecordSuccess(unknownNode, ResponseMetrics{CacheHit: true, TTFBMs: 6000})
 	require.Nil(t, rm)
-	th.assertSize(t, 0, 1)
+	th.assertSize(t, 0, 2)
 
 	rm = th.h.RecordSuccess(unknownNode, ResponseMetrics{CacheHit: true, TTFBMs: 6000})
 	require.Nil(t, rm)
-
-	// gets removed as enough observations
-	rm = th.h.RecordSuccess(unknownNode, ResponseMetrics{CacheHit: true, TTFBMs: 6000})
-	require.NotNil(t, rm)
-	th.assertSize(t, 0, 0)
 }
 
 func (th *TieredHashingHarness) recordCacheHitAndAssertSet(t *testing.T, node string, ttfbMS float64, mc, uc int, tier string) *RemovedNode {

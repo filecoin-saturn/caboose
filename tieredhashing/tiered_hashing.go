@@ -23,20 +23,19 @@ const (
 	tierUnknown = "unknown"
 
 	reasonCorrectness = "correctness"
-	reasonLatency     = "latency"
 
 	// use rolling windows for latency and correctness calculations
-	windowSize = 100
+	windowSize = 50
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
-	minAcceptableCorrectnessPct = float64(75)
+	minAcceptableCorrectnessPct = float64(80)
 
 	// helps shield nodes against bursty failures
-	failureDebounce = 1 * time.Second
+	failureDebounce = 2 * time.Second
 	removalDuration = 24 * time.Hour
 
-	maxAcceptableLatency = 500
+	maxDebounceLatency = 500
 )
 
 type NodePerf struct {
@@ -114,25 +113,14 @@ func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) *RemovedN
 	}
 
 	// show some lineancy if the node is having a bad time
-	if rm.TTFBMs > maxAcceptableLatency && time.Since(perf.lastBadLatencyAt) < t.cfg.FailureDebounce {
+	if rm.TTFBMs > maxDebounceLatency && time.Since(perf.lastBadLatencyAt) < t.cfg.FailureDebounce {
 		return nil
 	}
 	// record the latency and update the last bad latency record time if needed
 	perf.LatencyDigest.Append(rm.TTFBMs)
 	perf.nLatencyDigest++
-	if rm.TTFBMs > maxAcceptableLatency {
+	if rm.TTFBMs > maxDebounceLatency {
 		perf.lastBadLatencyAt = time.Now()
-	}
-
-	if t.isLatencyWindowFull(perf) && perf.LatencyDigest.Reduce(rolling.Percentile(PLatency)) > maxAcceptableLatency {
-		mc, uc := t.removeFailedNode(node)
-		return &RemovedNode{
-			Node:                node,
-			Tier:                perf.Tier,
-			Reason:              reasonLatency,
-			MainToUnknownChange: mc,
-			UnknownToMainChange: uc,
-		}
 	}
 
 	return nil
