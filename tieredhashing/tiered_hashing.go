@@ -14,7 +14,7 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize     = 200
+	maxPoolSize     = 50
 	maxMainTierSize = 10
 	PLatency        = 95
 
@@ -26,18 +26,17 @@ const (
 	reasonLatency     = "latency"
 
 	// use rolling windows for latency and correctness calculations
-	windowSize = 200
+	windowSize = 100
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
-	minAcceptableCorrectnessPct = float64(80)
+	minAcceptableCorrectnessPct = float64(75)
 
 	// helps shield nodes against bursty failures
-	failureDebounce = 5 * time.Second
+	failureDebounce = 1 * time.Second
 	removalDuration = 24 * time.Hour
 
-	maxAcceptableLatencyPercentile = 90
-	maxAcceptableLatency           = 500
+	maxAcceptableLatency = 500
 )
 
 type NodePerf struct {
@@ -125,7 +124,7 @@ func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) *RemovedN
 		perf.lastBadLatencyAt = time.Now()
 	}
 
-	if t.isLatencyWindowFull(perf) && perf.LatencyDigest.Reduce(rolling.Percentile(maxAcceptableLatencyPercentile)) > maxAcceptableLatency {
+	if t.isLatencyWindowFull(perf) && perf.LatencyDigest.Reduce(rolling.Percentile(PLatency)) > maxAcceptableLatency {
 		mc, uc := t.removeFailedNode(node)
 		return &RemovedNode{
 			Node:                node,
