@@ -216,11 +216,11 @@ func (t *TieredHashing) GetPoolMetrics() PoolMetrics {
 
 func (t *TieredHashing) GetNodes(key string, n int) []string {
 	// TODO Replace this with mirroring once we have some metrics and correctness info
-	// Pick nodes from the unknown tier 1 in every 10 times
+	// Pick nodes from the unknown tier 1 in every 5 times
 	var nodes []string
 	var ok bool
 
-	if !t.cfg.AlwaysMainFirst && rand.Float64() <= 0.1 {
+	if !t.cfg.AlwaysMainFirst && rand.Float64() <= 0.2 {
 		if t.unknownSet.Size() != 0 {
 			nodes, ok = t.unknownSet.GetNodes(key, t.unknownPossible(n))
 			if !ok {
