@@ -11,7 +11,13 @@ import (
 	"strconv"
 	"time"
 
+
 	"github.com/filecoin-saturn/caboose/tieredhashing"
+
+	"github.com/influxdata/tdigest"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 
 	"github.com/google/uuid"
 	blocks "github.com/ipfs/go-block-format"
@@ -85,6 +91,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("%t", errors.Is(ce, context.Canceled)), "fetchResource-init").Add(1)
 		return rm, ce
 	}
+
+	ctx, span := spanTrace(ctx, "Pool.FetchResource", trace.WithAttributes(attribute.String("from", from), attribute.String("of", resource), attribute.String("mime", mime)))
+	defer span.End()
 
 	requestId := uuid.NewString()
 	goLogger.Debugw("doing fetch", "from", from, "of", resource, "mime", mime, "requestId", requestId)
