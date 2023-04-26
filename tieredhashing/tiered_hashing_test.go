@@ -495,13 +495,6 @@ func (th *TieredHashingHarness) addNewNodesAll(t *testing.T, nodes []string) {
 	require.EqualValues(t, len(nodes), added)
 }
 
-func (th *TieredHashingHarness) assertRemoved(t *testing.T, nodes []string) {
-	for _, n := range nodes {
-		_, ok := th.h.nodes[n]
-		require.False(t, ok)
-	}
-}
-
 func (th *TieredHashingHarness) addAndAssert(t *testing.T, nodes []string, added, already int, main, unknown int) {
 	a, ar := th.h.AddOrchestratorNodes(nodes)
 	require.EqualValues(t, added, a)

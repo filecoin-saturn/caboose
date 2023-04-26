@@ -1,12 +1,5 @@
 package caboose_test
 
-import (
-	"time"
-)
-
-var maxCabooseWeight = 20
-var expRetryAfter = 1 * time.Second
-
 /*func TestHttp429(t *testing.T) {
 	ctx := context.Background()
 	ch := BuildCabooseHarness(t, 3, 3, WithMaxNCoolOff(1), WithPoolMembershipDebounce(100*time.Second))
