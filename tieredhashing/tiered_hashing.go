@@ -5,54 +5,59 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/patrickmn/go-cache"
+	"github.com/asecurityteam/rolling"
 
-	"github.com/influxdata/tdigest"
+	"github.com/patrickmn/go-cache"
 
 	"github.com/serialx/hashring"
 )
 
-// TODO Make config vars for tuning
+// TODO Make env vars for tuning
 const (
-	maxPoolSize        = 100
-	maxPoolSizeIfEmpty = 300
+	maxPoolSize     = 200
+	maxMainTierSize = 10
+	PLatency        = 95
 
-	PLatency                   = 0.75
-	maxLatencyForMainSetMillis = float64(200)
-	tierMain                   = "main"
-	tierUnknown                = "unknown"
+	// main tier has the top `maxMainTierSize` nodes
+	tierMain    = "main"
+	tierUnknown = "unknown"
+
+	reasonCorrectness = "correctness"
+	reasonLatency     = "latency"
+
+	// use rolling windows for latency and correctness calculations
+	windowSize = 200
 
 	// ------------------ CORRECTNESS -------------------
-	// minimum fetch requests to a node before we make a call on it's correctness
-	minObservationsForCorrectness = 100
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
-	minAcceptableCorrectnessPct = float64(70)
+	minAcceptableCorrectnessPct = float64(80)
+
 	// helps shield nodes against bursty failures
-	failureDebounce   = 5 * time.Second
-	removalDuration   = 48 * time.Hour
-	maxWindowDuration = 60 * time.Minute
+	failureDebounce = 5 * time.Second
+	removalDuration = 24 * time.Hour
+
+	maxAcceptableLatencyPercentile = 90
+	maxAcceptableLatency           = 500
 )
 
 type NodePerf struct {
-	tier string
+	LatencyDigest  *rolling.PointPolicy
+	nLatencyDigest float64
 
-	LatencyDigest *tdigest.TDigest
-	SpeedDigest   *tdigest.TDigest
+	CorrectnessDigest  *rolling.PointPolicy
+	nCorrectnessDigest float64
 
-	// correctness -> reset at window
-	nSuccess               int
-	nFailure               int
-	correctnessWindowStart time.Time
-	lastFailureCountAt     time.Time
+	Tier string
+
+	lastFailureAt time.Time
 
 	// accumulated errors
 	connFailures  int
 	networkErrors int
 	responseCodes int
 
-	// latency -> reset at window
+	// latency
 	lastBadLatencyAt time.Time
-	tierWindowStart  time.Time
 }
 
 // locking is left to the caller
@@ -66,13 +71,17 @@ type TieredHashing struct {
 
 	// config
 	cfg TieredHashingConfig
+
+	StartAt  time.Time
+	initDone bool
 }
 
 func New(opts ...Option) *TieredHashing {
 	cfg := &TieredHashingConfig{
-		MaxPoolSizeNonEmpty: maxPoolSize,
-		MaxPoolSizeEmpty:    maxPoolSizeIfEmpty,
-		FailureDebounce:     failureDebounce,
+		MaxPoolSize:     maxPoolSize,
+		FailureDebounce: failureDebounce,
+		WindowSize:      windowSize,
+		MaxMainTierSize: maxMainTierSize,
 	}
 	for _, opt := range opts {
 		opt(cfg)
@@ -84,84 +93,80 @@ func New(opts ...Option) *TieredHashing {
 		unknownSet:            hashring.New(nil),
 		removedNodesTimeCache: cache.New(removalDuration, 1*time.Minute),
 		cfg:                   *cfg,
+
+		StartAt: time.Now(),
 	}
 }
 
-// TODO Main set policy should incorporate some form of correctness
-// if the metrics show that main tier peers are getting kicked out because of correctness
-func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) {
+func (t *TieredHashing) IsInitDone() bool {
+	return t.initDone
+}
+
+func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) *RemovedNode {
 	if _, ok := t.nodes[node]; !ok {
-		return
+		return nil
 	}
-
 	perf := t.nodes[node]
-	perf.nSuccess++
+	t.recordCorrectness(perf, true)
 
+	// we only consider cache hit latencies for now
 	if !rm.CacheHit {
-		return
+		return nil
 	}
 
-	perf.SpeedDigest.Add(rm.SpeedPerMs, 1)
 	// show some lineancy if the node is having a bad time
-	if rm.TTFBMs > maxLatencyForMainSetMillis && time.Since(perf.lastBadLatencyAt) < t.cfg.FailureDebounce {
-		return
+	if rm.TTFBMs > maxAcceptableLatency && time.Since(perf.lastBadLatencyAt) < t.cfg.FailureDebounce {
+		return nil
 	}
-
 	// record the latency and update the last bad latency record time if needed
-	perf.LatencyDigest.Add(rm.TTFBMs, 1)
-	if rm.TTFBMs > maxLatencyForMainSetMillis {
+	perf.LatencyDigest.Append(rm.TTFBMs)
+	perf.nLatencyDigest++
+	if rm.TTFBMs > maxAcceptableLatency {
 		perf.lastBadLatencyAt = time.Now()
 	}
 
-	if t.isMainSetPolicy(perf) {
-		t.mainSet = t.mainSet.AddNode(node)
-		t.unknownSet = t.unknownSet.RemoveNode(node)
-		perf.tier = tierMain
-	} else {
-		t.mainSet = t.mainSet.RemoveNode(node)
-		t.unknownSet = t.unknownSet.AddNode(node)
-		perf.tier = tierUnknown
+	if t.isLatencyWindowFull(perf) && perf.LatencyDigest.Reduce(rolling.Percentile(maxAcceptableLatencyPercentile)) > maxAcceptableLatency {
+		mc, uc := t.removeFailedNode(node)
+		return &RemovedNode{
+			Node:                node,
+			Tier:                perf.Tier,
+			Reason:              reasonLatency,
+			MainToUnknownChange: mc,
+			UnknownToMainChange: uc,
+		}
 	}
 
-	// refresh latency window to only consider "recent" observations
-	if time.Since(perf.tierWindowStart) > maxWindowDuration {
-		perf.tierWindowStart = time.Now()
-		perf.LatencyDigest = tdigest.NewWithCompression(1000)
-		perf.SpeedDigest = tdigest.NewWithCompression(1000)
-	}
-
-	return
+	return nil
 }
 
-func (t *TieredHashing) GetPerf() map[string]*NodePerf {
-	return t.nodes
-}
-
-type FailureRemoved struct {
-	Tier          string
-	Reason        string
-	ConnErrors    int
-	NetworkErrors int
-	ResponseCodes int
+type RemovedNode struct {
+	Node                string
+	Tier                string
+	Reason              string
+	ConnErrors          int
+	NetworkErrors       int
+	ResponseCodes       int
+	MainToUnknownChange int
+	UnknownToMainChange int
 }
 
 func (t *TieredHashing) DoRefresh() bool {
-	return t.GetPoolMetrics().Total <= (t.cfg.MaxPoolSizeNonEmpty / 2)
+	return t.GetPoolMetrics().Total <= (t.cfg.MaxPoolSize / 10)
 }
 
-func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *FailureRemoved {
+func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *RemovedNode {
 	if _, ok := t.nodes[node]; !ok {
 		return nil
 	}
 
 	perf := t.nodes[node]
-	if time.Since(perf.lastFailureCountAt) < t.cfg.FailureDebounce {
+	if time.Since(perf.lastFailureAt) < t.cfg.FailureDebounce {
 		return nil
 	}
 
 	recordFailureFnc := func() {
-		perf.nFailure++
-		perf.lastFailureCountAt = time.Now()
+		t.recordCorrectness(perf, false)
+		perf.lastFailureAt = time.Now()
 	}
 
 	if rm.ConnFailure {
@@ -176,22 +181,18 @@ func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *FailureR
 		perf.responseCodes++
 	}
 
-	if !t.isCorrectnessPolicyEligible(perf) {
-		t.removeFailed(node)
-		return &FailureRemoved{
-			Tier:          perf.tier,
-			Reason:        "correctness",
-			ConnErrors:    perf.connFailures,
-			NetworkErrors: perf.networkErrors,
-			ResponseCodes: perf.responseCodes,
+	if _, ok := t.isCorrectnessPolicyEligible(perf); !ok {
+		mc, uc := t.removeFailedNode(node)
+		return &RemovedNode{
+			Node:                node,
+			Tier:                perf.Tier,
+			Reason:              reasonCorrectness,
+			ConnErrors:          perf.connFailures,
+			NetworkErrors:       perf.networkErrors,
+			ResponseCodes:       perf.responseCodes,
+			MainToUnknownChange: mc,
+			UnknownToMainChange: uc,
 		}
-	}
-
-	// look at correctness over a given window size if we've already seen enough observations
-	if time.Since(perf.correctnessWindowStart) > maxWindowDuration && (perf.nFailure+perf.nSuccess >= minObservationsForCorrectness) {
-		perf.nSuccess = 0
-		perf.nFailure = 0
-		perf.correctnessWindowStart = time.Now()
 	}
 
 	return nil
@@ -216,11 +217,11 @@ func (t *TieredHashing) GetPoolMetrics() PoolMetrics {
 
 func (t *TieredHashing) GetNodes(key string, n int) []string {
 	// TODO Replace this with mirroring once we have some metrics and correctness info
-	// Pick nodes from the unknown set 1 in every 5 times
+	// Pick nodes from the unknown tier 1 in every 10 times
 	var nodes []string
 	var ok bool
 
-	if !t.cfg.AlwaysMainFirst && rand.Float64() <= 0.2 {
+	if !t.cfg.AlwaysMainFirst && rand.Float64() <= 0.1 {
 		if t.unknownSet.Size() != 0 {
 			nodes, ok = t.unknownSet.GetNodes(key, t.unknownPossible(n))
 			if !ok {
@@ -267,16 +268,17 @@ func (t *TieredHashing) mainPossible(n int) int {
 	}
 }
 
-func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, removed, alreadyRemoved int) {
-	removed = t.removeNodesNotInOrchestrator(nodes)
+func (t *TieredHashing) GetPerf() map[string]*NodePerf {
+	return t.nodes
+}
+
+func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemoved int) {
 	added = 0
 	alreadyRemoved = 0
-	isEmpty := t.GetPoolMetrics().Total == 0
 
 	for _, node := range nodes {
-		if !isEmpty && len(t.nodes) >= t.cfg.MaxPoolSizeNonEmpty {
-			return
-		} else if isEmpty && len(t.nodes) >= t.cfg.MaxPoolSizeEmpty { // Fill more nodes if pool is empty
+		// TODO Add nodes that are closer than the ones we have even if the pool is full
+		if len(t.nodes) >= t.cfg.MaxPoolSize {
 			return
 		}
 
@@ -285,7 +287,7 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, removed, al
 			continue
 		}
 
-		// have we kicked this node out for bad correctness ?
+		// have we kicked this node out for bad correctness or latency ?
 		if _, ok := t.removedNodesTimeCache.Get(node); ok {
 			alreadyRemoved++
 			continue
@@ -293,72 +295,104 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, removed, al
 
 		added++
 		t.nodes[node] = &NodePerf{
-			LatencyDigest:          tdigest.NewWithCompression(1000),
-			SpeedDigest:            tdigest.NewWithCompression(1000),
-			correctnessWindowStart: time.Now(),
-			tierWindowStart:        time.Now(),
+			LatencyDigest:     rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.WindowSize))),
+			CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.WindowSize))),
+			Tier:              tierUnknown,
 		}
-		if isEmpty {
-			t.nodes[node].tier = tierMain
-			t.mainSet = t.mainSet.AddNode(node)
-		} else {
-			t.nodes[node].tier = tierUnknown
-			t.unknownSet = t.unknownSet.AddNode(node)
+		t.unknownSet = t.unknownSet.AddNode(node)
+	}
+
+	return
+}
+
+func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
+	// sort all nodes by P95 and pick the top N as main tier nodes
+	nodes := t.nodesSortedLatency()
+
+	if !t.initDone {
+		if len(nodes) < t.cfg.MaxMainTierSize {
+			return
+		}
+		t.initDone = true
+	}
+	if len(nodes) < t.cfg.MaxMainTierSize {
+		return
+	}
+
+	mainTier := nodes[:t.cfg.MaxMainTierSize]
+	unknownTier := nodes[t.cfg.MaxMainTierSize:]
+
+	for _, nodeL := range mainTier {
+		if t.nodes[nodeL.node].Tier == tierUnknown {
+			unknownToMain++
+			n := nodeL.node
+			t.mainSet = t.mainSet.AddNode(n)
+			t.unknownSet = t.unknownSet.RemoveNode(n)
+			t.nodes[n].Tier = tierMain
+		}
+	}
+
+	for _, nodeL := range unknownTier {
+		if t.nodes[nodeL.node].Tier == tierMain {
+			mainToUnknown++
+			n := nodeL.node
+			t.unknownSet = t.unknownSet.AddNode(n)
+			t.mainSet = t.mainSet.RemoveNode(n)
+			t.nodes[n].Tier = tierUnknown
 		}
 	}
 
 	return
 }
 
-func (t *TieredHashing) removeNodesNotInOrchestrator(nodes []string) int {
-	count := 0
-	orchNode := make(map[string]struct{})
-	for _, node := range nodes {
-		orchNode[node] = struct{}{}
-	}
-
-	// If we have a node that the orchestrator does not have, remove it
-	var toRemove []string
-	for n, _ := range t.nodes {
-		if _, ok := orchNode[n]; !ok {
-			count++
-			toRemove = append(toRemove, n)
-		}
-	}
-
-	for _, n := range toRemove {
-		t.mainSet = t.mainSet.RemoveNode(n)
-		t.unknownSet = t.unknownSet.RemoveNode(n)
-		delete(t.nodes, n)
-	}
-
-	return count
-}
-
-func (t *TieredHashing) isMainSetPolicy(perf *NodePerf) bool {
-	return perf.LatencyDigest.Count() > 0 && perf.LatencyDigest.Quantile(PLatency) <= maxLatencyForMainSetMillis
-}
-
-func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) bool {
-	// no failure seen till now
-	if perf.nFailure == 0 {
-		return true
-	}
-
-	total := perf.nSuccess + perf.nFailure
+func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) (float64, bool) {
 	// we don't have enough observations yet
-	if total < minObservationsForCorrectness {
-		return true
+	if perf.nCorrectnessDigest < float64(t.cfg.WindowSize) {
+		return 0, true
+	} else {
+		perf.nCorrectnessDigest = float64(t.cfg.WindowSize)
 	}
+
+	totalSuccess := perf.CorrectnessDigest.Reduce(func(w rolling.Window) float64 {
+		var result float64
+		for _, bucket := range w {
+			for _, p := range bucket {
+				if p == 1 {
+					result++
+				}
+			}
+		}
+		return result
+	})
 
 	// should satisfy a certain minimum percentage
-	correctnessPct := (float64(perf.nSuccess) / float64(total)) * 100
-	return correctnessPct >= minAcceptableCorrectnessPct
+	pct := totalSuccess / perf.nCorrectnessDigest * 100
+
+	return pct, pct >= minAcceptableCorrectnessPct
 }
 
-func (t *TieredHashing) removeFailed(node string) {
+func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
+	perf := t.nodes[node]
 	t.mainSet = t.mainSet.RemoveNode(node)
 	t.unknownSet = t.unknownSet.RemoveNode(node)
 	delete(t.nodes, node)
 	t.removedNodesTimeCache.Set(node, struct{}{}, cache.DefaultExpiration)
+
+	if perf.Tier == tierMain {
+		// if we've removed a main set node we should replace it
+		mc, uc = t.UpdateMainTierWithTopN()
+	}
+	return
+}
+
+func (t *TieredHashing) recordCorrectness(perf *NodePerf, success bool) {
+	if success {
+		perf.CorrectnessDigest.Append(1)
+	} else {
+		perf.CorrectnessDigest.Append(0)
+	}
+	perf.nCorrectnessDigest++
+	if perf.nCorrectnessDigest > float64(t.cfg.WindowSize) {
+		perf.nCorrectnessDigest = float64(t.cfg.WindowSize)
+	}
 }

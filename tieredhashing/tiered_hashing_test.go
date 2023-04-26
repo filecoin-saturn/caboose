@@ -2,72 +2,132 @@ package tieredhashing
 
 import (
 	"fmt"
+	"net/http"
+	"sort"
 	"testing"
+
+	"github.com/asecurityteam/rolling"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestRecordSuccessSimple(t *testing.T) {
-	th := NewTieredHashingHarness()
-	// main node
-	mainNode := th.genAndAddAll(t, 1)[0]
-	th.assertSize(t, 1, 0)
+func TestRecordSuccess(t *testing.T) {
+	window := 3
 
-	// unknown node
+	th := NewTieredHashingHarness(WithWindowSize(window), WithFailureDebounce(0))
+	// main node
 	unknownNode := th.genAndAddAll(t, 1)[0]
-	th.assertSize(t, 1, 1)
+	th.assertSize(t, 0, 1)
 
 	// cache miss -> record success but latency no-op
-	th.h.RecordSuccess(mainNode, ResponseMetrics{})
-	require.EqualValues(t, th.h.nodes[mainNode].nSuccess, 1)
-	th.assertSize(t, 1, 1)
+	require.Nil(t, th.h.RecordSuccess(unknownNode, ResponseMetrics{}))
+	require.EqualValues(t, 1, th.nSuccess(unknownNode))
+	th.assertSize(t, 0, 1)
+	require.EqualValues(t, 0, th.h.nodes[unknownNode].nLatencyDigest)
 
-	th.h.RecordSuccess(unknownNode, ResponseMetrics{})
-	require.EqualValues(t, th.h.nodes[unknownNode].nSuccess, 1)
-	th.assertSize(t, 1, 1)
+	// cache miss -> record success but latency no-op
+	require.Nil(t, th.h.RecordSuccess(unknownNode, ResponseMetrics{}))
+	require.EqualValues(t, 2, th.nSuccess(unknownNode))
+	th.assertSize(t, 0, 1)
+	require.EqualValues(t, 0, th.h.nodes[unknownNode].nLatencyDigest)
 
-	// main node cache hit -> becomes unknown as bad latency
-	temp := mainNode
-	th.recordCacheHitAndAssertSet(t, mainNode, maxLatencyForMainSetMillis+1, 0, 2, tierUnknown)
+	// cache hits
+	require.Nil(t, th.recordCacheHitAndAssertSet(t, unknownNode, 200, 0, 1, tierUnknown))
+	require.EqualValues(t, 1, th.h.nodes[unknownNode].nLatencyDigest)
+	require.EqualValues(t, 200, th.h.nodes[unknownNode].LatencyDigest.Reduce(rolling.Sum))
 
-	// unknown node cache hit -> become main as latency is good
-	th.recordCacheHitAndAssertSet(t, unknownNode, maxLatencyForMainSetMillis-1, 1, 1, tierMain)
-	mainNode = unknownNode
-	unknownNode = temp
+	require.Nil(t, th.h.RecordSuccess(unknownNode, ResponseMetrics{CacheHit: true, TTFBMs: 150}))
+	require.EqualValues(t, 2, th.h.nodes[unknownNode].nLatencyDigest)
+	require.EqualValues(t, 350, th.h.nodes[unknownNode].LatencyDigest.Reduce(rolling.Sum))
 
-	// unknown node -> improve percentile -> becomes main node
-	th.recordCacheHitAndAssertSet(t, unknownNode, maxLatencyForMainSetMillis-1, 1, 1, tierUnknown)
-	th.recordCacheHitAndAssertSet(t, unknownNode, maxLatencyForMainSetMillis-1, 1, 1, tierUnknown)
-	// works now
-	th.recordCacheHitAndAssertSet(t, unknownNode, maxLatencyForMainSetMillis-1, 2, 0, tierMain)
+	require.Nil(t, th.h.RecordSuccess(unknownNode, ResponseMetrics{CacheHit: true, TTFBMs: 50}))
+	require.EqualValues(t, 3, th.h.nodes[unknownNode].nLatencyDigest)
+	require.EqualValues(t, 400, th.h.nodes[unknownNode].LatencyDigest.Reduce(rolling.Sum))
+
+	// windowing
+	require.Nil(t, th.h.RecordSuccess(unknownNode, ResponseMetrics{CacheHit: true, TTFBMs: 60}))
+	require.EqualValues(t, 4, th.h.nodes[unknownNode].nLatencyDigest)
+	require.EqualValues(t, 260, th.h.nodes[unknownNode].LatencyDigest.Reduce(rolling.Sum))
+
+	// node gets removed for unacceptable latency
+	rm := th.h.RecordSuccess(unknownNode, ResponseMetrics{CacheHit: true, TTFBMs: 600})
+	require.NotNil(t, rm)
+	require.EqualValues(t, tierUnknown, rm.Tier)
+	require.EqualValues(t, reasonLatency, rm.Reason)
+	th.assertSize(t, 0, 0)
+
+	// node does not get removed for unacceptable latency if not enough observations
+	unknownNode = th.genAndAddAll(t, 1)[0]
+	th.assertSize(t, 0, 1)
+	rm = th.h.RecordSuccess(unknownNode, ResponseMetrics{CacheHit: true, TTFBMs: 6000})
+	require.Nil(t, rm)
+	th.assertSize(t, 0, 1)
+
+	rm = th.h.RecordSuccess(unknownNode, ResponseMetrics{CacheHit: true, TTFBMs: 6000})
+	require.Nil(t, rm)
+
+	// gets removed as enough observations
+	rm = th.h.RecordSuccess(unknownNode, ResponseMetrics{CacheHit: true, TTFBMs: 6000})
+	require.NotNil(t, rm)
+	th.assertSize(t, 0, 0)
 }
 
-func TestRecordSuccessFailureDebounce(t *testing.T) {
-	th := NewTieredHashingHarness()
-	mainNode := th.genAndAddAll(t, 1)[0]
-
-	// record success values
-	th.recordCacheHitAndAssertSet(t, mainNode, maxLatencyForMainSetMillis-1, 1, 0, tierMain)
-	th.recordCacheHitAndAssertSet(t, mainNode, maxLatencyForMainSetMillis-1, 1, 0, tierMain)
-	th.recordCacheHitAndAssertSet(t, mainNode, maxLatencyForMainSetMillis-1, 1, 0, tierMain)
-
-	// no tier change because of debounce
-	for i := 0; i < 10; i++ {
-		th.recordCacheHitAndAssertSet(t, mainNode, maxLatencyForMainSetMillis+1, 1, 0, tierMain)
-	}
-	// have atleast 10 observations
-}
-
-func TestRecordSuccessWindowing(t *testing.T) {
-}
-
-func (th *TieredHashingHarness) recordCacheHitAndAssertSet(t *testing.T, node string, ttfbMS float64, mc, uc int, tier string) {
-	prevSuccess := th.h.nodes[node].nSuccess
-	th.h.RecordSuccess(node, ResponseMetrics{CacheHit: true, TTFBMs: ttfbMS})
-	require.EqualValues(t, prevSuccess+1, th.h.nodes[node].nSuccess)
+func (th *TieredHashingHarness) recordCacheHitAndAssertSet(t *testing.T, node string, ttfbMS float64, mc, uc int, tier string) *RemovedNode {
+	prevSuccess := th.nSuccess(node)
+	rm := th.h.RecordSuccess(node, ResponseMetrics{CacheHit: true, TTFBMs: ttfbMS})
+	require.EqualValues(t, prevSuccess+1, th.nSuccess(node))
 	th.assertSize(t, mc, uc)
+	require.EqualValues(t, th.h.nodes[node].Tier, tier)
+	return rm
+}
 
-	require.EqualValues(t, th.h.nodes[node].tier, tier)
+func TestRecordFailure(t *testing.T) {
+	window := 3
+
+	th := NewTieredHashingHarness(WithWindowSize(window), WithFailureDebounce(0))
+	// main node
+	unknownNode := th.genAndAddAll(t, 1)[0]
+	th.assertSize(t, 0, 1)
+
+	// 502 status code no change
+	require.Nil(t, th.h.RecordFailure(unknownNode, ResponseMetrics{ResponseCode: http.StatusBadGateway}))
+	require.Nil(t, th.h.RecordFailure(unknownNode, ResponseMetrics{ResponseCode: http.StatusGatewayTimeout}))
+	require.Nil(t, th.h.RecordFailure(unknownNode, ResponseMetrics{ConnFailure: true}))
+	require.EqualValues(t, 1, th.h.nodes[unknownNode].connFailures)
+
+	require.Nil(t, th.h.RecordFailure(unknownNode, ResponseMetrics{NetworkError: true}))
+	require.EqualValues(t, 1, th.h.nodes[unknownNode].networkErrors)
+
+	// node is evicted as we have enough observations
+	rm := th.h.RecordFailure(unknownNode, ResponseMetrics{NetworkError: true})
+	require.NotNil(t, rm)
+	require.EqualValues(t, tierUnknown, rm.Tier)
+	require.EqualValues(t, unknownNode, rm.Node)
+}
+
+func TestNodeEvictionWithWindowing(t *testing.T) {
+	window := 4
+
+	th := NewTieredHashingHarness(WithWindowSize(window), WithFailureDebounce(0))
+	// main node
+	unknownNode := th.genAndAddAll(t, 1)[0]
+	th.assertSize(t, 0, 1)
+
+	th.h.mainSet.AddNode(unknownNode)
+	th.h.unknownSet.RemoveNode(unknownNode)
+	th.h.nodes[unknownNode].Tier = tierMain
+
+	// record success
+	th.h.RecordSuccess(unknownNode, ResponseMetrics{})
+	th.h.RecordSuccess(unknownNode, ResponseMetrics{})
+	th.h.RecordSuccess(unknownNode, ResponseMetrics{})
+	th.h.RecordSuccess(unknownNode, ResponseMetrics{})
+
+	// evicted as pct < 80 because of windowing
+	rm := th.h.RecordFailure(unknownNode, ResponseMetrics{NetworkError: true})
+	require.NotNil(t, rm)
+	require.EqualValues(t, tierMain, rm.Tier)
+	require.EqualValues(t, unknownNode, rm.Node)
 }
 
 func TestGetNodes(t *testing.T) {
@@ -77,7 +137,7 @@ func TestGetNodes(t *testing.T) {
 		var countMain int
 		var countUnknown int
 		for _, n := range resp {
-			if th.h.nodes[n].tier == tierMain {
+			if th.h.nodes[n].Tier == tierMain {
 				countMain++
 			} else {
 				countUnknown++
@@ -91,15 +151,21 @@ func TestGetNodes(t *testing.T) {
 	nds := th.h.GetNodes("test", 1)
 	require.Empty(t, nds)
 
-	// has 2 main, 0 unknown
-	mainNodes := th.genAndAddAll(t, 2)
-	th.assertSize(t, 2, 0)
+	// has 3 unknown, 0 main
+	unknownNodes := th.genAndAddAll(t, 3)
+	th.assertSize(t, 0, 3)
 	resp := th.h.GetNodes("test", 100)
-	require.Len(t, resp, 2)
-	assertCountF(t, resp, 2, 0)
+	require.Len(t, resp, 3)
+	assertCountF(t, resp, 0, 3)
 
 	// has 2 main, 3 unknown
-	unknownNodes := th.genAndAddAll(t, 3)
+	mainNodes := th.genAndAddAll(t, 2)
+	for _, n := range mainNodes {
+		th.h.nodes[n].Tier = tierMain
+		th.h.mainSet = th.h.mainSet.AddNode(n)
+		th.h.unknownSet = th.h.unknownSet.RemoveNode(n)
+	}
+
 	th.assertSize(t, 2, 3)
 	resp = th.h.GetNodes("test", 100)
 	require.Len(t, resp, 5)
@@ -115,8 +181,7 @@ func TestGetNodes(t *testing.T) {
 	// has both main
 	assertGetAndCountF(t, 2, 3, 2, 2, 2, 0)
 
-	// has 1 main, 3 unknown
-	th.h.removeFailed(mainNodes[0])
+	th.h.removeFailedNode(mainNodes[0])
 	assertGetAndCountF(t, 1, 3, 10, 4, 1, 3)
 
 	// has 1 main, 1 unknown
@@ -126,16 +191,16 @@ func TestGetNodes(t *testing.T) {
 	assertGetAndCountF(t, 1, 3, 1, 1, 1, 0)
 
 	// has 1 main, 2 unknown
-	th.h.removeFailed(unknownNodes[0])
+	th.h.removeFailedNode(unknownNodes[0])
 	assertGetAndCountF(t, 1, 2, 10, 3, 1, 2)
 
 	// has 0 main, 1 unknown
-	th.h.removeFailed(mainNodes[1])
+	th.h.removeFailedNode(mainNodes[1])
 	assertGetAndCountF(t, 0, 2, 1, 1, 0, 1)
 
 	// has 0 main, 0 unknown
-	th.h.removeFailed(unknownNodes[1])
-	th.h.removeFailed(unknownNodes[2])
+	th.h.removeFailedNode(unknownNodes[1])
+	th.h.removeFailedNode(unknownNodes[2])
 	assertGetAndCountF(t, 0, 0, 1, 0, 0, 0)
 }
 
@@ -143,7 +208,7 @@ func TestConsistentHashing(t *testing.T) {
 	th := NewTieredHashingHarness(WithAlwaysMainFirst())
 
 	th.genAndAddAll(t, 10)
-	th.assertSize(t, 10, 0)
+	th.assertSize(t, 0, 10)
 	resp1 := th.h.GetNodes("test", 3)
 	require.Len(t, resp1, 3)
 
@@ -153,73 +218,242 @@ func TestConsistentHashing(t *testing.T) {
 	require.EqualValues(t, resp1[:2], resp2[:2])
 }
 
+func TestRecordCorrectness(t *testing.T) {
+	window := 3
+	th := NewTieredHashingHarness(WithWindowSize(window))
+	perf := &NodePerf{
+		CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(window))),
+	}
+	th.h.recordCorrectness(perf, true)
+	require.EqualValues(t, 1, perf.nCorrectnessDigest)
+	require.EqualValues(t, 1, perf.CorrectnessDigest.Reduce(rolling.Sum))
+
+	th.h.recordCorrectness(perf, true)
+	require.EqualValues(t, 2, perf.CorrectnessDigest.Reduce(rolling.Sum))
+	require.EqualValues(t, 2, perf.nCorrectnessDigest)
+
+	th.h.recordCorrectness(perf, false)
+	require.EqualValues(t, 3, perf.nCorrectnessDigest)
+	require.EqualValues(t, 2, perf.CorrectnessDigest.Reduce(rolling.Sum))
+
+	th.h.recordCorrectness(perf, false)
+	require.EqualValues(t, 3, perf.nCorrectnessDigest)
+	require.EqualValues(t, 1, perf.CorrectnessDigest.Reduce(rolling.Sum))
+}
+
+func (th *TieredHashingHarness) updateTiersAndAsert(t *testing.T, mcs, ucs, mains, unknowns int, isInitDone bool, mainNodes []string) {
+	mc, uc := th.h.UpdateMainTierWithTopN()
+	require.EqualValues(t, mcs, mc)
+	require.EqualValues(t, ucs, uc)
+	th.assertSize(t, mains, unknowns)
+	require.EqualValues(t, isInitDone, th.h.IsInitDone())
+
+	var mnodes []string
+	for n, perf := range th.h.nodes {
+		perf := perf
+		if perf.Tier == tierMain {
+			mnodes = append(mnodes, n)
+		}
+	}
+
+	sort.Slice(mainNodes, func(i, j int) bool {
+		return mainNodes[i] < mainNodes[j]
+	})
+
+	sort.Slice(mnodes, func(i, j int) bool {
+		return mnodes[i] < mnodes[j]
+	})
+
+	require.EqualValues(t, mainNodes, mnodes)
+}
+
+func TestUpdateMainTierWithTopN(t *testing.T) {
+	windowSize := 2
+	th := NewTieredHashingHarness(WithWindowSize(windowSize), WithMaxMainTierSize(2))
+
+	mc, uc := th.h.UpdateMainTierWithTopN()
+	require.Zero(t, mc)
+	require.Zero(t, uc)
+
+	// main node
+	nodes := th.genAndAddAll(t, 5)
+	th.assertSize(t, 0, 5)
+
+	th.updateTiersAndAsert(t, 0, 0, 0, 5, false, nil)
+
+	// Record 1 observation for a node -> no change
+	th.h.RecordSuccess(nodes[0], ResponseMetrics{CacheHit: true, TTFBMs: 100})
+	th.updateTiersAndAsert(t, 0, 0, 0, 5, false, nil)
+
+	// record 1 more observation for the same node -> no change as not enough nodes for bulk update
+	th.h.RecordSuccess(nodes[0], ResponseMetrics{CacheHit: true, TTFBMs: 90})
+	th.updateTiersAndAsert(t, 0, 0, 0, 5, false, nil)
+
+	// record 2 observations for second node -> change as we now have enough
+	th.h.RecordSuccess(nodes[1], ResponseMetrics{CacheHit: true, TTFBMs: 500})
+	th.updateTiersAndAsert(t, 0, 0, 0, 5, false, nil)
+
+	th.h.RecordSuccess(nodes[1], ResponseMetrics{CacheHit: true, TTFBMs: 90})
+	th.updateTiersAndAsert(t, 0, 2, 2, 3, true, []string{nodes[0], nodes[1]})
+
+	// main node gets replaced with unknown node
+	th.h.RecordSuccess(nodes[2], ResponseMetrics{CacheHit: true, TTFBMs: 3})
+	th.h.RecordSuccess(nodes[2], ResponseMetrics{CacheHit: true, TTFBMs: 5})
+
+	th.updateTiersAndAsert(t, 1, 1, 2, 3, true, []string{nodes[0], nodes[2]})
+
+	// if some main nodes ge kicked out, they get replaced with other eligible nodes
+
+}
+
+func TestIsCorrectnessPolicyEligible(t *testing.T) {
+	window := 10
+
+	tcs := map[string]struct {
+		perf    *NodePerf
+		correct bool
+		pct     float64
+		initF   func(perf *NodePerf)
+	}{
+		"no observations": {
+			perf:    &NodePerf{},
+			correct: true,
+		},
+		"no success but not enough observations for failure": {
+			initF: func(perf *NodePerf) {
+				for i := 0; i < window-1; i++ {
+					perf.CorrectnessDigest.Append(0)
+					perf.nCorrectnessDigest++
+				}
+			},
+			perf: &NodePerf{
+				CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(window))),
+			},
+			correct: true,
+		},
+		"some success but fail as enough observations": {
+			initF: func(perf *NodePerf) {
+				perf.CorrectnessDigest.Append(1)
+				perf.nCorrectnessDigest++
+				perf.CorrectnessDigest.Append(1)
+				perf.nCorrectnessDigest++
+
+				for i := 0; i < int(window)-2; i++ {
+					perf.CorrectnessDigest.Append(0)
+					perf.nCorrectnessDigest++
+				}
+
+			},
+			perf: &NodePerf{
+				CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(window))),
+			},
+			correct: false,
+			pct:     20,
+		},
+		"some success but not enough observations": {
+			initF: func(perf *NodePerf) {
+				for i := 0; i < int(window)-1; i++ {
+					perf.CorrectnessDigest.Append(1)
+					perf.nCorrectnessDigest++
+				}
+
+			},
+			perf: &NodePerf{
+				CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(window))),
+			},
+			correct: true,
+			pct:     0,
+		},
+		"rolling window": {
+			initF: func(perf *NodePerf) {
+				// add window success
+				for i := 0; i < int(window); i++ {
+					perf.CorrectnessDigest.Append(1)
+					perf.nCorrectnessDigest++
+				}
+
+				// add 2 failures
+				for i := 0; i < 2; i++ {
+					perf.CorrectnessDigest.Append(0)
+					perf.nCorrectnessDigest++
+				}
+
+			},
+			perf: &NodePerf{
+				CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(window))),
+			},
+			correct: true,
+			pct:     80,
+		},
+	}
+
+	for name, tc := range tcs {
+		t.Run(name, func(t *testing.T) {
+			th := NewTieredHashingHarness(WithWindowSize(window))
+			if tc.initF != nil {
+				tc.initF(tc.perf)
+			}
+
+			perf := tc.perf
+			pct, ok := th.h.isCorrectnessPolicyEligible(perf)
+			require.EqualValues(t, tc.correct, ok)
+			require.EqualValues(t, tc.pct, pct)
+		})
+	}
+}
+
 func TestAddOrchestratorNodes(t *testing.T) {
 	th := NewTieredHashingHarness()
 
 	nodes := th.genAndAddAll(t, 10)
-	th.assertSize(t, 10, 0)
+	th.assertSize(t, 0, 10)
 
 	nodes2 := th.genNodes(t, 10)
 	th.addNewNodesAll(t, nodes2)
-	th.assertSize(t, 10, 10)
+	th.assertSize(t, 0, 20)
 
-	th.addAndAssert(t, append(nodes[:3], nodes2[:3]...), 0, 14, 0, 3, 3)
+	th.addAndAssert(t, append(nodes[:3], nodes2[:3]...), 0, 0, 0, 20)
 
-	th.h.removeFailed(nodes[0])
-	th.assertSize(t, 2, 3)
+	th.h.removeFailedNode(nodes[0])
+	th.assertSize(t, 0, 19)
 
-	th.addAndAssert(t, append(nodes[:3], nodes2[:3]...), 0, 0, 1, 2, 3)
+	th.addAndAssert(t, append(nodes[:3], nodes2[:3]...), 0, 1, 0, 19)
 }
 
-func TestOrchestratorAddMaxNodes(t *testing.T) {
-	th := NewTieredHashingHarness(WithMaxPoolSizeEmpty(20), WithMaxPoolSizeNonEmpty(10))
+func TestAddOrchestratorNodesMax(t *testing.T) {
+	th := NewTieredHashingHarness(WithMaxPoolSize(10))
 
-	// empty -> only 20 get added
+	// empty -> 10 get added
 	nodes := th.genNodes(t, 30)
-	a, _, _ := th.h.AddOrchestratorNodes(nodes)
-	require.EqualValues(t, 20, a)
-	th.assertSize(t, 20, 0)
+	a, _ := th.h.AddOrchestratorNodes(nodes)
+	require.EqualValues(t, 10, a)
+	th.assertSize(t, 0, 10)
 
-	// non empty -> nothing gets added
+	// nothing gets added as we are full
 	nodes2 := th.genNodes(t, 30)
-	a, _, _ = th.h.AddOrchestratorNodes(append(nodes, nodes2...))
+	a, _ = th.h.AddOrchestratorNodes(append(nodes, nodes2...))
 	require.EqualValues(t, 0, a)
-	th.assertSize(t, 20, 0)
+	th.assertSize(t, 0, 10)
 
-	// remove 12 nodes ->
-	r := th.h.removeNodesNotInOrchestrator(nodes[:8])
-	require.EqualValues(t, 12, r)
-	th.assertSize(t, 8, 0)
+	// remove 2 nodes ->
+	th.h.removeFailedNode(nodes[0])
+	th.assertSize(t, 0, 9)
+	th.h.removeFailedNode(nodes[1])
+	th.assertSize(t, 0, 8)
 
 	// 2 get added now
-	a, _, _ = th.h.AddOrchestratorNodes(append(nodes, nodes2...))
+	a, _ = th.h.AddOrchestratorNodes(append(nodes, nodes2...))
 	require.EqualValues(t, 2, a)
-	th.assertSize(t, 8, 2)
-}
+	th.assertSize(t, 0, 10)
 
-func TestRemoveNodesNotInOrchestrator(t *testing.T) {
-	th := NewTieredHashingHarness()
-	nodes := th.genAndAddAll(t, 10)
-	th.assertSize(t, 10, 0)
+	// removed node does not get added back
+	th.h.removeFailedNode(nodes[2])
+	th.assertSize(t, 0, 9)
 
-	// give only a subset now
-	r := th.h.removeNodesNotInOrchestrator(nodes[:8])
-	require.EqualValues(t, 2, r)
-	th.assertRemoved(t, nodes[8:])
-	th.assertSize(t, 8, 0)
-
-	r = th.h.removeNodesNotInOrchestrator(nodes[:8])
-	require.EqualValues(t, 0, r)
-	th.assertSize(t, 8, 0)
-
-	r = th.h.removeNodesNotInOrchestrator(nodes[:8])
-	require.EqualValues(t, 0, r)
-	th.assertSize(t, 8, 0)
-
-	r = th.h.removeNodesNotInOrchestrator(nil)
-	require.EqualValues(t, 8, r)
-	th.assertRemoved(t, nodes)
-	th.assertSize(t, 0, 0)
+	a, ar := th.h.AddOrchestratorNodes(nodes[:10])
+	require.EqualValues(t, 0, a)
+	require.EqualValues(t, 3, ar)
+	th.assertSize(t, 0, 9)
 }
 
 type TieredHashingHarness struct {
@@ -256,8 +490,7 @@ func (th *TieredHashingHarness) addNewNodesAll(t *testing.T, nodes []string) {
 		old = append(old, key)
 	}
 
-	added, removed, already := th.h.AddOrchestratorNodes(append(nodes, old...))
-	require.Zero(t, removed)
+	added, already := th.h.AddOrchestratorNodes(append(nodes, old...))
 	require.Zero(t, already)
 	require.EqualValues(t, len(nodes), added)
 }
@@ -269,10 +502,10 @@ func (th *TieredHashingHarness) assertRemoved(t *testing.T, nodes []string) {
 	}
 }
 
-func (th *TieredHashingHarness) addAndAssert(t *testing.T, nodes []string, added, removed, already int, main, unknown int) {
-	a, r, ar := th.h.AddOrchestratorNodes(nodes)
+func (th *TieredHashingHarness) addAndAssert(t *testing.T, nodes []string, added, already int, main, unknown int) {
+	a, ar := th.h.AddOrchestratorNodes(nodes)
 	require.EqualValues(t, added, a)
-	require.EqualValues(t, removed, r)
+
 	require.EqualValues(t, already, ar)
 	th.assertSize(t, main, unknown)
 }
@@ -282,4 +515,8 @@ func (th *TieredHashingHarness) assertSize(t *testing.T, main int, unknown int) 
 	require.EqualValues(t, unknown, mt.Unknown)
 	require.EqualValues(t, main, mt.Main)
 	require.EqualValues(t, main+unknown, mt.Total)
+}
+
+func (th *TieredHashingHarness) nSuccess(node string) int {
+	return int(th.h.nodes[node].CorrectnessDigest.Reduce(rolling.Sum))
 }

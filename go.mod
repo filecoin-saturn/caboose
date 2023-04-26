@@ -3,8 +3,8 @@ module github.com/filecoin-saturn/caboose
 go 1.19
 
 require (
+	github.com/asecurityteam/rolling v0.0.0-20230418204413-b4052899307d
 	github.com/google/uuid v1.3.0
-	github.com/influxdata/tdigest v0.0.1
 	github.com/ipfs/boxo v0.8.0-rc2.0.20230329082438-360b031ed895
 	github.com/ipfs/go-block-format v0.1.2
 	github.com/ipfs/go-cid v0.4.0
@@ -12,7 +12,6 @@ require (
 	github.com/ipld/go-ipld-prime v0.20.0
 	github.com/ipld/go-ipld-prime/storage/bsadapter v0.0.0-20230102063945-1a409dc236dd
 	github.com/mitchellh/go-server-timing v1.0.1
-	github.com/multiformats/go-multicodec v0.8.1
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/prometheus/client_golang v1.14.0
 	github.com/serialx/hashring v0.0.0-20200727003509-22c0c7ab6b1b
@@ -80,6 +79,7 @@ require (
 	github.com/multiformats/go-multiaddr v0.8.0 // indirect
 	github.com/multiformats/go-multiaddr-dns v0.3.1 // indirect
 	github.com/multiformats/go-multibase v0.1.1 // indirect
+	github.com/multiformats/go-multicodec v0.8.1 // indirect
 	github.com/multiformats/go-multihash v0.2.1 // indirect
 	github.com/multiformats/go-multistream v0.4.1 // indirect
 	github.com/multiformats/go-varint v0.0.7 // indirect

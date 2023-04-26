@@ -40,8 +40,11 @@ var (
 		Help: "New members added to the Caboose pool",
 	})
 
-	poolOrchRemovedMembersMetric = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_orch_removed_members"),
-		Help: "Members removed from the Caboose pool because the orchestrator does not have them anymore",
+	poolEnoughObservationsForMainSetDurationMetric = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_observations_for_main_set_duration"),
 	})
+
+	poolTierChangMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_tier_change"),
+	}, []string{"change"})
 )

@@ -11,7 +11,6 @@ var (
 	distLk sync.Mutex
 
 	peerLatencyDistribution prometheus.Collector // guarded by pool.lock
-	peerSpeedDistribution   prometheus.Collector // guarded by pool.lock
 )
 
 type m_collector struct {
@@ -229,12 +228,13 @@ func init() {
 	CabooseMetrics.MustRegister(poolRefreshErrorMetric)
 	CabooseMetrics.MustRegister(poolSizeMetric)
 	CabooseMetrics.MustRegister(poolNewMembersMetric)
-	CabooseMetrics.MustRegister(poolOrchRemovedMembersMetric)
 	CabooseMetrics.MustRegister(poolRemovedFailureTotalMetric)
 	CabooseMetrics.MustRegister(poolRemovedConnFailureTotalMetric)
 	CabooseMetrics.MustRegister(poolRemovedReadFailureTotalMetric)
 	CabooseMetrics.MustRegister(poolRemovedNon2xxTotalMetric)
 	CabooseMetrics.MustRegister(poolMembersNotAddedBecauseRemovedMetric)
+	CabooseMetrics.MustRegister(poolEnoughObservationsForMainSetDurationMetric)
+	CabooseMetrics.MustRegister(poolTierChangMetric)
 
 	CabooseMetrics.MustRegister(fetchResponseCodeMetric)
 	CabooseMetrics.MustRegister(fetchSpeedPerPeerSuccessMetric)
@@ -259,7 +259,6 @@ func init() {
 	CabooseMetrics.MustRegister(fetchNetworkLatencyPeerSuccessMetric)
 
 	CabooseMetrics.MustRegister(m_collector{&peerLatencyDistribution})
-	CabooseMetrics.MustRegister(m_collector{&peerSpeedDistribution})
 
 	CabooseMetrics.MustRegister(fetchSizeCarMetric)
 	CabooseMetrics.MustRegister(fetchSizeBlockMetric)

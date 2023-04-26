@@ -10,9 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/filecoin-saturn/caboose/tieredhashing"
-
+	"github.com/asecurityteam/rolling"
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/filecoin-saturn/caboose/tieredhashing"
 
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -55,6 +56,8 @@ type pool struct {
 
 	lk sync.Mutex
 	th *tieredhashing.TieredHashing
+
+	poolInitDone sync.Once
 }
 
 func newPool(c *Config) *pool {
@@ -86,40 +89,35 @@ func (p *pool) doRefresh() {
 		distLk.Lock()
 		defer distLk.Unlock()
 
-		// Update aggregate latency & speed distribution for peers
-		latencyHist := prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_peer_latency_dist"),
-			Help:    "Fetch latency distribution for peers in millis",
-			Buckets: latencyDistMsHistogram,
-		}, []string{"percentile"})
-
-		speedHist := prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_peer_speed_dist"),
-			Help:    "Fetch speed distribution for peers (bytes/millis)",
-			Buckets: speedBytesPerMsHistogram,
-		}, []string{"percentile"})
-
-		percentiles := []float64{0.25, 0.5, 0.75, 0.9, 0.95}
-
-		for _, perf := range p.th.GetPerf() {
-			perf := perf
-			for _, pt := range percentiles {
-				latencyHist.WithLabelValues(fmt.Sprintf("P%f", pt)).Observe(perf.LatencyDigest.Quantile(pt))
-				speedHist.WithLabelValues(fmt.Sprintf("P%f", pt)).Observe(perf.SpeedDigest.Quantile(pt))
-			}
-		}
-		peerLatencyDistribution = latencyHist
-		peerSpeedDistribution = speedHist
-
-		added, removed, alreadyRemoved := p.th.AddOrchestratorNodes(newEP)
+		added, alreadyRemoved := p.th.AddOrchestratorNodes(newEP)
 		poolNewMembersMetric.Set(float64(added))
-		poolOrchRemovedMembersMetric.Set(float64(removed))
 		poolMembersNotAddedBecauseRemovedMetric.Set(float64(alreadyRemoved))
+
+		// update the tier set
+		mu, um := p.th.UpdateMainTierWithTopN()
+		poolTierChangMetric.WithLabelValues("main-to-unknown").Set(float64(mu))
+		poolTierChangMetric.WithLabelValues("unknown-to-main").Set(float64(um))
 
 		mt := p.th.GetPoolMetrics()
 		poolSizeMetric.WithLabelValues("unknown").Set(float64(mt.Unknown))
 		poolSizeMetric.WithLabelValues("main").Set(float64(mt.Main))
 
+		// Update aggregate latency & speed distribution for peers
+		latencyHist := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_peer_latency_dist"),
+			Help:    "Fetch latency distribution for peers in millis",
+			Buckets: latencyDistMsHistogram,
+		}, []string{"tier", "percentile"})
+
+		percentiles := []float64{25, 50, 75, 90, 95}
+
+		for _, perf := range p.th.GetPerf() {
+			perf := perf
+			for _, pt := range percentiles {
+				latencyHist.WithLabelValues(perf.Tier, fmt.Sprintf("P%f", pt)).Observe(perf.LatencyDigest.Reduce(rolling.Percentile(pt)))
+			}
+		}
+		peerLatencyDistribution = latencyHist
 	} else {
 		poolRefreshErrorMetric.Add(1)
 	}
@@ -370,7 +368,22 @@ func (p *pool) commonUpdate(node string, rm tieredhashing.ResponseMetrics, err e
 
 	ferr = err
 	if err == nil && rm.Success {
-		p.th.RecordSuccess(node, rm)
+		sr := p.th.RecordSuccess(node, rm)
+		if sr != nil {
+			poolRemovedFailureTotalMetric.WithLabelValues(sr.Tier, sr.Reason).Inc()
+
+			if sr.MainToUnknownChange != 0 || sr.UnknownToMainChange != 0 {
+				poolTierChangMetric.WithLabelValues("main-to-unknown").Set(float64(sr.MainToUnknownChange))
+				poolTierChangMetric.WithLabelValues("unknown-to-main").Set(float64(sr.UnknownToMainChange))
+			}
+		}
+
+		if p.th.IsInitDone() {
+			p.poolInitDone.Do(func() {
+				poolEnoughObservationsForMainSetDurationMetric.Set(float64(time.Since(p.th.StartAt).Milliseconds()))
+			})
+		}
+
 		// Saturn fetch worked, we return the block.
 		return
 	}
@@ -381,6 +394,11 @@ func (p *pool) commonUpdate(node string, rm tieredhashing.ResponseMetrics, err e
 		poolRemovedConnFailureTotalMetric.WithLabelValues(fr.Tier).Add(float64(fr.ConnErrors))
 		poolRemovedReadFailureTotalMetric.WithLabelValues(fr.Tier).Add(float64(fr.NetworkErrors))
 		poolRemovedNon2xxTotalMetric.WithLabelValues(fr.Tier).Add(float64(fr.ResponseCodes))
+
+		if fr.MainToUnknownChange != 0 || fr.UnknownToMainChange != 0 {
+			poolTierChangMetric.WithLabelValues("main-to-unknown").Set(float64(fr.MainToUnknownChange))
+			poolTierChangMetric.WithLabelValues("unknown-to-main").Set(float64(fr.UnknownToMainChange))
+		}
 	}
 
 	if p.th.DoRefresh() {
