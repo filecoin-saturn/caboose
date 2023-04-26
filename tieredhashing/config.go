@@ -3,11 +3,13 @@ package tieredhashing
 import "time"
 
 type TieredHashingConfig struct {
-	MaxPoolSize     int
-	AlwaysMainFirst bool
-	FailureDebounce time.Duration
-	WindowSize      int
-	MaxMainTierSize int
+	MaxPoolSize           int
+	AlwaysMainFirst       bool
+	FailureDebounce       time.Duration
+	LatencyWindowSize     int
+	CorrectnessWindowSize int
+	CorrectnessPct        float64
+	MaxMainTierSize       int
 }
 
 type Option func(config *TieredHashingConfig)
@@ -24,9 +26,21 @@ func WithMaxMainTierSize(n int) Option {
 	}
 }
 
-func WithWindowSize(n int) Option {
+func WithCorrectnessPct(pct float64) Option {
 	return func(c *TieredHashingConfig) {
-		c.WindowSize = n
+		c.CorrectnessPct = pct
+	}
+}
+
+func WithCorrectnessWindowSize(n int) Option {
+	return func(c *TieredHashingConfig) {
+		c.CorrectnessWindowSize = n
+	}
+}
+
+func WithLatencyWindowSize(n int) Option {
+	return func(c *TieredHashingConfig) {
+		c.LatencyWindowSize = n
 	}
 }
 

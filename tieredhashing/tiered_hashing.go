@@ -5,6 +5,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
+	golog "github.com/ipfs/go-log/v2"
+
 	"github.com/asecurityteam/rolling"
 
 	"github.com/patrickmn/go-cache"
@@ -16,7 +20,7 @@ import (
 const (
 	maxPoolSize     = 50
 	maxMainTierSize = 10
-	PLatency        = 95
+	PLatency        = 90
 
 	// main tier has the top `maxMainTierSize` nodes
 	tierMain    = "main"
@@ -25,18 +29,23 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	windowSize = 50
+	latencyWindowSize     = 50
+	correctnessWindowSize = 100
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
-	minAcceptableCorrectnessPct = float64(80)
+	minAcceptableCorrectnessPct = float64(75)
 
 	// helps shield nodes against bursty failures
 	failureDebounce = 2 * time.Second
 	removalDuration = 24 * time.Hour
 
 	maxDebounceLatency = 500
+
+	trackLifecycleLatency = 30
 )
+
+var goLogger = golog.Logger("caboose-hashing")
 
 type NodePerf struct {
 	LatencyDigest  *rolling.PointPolicy
@@ -76,10 +85,12 @@ type TieredHashing struct {
 
 func New(opts ...Option) *TieredHashing {
 	cfg := &TieredHashingConfig{
-		MaxPoolSize:     maxPoolSize,
-		FailureDebounce: failureDebounce,
-		WindowSize:      windowSize,
-		MaxMainTierSize: maxMainTierSize,
+		MaxPoolSize:           maxPoolSize,
+		FailureDebounce:       failureDebounce,
+		LatencyWindowSize:     latencyWindowSize,
+		CorrectnessWindowSize: correctnessWindowSize,
+		CorrectnessPct:        minAcceptableCorrectnessPct,
+		MaxMainTierSize:       maxMainTierSize,
 	}
 	for _, opt := range opts {
 		opt(cfg)
@@ -141,7 +152,7 @@ func (t *TieredHashing) DoRefresh() bool {
 	return t.GetPoolMetrics().Total <= (t.cfg.MaxPoolSize / 10)
 }
 
-func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *RemovedNode {
+func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics, pn *prometheus.GaugeVec) *RemovedNode {
 	if _, ok := t.nodes[node]; !ok {
 		return nil
 	}
@@ -169,7 +180,7 @@ func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *RemovedN
 	}
 
 	if _, ok := t.isCorrectnessPolicyEligible(perf); !ok {
-		mc, uc := t.removeFailedNode(node)
+		mc, uc := t.removeFailedNode(node, pn)
 		return &RemovedNode{
 			Node:                node,
 			Tier:                perf.Tier,
@@ -282,8 +293,8 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 
 		added++
 		t.nodes[node] = &NodePerf{
-			LatencyDigest:     rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.WindowSize))),
-			CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.WindowSize))),
+			LatencyDigest:     rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.LatencyWindowSize))),
+			CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.CorrectnessWindowSize))),
 			Tier:              tierUnknown,
 		}
 		t.unknownSet = t.unknownSet.AddNode(node)
@@ -292,9 +303,18 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 	return
 }
 
-func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
+func (t *TieredHashing) UpdateMainTierWithTopN(tn *prometheus.GaugeVec) (mainToUnknown, unknownToMain int) {
 	// sort all nodes by P95 and pick the top N as main tier nodes
-	nodes := t.nodesSortedLatency()
+	nodes, ntl := t.nodesSortedLatency()
+	if len(ntl) > 0 {
+		if tn != nil {
+			for _, n := range ntl {
+				tn.WithLabelValues(n.node).Set(n.nObservations)
+			}
+		}
+	}
+
+	// record node latency size distribution
 
 	if !t.initDone {
 		if len(nodes) < t.cfg.MaxMainTierSize {
@@ -334,10 +354,10 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 
 func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) (float64, bool) {
 	// we don't have enough observations yet
-	if perf.nCorrectnessDigest < float64(t.cfg.WindowSize) {
+	if perf.nCorrectnessDigest < float64(t.cfg.CorrectnessWindowSize) {
 		return 0, true
 	} else {
-		perf.nCorrectnessDigest = float64(t.cfg.WindowSize)
+		perf.nCorrectnessDigest = float64(t.cfg.CorrectnessWindowSize)
 	}
 
 	totalSuccess := perf.CorrectnessDigest.Reduce(func(w rolling.Window) float64 {
@@ -355,10 +375,10 @@ func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) (float64, bo
 	// should satisfy a certain minimum percentage
 	pct := totalSuccess / perf.nCorrectnessDigest * 100
 
-	return pct, pct >= minAcceptableCorrectnessPct
+	return pct, pct >= t.cfg.CorrectnessPct
 }
 
-func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
+func (t *TieredHashing) removeFailedNode(node string, poolTrackedNodesMetric *prometheus.GaugeVec) (mc, uc int) {
 	perf := t.nodes[node]
 	t.mainSet = t.mainSet.RemoveNode(node)
 	t.unknownSet = t.unknownSet.RemoveNode(node)
@@ -367,7 +387,7 @@ func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
 
 	if perf.Tier == tierMain {
 		// if we've removed a main set node we should replace it
-		mc, uc = t.UpdateMainTierWithTopN()
+		mc, uc = t.UpdateMainTierWithTopN(poolTrackedNodesMetric)
 	}
 	return
 }
@@ -379,7 +399,7 @@ func (t *TieredHashing) recordCorrectness(perf *NodePerf, success bool) {
 		perf.CorrectnessDigest.Append(0)
 	}
 	perf.nCorrectnessDigest++
-	if perf.nCorrectnessDigest > float64(t.cfg.WindowSize) {
-		perf.nCorrectnessDigest = float64(t.cfg.WindowSize)
+	if perf.nCorrectnessDigest > float64(t.cfg.CorrectnessWindowSize) {
+		perf.nCorrectnessDigest = float64(t.cfg.CorrectnessWindowSize)
 	}
 }

@@ -47,4 +47,8 @@ var (
 	poolTierChangMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_tier_change"),
 	}, []string{"change"})
+
+	poolTrackedNodesMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_tracked_nodes"),
+	}, []string{"node"})
 )
