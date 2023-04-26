@@ -11,13 +11,9 @@ import (
 	"strconv"
 	"time"
 
-
 	"github.com/filecoin-saturn/caboose/tieredhashing"
-
-	"github.com/influxdata/tdigest"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-
 
 	"github.com/google/uuid"
 	blocks "github.com/ipfs/go-block-format"
