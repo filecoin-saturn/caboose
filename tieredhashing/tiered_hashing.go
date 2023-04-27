@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	golog "github.com/ipfs/go-log/v2"
 
 	"github.com/asecurityteam/rolling"
@@ -41,8 +39,6 @@ const (
 	removalDuration = 24 * time.Hour
 
 	maxDebounceLatency = 500
-
-	trackLifecycleLatency = 30
 )
 
 var goLogger = golog.Logger("caboose-hashing")
@@ -118,11 +114,6 @@ func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) *RemovedN
 	perf := t.nodes[node]
 	t.recordCorrectness(perf, true)
 
-	// we only consider cache hit latencies for now
-	if !rm.CacheHit {
-		return nil
-	}
-
 	// show some lineancy if the node is having a bad time
 	if rm.TTFBMs > maxDebounceLatency && time.Since(perf.lastBadLatencyAt) < t.cfg.FailureDebounce {
 		return nil
@@ -146,13 +137,14 @@ type RemovedNode struct {
 	ResponseCodes       int
 	MainToUnknownChange int
 	UnknownToMainChange int
+	ResponseCodesMap    map[int]int
 }
 
 func (t *TieredHashing) DoRefresh() bool {
 	return t.GetPoolMetrics().Total <= (t.cfg.MaxPoolSize / 10)
 }
 
-func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics, pn *prometheus.GaugeVec) *RemovedNode {
+func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *RemovedNode {
 	if _, ok := t.nodes[node]; !ok {
 		return nil
 	}
@@ -180,7 +172,7 @@ func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics, pn *prome
 	}
 
 	if _, ok := t.isCorrectnessPolicyEligible(perf); !ok {
-		mc, uc := t.removeFailedNode(node, pn)
+		mc, uc := t.removeFailedNode(node)
 		return &RemovedNode{
 			Node:                node,
 			Tier:                perf.Tier,
@@ -303,16 +295,9 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 	return
 }
 
-func (t *TieredHashing) UpdateMainTierWithTopN(tn *prometheus.GaugeVec) (mainToUnknown, unknownToMain int) {
+func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
 	// sort all nodes by P95 and pick the top N as main tier nodes
-	nodes, ntl := t.nodesSortedLatency()
-	if len(ntl) > 0 {
-		if tn != nil {
-			for _, n := range ntl {
-				tn.WithLabelValues(n.node).Set(n.nObservations)
-			}
-		}
-	}
+	nodes := t.nodesSortedLatency()
 
 	// record node latency size distribution
 
@@ -378,7 +363,7 @@ func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) (float64, bo
 	return pct, pct >= t.cfg.CorrectnessPct
 }
 
-func (t *TieredHashing) removeFailedNode(node string, poolTrackedNodesMetric *prometheus.GaugeVec) (mc, uc int) {
+func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
 	perf := t.nodes[node]
 	t.mainSet = t.mainSet.RemoveNode(node)
 	t.unknownSet = t.unknownSet.RemoveNode(node)
@@ -387,7 +372,7 @@ func (t *TieredHashing) removeFailedNode(node string, poolTrackedNodesMetric *pr
 
 	if perf.Tier == tierMain {
 		// if we've removed a main set node we should replace it
-		mc, uc = t.UpdateMainTierWithTopN(poolTrackedNodesMetric)
+		mc, uc = t.UpdateMainTierWithTopN()
 	}
 	return
 }
