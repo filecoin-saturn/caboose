@@ -5,8 +5,7 @@ type ResponseMetrics struct {
 	NetworkError bool
 	ResponseCode int
 
-	Success  bool
-	CacheHit bool
+	Success bool
 
 	TTFBMs     float64
 	SpeedPerMs float64

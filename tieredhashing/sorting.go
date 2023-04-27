@@ -6,20 +6,11 @@ import (
 	"github.com/asecurityteam/rolling"
 )
 
-func (t *TieredHashing) nodesSortedLatency() ([]nodeWithLatency, []nodeWithTrackedLatency) {
+func (t *TieredHashing) nodesSortedLatency() []nodeWithLatency {
 	var nodes []nodeWithLatency
-
-	var nodesWithTrackedLatency []nodeWithTrackedLatency
 
 	for n, perf := range t.nodes {
 		perf := perf
-
-		if (perf.LatencyDigest.Reduce(rolling.Percentile(PLatency))) <= trackLifecycleLatency {
-			nodesWithTrackedLatency = append(nodesWithTrackedLatency, nodeWithTrackedLatency{
-				node:          n,
-				nObservations: perf.nLatencyDigest,
-			})
-		}
 
 		if t.isLatencyWindowFull(perf) {
 			nodes = append(nodes, nodeWithLatency{
@@ -30,12 +21,7 @@ func (t *TieredHashing) nodesSortedLatency() ([]nodeWithLatency, []nodeWithTrack
 	}
 
 	sort.Sort(sortedNodes(nodes))
-	return nodes, nodesWithTrackedLatency
-}
-
-type nodeWithTrackedLatency struct {
-	node          string
-	nObservations float64
+	return nodes
 }
 
 type nodeWithLatency struct {

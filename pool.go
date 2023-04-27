@@ -94,7 +94,7 @@ func (p *pool) doRefresh() {
 		poolMembersNotAddedBecauseRemovedMetric.Set(float64(alreadyRemoved))
 
 		// update the tier set
-		mu, um := p.th.UpdateMainTierWithTopN(poolTrackedNodesMetric)
+		mu, um := p.th.UpdateMainTierWithTopN()
 		poolTierChangMetric.WithLabelValues("main-to-unknown").Set(float64(mu))
 		poolTierChangMetric.WithLabelValues("unknown-to-main").Set(float64(um))
 
@@ -388,7 +388,7 @@ func (p *pool) commonUpdate(node string, rm tieredhashing.ResponseMetrics, err e
 		return
 	}
 
-	fr := p.th.RecordFailure(node, rm, poolTrackedNodesMetric)
+	fr := p.th.RecordFailure(node, rm)
 	if fr != nil {
 		poolRemovedFailureTotalMetric.WithLabelValues(fr.Tier, fr.Reason).Inc()
 		poolRemovedConnFailureTotalMetric.WithLabelValues(fr.Tier).Add(float64(fr.ConnErrors))

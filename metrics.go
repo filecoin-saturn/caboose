@@ -235,7 +235,6 @@ func init() {
 	CabooseMetrics.MustRegister(poolMembersNotAddedBecauseRemovedMetric)
 	CabooseMetrics.MustRegister(poolEnoughObservationsForMainSetDurationMetric)
 	CabooseMetrics.MustRegister(poolTierChangMetric)
-	CabooseMetrics.MustRegister(poolTrackedNodesMetric)
 
 	CabooseMetrics.MustRegister(fetchResponseCodeMetric)
 	CabooseMetrics.MustRegister(fetchSpeedPerPeerSuccessMetric)

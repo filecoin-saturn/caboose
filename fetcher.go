@@ -343,7 +343,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	rm.TTFBMs = float64(wrapped.firstByte.Sub(start).Milliseconds())
 	rm.Success = true
-	rm.CacheHit = isCacheHit
 	rm.SpeedPerMs = float64(received) / float64(response_success_end.Sub(start).Milliseconds())
 	saturnCallsSuccessTotalMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit)).Add(1)
 
