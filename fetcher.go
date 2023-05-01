@@ -192,7 +192,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				// my address
 				Range:          "",
 				Referrer:       respReq.Referer(),
-				UserAgent:      "bifrost-" + os.Getenv(EnvironmentKey),
+				UserAgent:      "bifrost-" + os.Getenv(EnvironmentKey) + respReq.UserAgent(),
 				NodeId:         saturnNodeId,
 				NodeIpAddress:  from,
 				IfNetworkError: networkError,

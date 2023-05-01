@@ -2,6 +2,7 @@ package caboose
 
 import (
 	"testing"
+	"time"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -70,6 +71,8 @@ func andAndAssertPool(t *testing.T, p *pool, nodes []string, expectedMain, expec
 	// compare metrics
 	mains := poolSizeMetric.WithLabelValues("main")
 	unknowns := poolSizeMetric.WithLabelValues("unknown")
+
+	time.Sleep(50 * time.Millisecond)
 
 	require.EqualValues(t, expectedMain, testutil.ToFloat64(mains))
 	require.EqualValues(t, expectedUnknown, testutil.ToFloat64(unknowns))

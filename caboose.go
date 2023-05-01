@@ -239,6 +239,11 @@ func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
 	return blk != nil, nil
 }
 
+// for testing only
+func (c *Caboose) GetPoolPerf() map[string]*tieredhashing.NodePerf {
+	return c.pool.th.GetPerf()
+}
+
 func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
 	ctx, span := spanTrace(ctx, "Get", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()

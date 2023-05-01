@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	golog "github.com/ipfs/go-log/v2"
-
 	"github.com/asecurityteam/rolling"
 
 	"github.com/patrickmn/go-cache"
@@ -41,14 +39,12 @@ const (
 	maxDebounceLatency = 500
 )
 
-var goLogger = golog.Logger("caboose-hashing")
-
 type NodePerf struct {
 	LatencyDigest  *rolling.PointPolicy
 	NLatencyDigest float64
 
 	CorrectnessDigest  *rolling.PointPolicy
-	nCorrectnessDigest float64
+	NCorrectnessDigest float64
 
 	Tier string
 
@@ -337,10 +333,10 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 
 func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) (float64, bool) {
 	// we don't have enough observations yet
-	if perf.nCorrectnessDigest < float64(t.cfg.CorrectnessWindowSize) {
+	if perf.NCorrectnessDigest < float64(t.cfg.CorrectnessWindowSize) {
 		return 0, true
 	} else {
-		perf.nCorrectnessDigest = float64(t.cfg.CorrectnessWindowSize)
+		perf.NCorrectnessDigest = float64(t.cfg.CorrectnessWindowSize)
 	}
 
 	totalSuccess := perf.CorrectnessDigest.Reduce(func(w rolling.Window) float64 {
@@ -356,7 +352,7 @@ func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) (float64, bo
 	})
 
 	// should satisfy a certain minimum percentage
-	pct := totalSuccess / perf.nCorrectnessDigest * 100
+	pct := totalSuccess / perf.NCorrectnessDigest * 100
 
 	return pct, pct >= t.cfg.CorrectnessPct
 }
@@ -381,8 +377,8 @@ func (t *TieredHashing) recordCorrectness(perf *NodePerf, success bool) {
 	} else {
 		perf.CorrectnessDigest.Append(0)
 	}
-	perf.nCorrectnessDigest++
-	if perf.nCorrectnessDigest > float64(t.cfg.CorrectnessWindowSize) {
-		perf.nCorrectnessDigest = float64(t.cfg.CorrectnessWindowSize)
+	perf.NCorrectnessDigest++
+	if perf.NCorrectnessDigest > float64(t.cfg.CorrectnessWindowSize) {
+		perf.NCorrectnessDigest = float64(t.cfg.CorrectnessWindowSize)
 	}
 }

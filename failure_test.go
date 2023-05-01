@@ -188,6 +188,7 @@ func (e *ep) Setup() {
 	e.valid = true
 	e.resp = testBlock
 	e.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(time.Millisecond * 20)
 		e.cnt++
 		if e.valid {
 			w.Write(e.resp)

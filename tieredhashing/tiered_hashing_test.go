@@ -221,19 +221,19 @@ func TestRecordCorrectness(t *testing.T) {
 		CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(window))),
 	}
 	th.h.recordCorrectness(perf, true)
-	require.EqualValues(t, 1, perf.nCorrectnessDigest)
+	require.EqualValues(t, 1, perf.NCorrectnessDigest)
 	require.EqualValues(t, 1, perf.CorrectnessDigest.Reduce(rolling.Sum))
 
 	th.h.recordCorrectness(perf, true)
 	require.EqualValues(t, 2, perf.CorrectnessDigest.Reduce(rolling.Sum))
-	require.EqualValues(t, 2, perf.nCorrectnessDigest)
+	require.EqualValues(t, 2, perf.NCorrectnessDigest)
 
 	th.h.recordCorrectness(perf, false)
-	require.EqualValues(t, 3, perf.nCorrectnessDigest)
+	require.EqualValues(t, 3, perf.NCorrectnessDigest)
 	require.EqualValues(t, 2, perf.CorrectnessDigest.Reduce(rolling.Sum))
 
 	th.h.recordCorrectness(perf, false)
-	require.EqualValues(t, 3, perf.nCorrectnessDigest)
+	require.EqualValues(t, 3, perf.NCorrectnessDigest)
 	require.EqualValues(t, 1, perf.CorrectnessDigest.Reduce(rolling.Sum))
 }
 
@@ -319,7 +319,7 @@ func TestIsCorrectnessPolicyEligible(t *testing.T) {
 			initF: func(perf *NodePerf) {
 				for i := 0; i < window-1; i++ {
 					perf.CorrectnessDigest.Append(0)
-					perf.nCorrectnessDigest++
+					perf.NCorrectnessDigest++
 				}
 			},
 			perf: &NodePerf{
@@ -330,13 +330,13 @@ func TestIsCorrectnessPolicyEligible(t *testing.T) {
 		"some success but fail as enough observations": {
 			initF: func(perf *NodePerf) {
 				perf.CorrectnessDigest.Append(1)
-				perf.nCorrectnessDigest++
+				perf.NCorrectnessDigest++
 				perf.CorrectnessDigest.Append(1)
-				perf.nCorrectnessDigest++
+				perf.NCorrectnessDigest++
 
 				for i := 0; i < int(window)-2; i++ {
 					perf.CorrectnessDigest.Append(0)
-					perf.nCorrectnessDigest++
+					perf.NCorrectnessDigest++
 				}
 
 			},
@@ -350,7 +350,7 @@ func TestIsCorrectnessPolicyEligible(t *testing.T) {
 			initF: func(perf *NodePerf) {
 				for i := 0; i < int(window)-1; i++ {
 					perf.CorrectnessDigest.Append(1)
-					perf.nCorrectnessDigest++
+					perf.NCorrectnessDigest++
 				}
 
 			},
@@ -365,13 +365,13 @@ func TestIsCorrectnessPolicyEligible(t *testing.T) {
 				// add window success
 				for i := 0; i < int(window); i++ {
 					perf.CorrectnessDigest.Append(1)
-					perf.nCorrectnessDigest++
+					perf.NCorrectnessDigest++
 				}
 
 				// add 2 failures
 				for i := 0; i < 2; i++ {
 					perf.CorrectnessDigest.Append(0)
-					perf.nCorrectnessDigest++
+					perf.NCorrectnessDigest++
 				}
 
 			},

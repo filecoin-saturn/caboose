@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/filecoin-saturn/caboose"
+	"github.com/filecoin-saturn/caboose/tieredhashing"
 	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
 	"github.com/ipld/go-ipld-prime/linking"
@@ -57,6 +58,75 @@ func TestCidCoolDown(t *testing.T) {
 		_, err := ch.c.Get(ctx, testCid)
 		return err == nil
 	}, 10*time.Second, 500*time.Millisecond)
+}
+
+func TestFetchBlock(t *testing.T) {
+	ctx := context.Background()
+	h := BuildCabooseHarness(t, 3, 3, WithTieredHashingOpts(
+		[]tieredhashing.Option{tieredhashing.WithMaxMainTierSize(1), tieredhashing.WithCorrectnessWindowSize(2),
+			tieredhashing.WithLatencyWindowSize(2)}))
+
+	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
+
+	h.fetchAndAssertSuccess(t, ctx, testCid)
+
+	// ensure we have a success recording
+	h.assertPoolSize(t, 0, 3, 3)
+	h.assertCorrectnessCount(t, 1)
+	h.assertLatencyCount(t, 1)
+
+	h.fetchAndAssertSuccess(t, ctx, testCid)
+	h.assertCorrectnessCount(t, 2)
+	h.assertLatencyCount(t, 2)
+
+	// all nodes fail
+	h.failNodesWithCode(t, func(e *ep) bool {
+		return true
+	}, http.StatusNotAcceptable)
+
+	// one node gets evicted as correctness window is full
+	h.fetchAndAssertFailure(t, ctx, testCid, "406")
+	h.assertPoolSize(t, 0, 2, 2)
+}
+
+func (h *CabooseHarness) assertLatencyCount(t *testing.T, expected int) {
+	nds := h.c.GetPoolPerf()
+	count := 0
+
+	for _, perf := range nds {
+		count += int(perf.NLatencyDigest)
+	}
+	require.EqualValues(t, expected, count)
+}
+
+func (h *CabooseHarness) assertCorrectnessCount(t *testing.T, expected int) {
+	nds := h.c.GetPoolPerf()
+	count := 0
+
+	for _, perf := range nds {
+		count += int(perf.NCorrectnessDigest)
+	}
+	require.EqualValues(t, expected, count)
+}
+
+func (h *CabooseHarness) assertPoolSize(t *testing.T, mainS, unknownS, totalS int) {
+	nds := h.c.GetPoolPerf()
+	require.Equal(t, totalS, len(nds))
+
+	var eMain int
+	var eUnknown int
+
+	for _, perf := range nds {
+		if perf.Tier == "main" {
+			eMain++
+		}
+		if perf.Tier == "unknown" {
+			eUnknown++
+		}
+	}
+
+	require.EqualValues(t, eMain, mainS)
+	require.EqualValues(t, eUnknown, unknownS)
 }
 
 func TestResource(t *testing.T) {
@@ -121,6 +191,12 @@ func TestResource(t *testing.T) {
 }
 
 type HarnessOption func(config *caboose.Config)
+
+func WithTieredHashingOpts(opts []tieredhashing.Option) func(config *caboose.Config) {
+	return func(config *caboose.Config) {
+		config.TieredHashingOpts = opts
+	}
+}
 
 func WithMaxFailuresBeforeCoolDown(max int) func(config *caboose.Config) {
 	return func(config *caboose.Config) {
