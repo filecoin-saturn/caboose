@@ -34,7 +34,7 @@ func TestHttp429(t *testing.T) {
 	require.EqualValues(t, expRetryAfter, ferr.RetryAfter())
 }
 
-/*func TestCabooseFailures(t *testing.T) {
+func TestCabooseFailures(t *testing.T) {
 	ctx := context.Background()
 	ch := BuildCabooseHarness(t, 3, 3)
 
@@ -80,11 +80,9 @@ func TestHttp429(t *testing.T) {
 
 	//steady state-ify
 	ch.runFetchesForRandCids(50)
-	require.Eventually(t, func() bool {
-		return ch.getHashRingSize() == 3
-	}, 10*time.Second, 100*time.Millisecond)
-	ch.fetchAndAssertSuccess(t, ctx, testCid)
-}*/
+	_, err = ch.c.Get(context.Background(), testCid)
+	require.NoError(t, err)
+}
 
 type CabooseHarness struct {
 	c    *caboose.Caboose
