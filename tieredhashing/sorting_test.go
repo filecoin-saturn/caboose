@@ -28,7 +28,7 @@ func TestNodesSortedLatency(t *testing.T) {
 
 				for i := 0; i < window-1; i++ {
 					h.nodes["node1"].LatencyDigest.Append(1)
-					h.nodes["node1"].nLatencyDigest++
+					h.nodes["node1"].NLatencyDigest++
 				}
 			},
 		},
@@ -56,7 +56,7 @@ func TestNodesSortedLatency(t *testing.T) {
 
 				for i := 0; i < window; i++ {
 					h.nodes["node1"].LatencyDigest.Append(1)
-					h.nodes["node1"].nLatencyDigest++
+					h.nodes["node1"].NLatencyDigest++
 				}
 			},
 			expected: []nodeWithLatency{{node: "node1", latency: 1}},
@@ -74,10 +74,10 @@ func TestNodesSortedLatency(t *testing.T) {
 
 				for i := 0; i < window; i++ {
 					h.nodes["node1"].LatencyDigest.Append(2)
-					h.nodes["node1"].nLatencyDigest++
+					h.nodes["node1"].NLatencyDigest++
 
 					h.nodes["node2"].LatencyDigest.Append(1)
-					h.nodes["node2"].nLatencyDigest++
+					h.nodes["node2"].NLatencyDigest++
 				}
 			},
 			expected: []nodeWithLatency{{node: "node2", latency: 1}, {node: "node1", latency: 2}},
@@ -100,14 +100,14 @@ func TestNodesSortedLatency(t *testing.T) {
 
 				for i := 0; i < window; i++ {
 					h.nodes["node2"].LatencyDigest.Append(20)
-					h.nodes["node2"].nLatencyDigest++
+					h.nodes["node2"].NLatencyDigest++
 
 					h.nodes["node3"].LatencyDigest.Append(10)
-					h.nodes["node3"].nLatencyDigest++
+					h.nodes["node3"].NLatencyDigest++
 
 					if i != window-1 {
 						h.nodes["node1"].LatencyDigest.Append(3)
-						h.nodes["node1"].nLatencyDigest++
+						h.nodes["node1"].NLatencyDigest++
 					}
 				}
 			},
@@ -122,7 +122,7 @@ func TestNodesSortedLatency(t *testing.T) {
 
 				for i := 0; i < window+10; i++ {
 					h.nodes["node1"].LatencyDigest.Append(float64(i))
-					h.nodes["node1"].nLatencyDigest++
+					h.nodes["node1"].NLatencyDigest++
 				}
 			},
 			expected: []nodeWithLatency{{node: "node1", latency: 12}},
@@ -131,7 +131,7 @@ func TestNodesSortedLatency(t *testing.T) {
 
 	for name, tc := range tcs {
 		t.Run(name, func(t *testing.T) {
-			th := NewTieredHashingHarness(WithWindowSize(window))
+			th := NewTieredHashingHarness(WithLatencyWindowSize(window))
 
 			if tc.initFn != nil {
 				tc.initFn(th.h)

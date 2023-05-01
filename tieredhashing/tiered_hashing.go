@@ -45,7 +45,7 @@ var goLogger = golog.Logger("caboose-hashing")
 
 type NodePerf struct {
 	LatencyDigest  *rolling.PointPolicy
-	nLatencyDigest float64
+	NLatencyDigest float64
 
 	CorrectnessDigest  *rolling.PointPolicy
 	nCorrectnessDigest float64
@@ -107,25 +107,23 @@ func (t *TieredHashing) IsInitDone() bool {
 	return t.initDone
 }
 
-func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) *RemovedNode {
+func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) {
 	if _, ok := t.nodes[node]; !ok {
-		return nil
+		return
 	}
 	perf := t.nodes[node]
 	t.recordCorrectness(perf, true)
 
 	// show some lineancy if the node is having a bad time
 	if rm.TTFBMs > maxDebounceLatency && time.Since(perf.lastBadLatencyAt) < t.cfg.FailureDebounce {
-		return nil
+		return
 	}
 	// record the latency and update the last bad latency record time if needed
 	perf.LatencyDigest.Append(rm.TTFBMs)
-	perf.nLatencyDigest++
+	perf.NLatencyDigest++
 	if rm.TTFBMs > maxDebounceLatency {
 		perf.lastBadLatencyAt = time.Now()
 	}
-
-	return nil
 }
 
 type RemovedNode struct {

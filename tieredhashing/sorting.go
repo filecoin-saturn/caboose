@@ -38,5 +38,5 @@ func (n sortedNodes) Less(i, j int) bool {
 func (n sortedNodes) Swap(i, j int) { n[i], n[j] = n[j], n[i] }
 
 func (t *TieredHashing) isLatencyWindowFull(perf *NodePerf) bool {
-	return perf.nLatencyDigest >= float64(t.cfg.LatencyWindowSize)
+	return perf.NLatencyDigest >= float64(t.cfg.LatencyWindowSize)
 }

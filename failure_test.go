@@ -1,8 +1,24 @@
 package caboose_test
 
-/*func TestHttp429(t *testing.T) {
+import (
+	"context"
+	"errors"
+	"github.com/filecoin-saturn/caboose"
+	"github.com/ipfs/go-cid"
+	"github.com/multiformats/go-multicodec"
+	"github.com/stretchr/testify/require"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+	"time"
+)
+
+var expRetryAfter = 1 * time.Second
+
+func TestHttp429(t *testing.T) {
 	ctx := context.Background()
-	ch := BuildCabooseHarness(t, 3, 3, WithMaxNCoolOff(1), WithPoolMembershipDebounce(100*time.Second))
+	ch := BuildCabooseHarness(t, 3, 3)
 
 	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
 	ch.failNodesWithCode(t, func(e *ep) bool {
@@ -18,65 +34,7 @@ package caboose_test
 	require.EqualValues(t, expRetryAfter, ferr.RetryAfter())
 }
 
-func TestCabooseTransientFailures(t *testing.T) {
-	t.Skip("FIX ME FLAKY")
-	ctx := context.Background()
-	ch := BuildCabooseHarness(t, 3, 3, WithMaxNCoolOff(1), WithPoolMembershipDebounce(100*time.Second))
-
-	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
-
-	// All three nodes should return transient failures -> none get downvoted as they are added to cool off.
-	ch.failNodesWithCode(t, func(e *ep) bool {
-		return true
-	}, http.StatusGatewayTimeout)
-	require.EqualValues(t, 0, ch.nNodesAlive())
-	_, err := ch.c.Get(ctx, testCid)
-	require.Contains(t, err.Error(), "504")
-
-	/*weights := ch.getPoolWeights()
-	require.Len(t, weights, 3)
-	for _, w := range weights {
-		require.EqualValues(t, maxCabooseWeight, w)
-	}
-
-	// only one cool off is allowed -> nodes will get downvoted now
-	_, err = ch.c.Get(ctx, testCid)
-	require.Contains(t, err.Error(), "504")
-	weights = ch.getPoolWeights()
-	require.Len(t, weights, 3)
-	for _, w := range weights {
-		require.EqualValues(t, (maxCabooseWeight*80)/100, w)
-	}
-
-	// downvote nodes to zero -> they get added back with lower weight.
-	nodeWeight := (maxCabooseWeight * 80) / 100
-	i := 0
-	for {
-		randCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte{uint8(i)})
-		i += 1
-		nodeWeight = (nodeWeight * 80) / 100
-		_, err = ch.c.Get(ctx, randCid)
-		require.Contains(t, err.Error(), "504")
-		if nodeWeight == 1 {
-			break
-		}
-	}
-	randCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte{uint8(i)})
-	_, err = ch.c.Get(ctx, randCid)
-	require.Contains(t, err.Error(), "504")
-
-	require.Eventually(t, func() bool {
-		weights = ch.getPoolWeights()
-		for _, w := range weights {
-			if w != (maxCabooseWeight*10)/100 {
-				return false
-			}
-		}
-		return true
-	}, 10*time.Second, 100*time.Millisecond)
-}
-
-func TestCabooseFailures(t *testing.T) {
+/*func TestCabooseFailures(t *testing.T) {
 	ctx := context.Background()
 	ch := BuildCabooseHarness(t, 3, 3)
 
@@ -104,7 +62,6 @@ func TestCabooseFailures(t *testing.T) {
 	})
 	ch.runFetchesForRandCids(50)
 	require.EqualValues(t, 0, ch.nNodesAlive())
-	require.EqualValues(t, 0, ch.getHashRingSize())
 
 	_, err := ch.c.Get(context.Background(), testCid)
 	require.Error(t, err)
@@ -127,7 +84,7 @@ func TestCabooseFailures(t *testing.T) {
 		return ch.getHashRingSize() == 3
 	}, 10*time.Second, 100*time.Millisecond)
 	ch.fetchAndAssertSuccess(t, ctx, testCid)
-}
+}*/
 
 type CabooseHarness struct {
 	c    *caboose.Caboose
@@ -248,4 +205,3 @@ func (e *ep) Setup() {
 		}
 	}))
 }
-*/
