@@ -298,8 +298,24 @@ func TestUpdateMainTierWithTopN(t *testing.T) {
 
 	th.updateTiersAndAsert(t, 1, 1, 2, 3, true, []string{nodes[0], nodes[2]})
 
-	// if some main nodes ge kicked out, they get replaced with other eligible nodes
+	// say have less than N eligible nodes
+	th.h.removeFailedNode(nodes[0])
+	th.h.removeFailedNode(nodes[1])
+	th.h.removeFailedNode(nodes[2])
+	th.updateTiersAndAsert(t, 0, 0, 0, 2, true, nil)
 
+	// update works even with 1 node
+	th.h.RecordSuccess(nodes[3], ResponseMetrics{TTFBMs: 3})
+	th.h.RecordSuccess(nodes[3], ResponseMetrics{TTFBMs: 5})
+	th.updateTiersAndAsert(t, 0, 1, 1, 1, true, []string{nodes[3]})
+
+	th.h.removeFailedNode(nodes[3])
+	th.updateTiersAndAsert(t, 0, 0, 0, 1, true, nil)
+	th.h.RecordSuccess(nodes[4], ResponseMetrics{TTFBMs: 3})
+	th.h.RecordSuccess(nodes[4], ResponseMetrics{TTFBMs: 5})
+	th.updateTiersAndAsert(t, 0, 1, 1, 0, true, []string{nodes[4]})
+	th.h.removeFailedNode(nodes[4])
+	th.updateTiersAndAsert(t, 0, 0, 0, 0, true, nil)
 }
 
 func TestIsCorrectnessPolicyEligible(t *testing.T) {
