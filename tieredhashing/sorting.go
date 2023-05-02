@@ -10,12 +10,12 @@ func (t *TieredHashing) nodesSortedLatency() []nodeWithLatency {
 	var nodes []nodeWithLatency
 
 	for n, perf := range t.nodes {
-		perf := perf
+		pc := perf
 
-		if t.isLatencyWindowFull(perf) {
+		if t.isLatencyWindowFull(pc) {
 			nodes = append(nodes, nodeWithLatency{
 				node:    n,
-				latency: perf.LatencyDigest.Reduce(rolling.Percentile(PLatency)),
+				latency: pc.LatencyDigest.Reduce(rolling.Percentile(PLatency)),
 			})
 		}
 	}
