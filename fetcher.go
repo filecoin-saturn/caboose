@@ -219,6 +219,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	req.Header.Add("Accept", mime)
+
 	if p.config.ExtraHeaders != nil {
 		for k, vs := range *p.config.ExtraHeaders {
 			for _, v := range vs {
@@ -226,6 +227,8 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			}
 		}
 	}
+	agent := req.Header.Get("User-Agent")
+	req.Header.Set("User-Agent", " bifrost-"+os.Getenv(EnvironmentKey)+agent)
 
 	//trace
 	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
