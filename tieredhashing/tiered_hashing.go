@@ -281,21 +281,26 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
 	// sort all nodes by P95 and pick the top N as main tier nodes
 	nodes := t.nodesSortedLatency()
+	if len(nodes) == 0 {
+		return
+	}
 
-	// record node latency size distribution
-
+	// bulk update initially so we don't end up dosing the nodes
 	if !t.initDone {
 		if len(nodes) < t.cfg.MaxMainTierSize {
 			return
 		}
 		t.initDone = true
 	}
+
+	// Main Tier should have MIN(number of eligible nodes, max main tier size) nodes
+	n := t.cfg.MaxMainTierSize
 	if len(nodes) < t.cfg.MaxMainTierSize {
-		return
+		n = len(nodes)
 	}
 
-	mainTier := nodes[:t.cfg.MaxMainTierSize]
-	unknownTier := nodes[t.cfg.MaxMainTierSize:]
+	mainTier := nodes[:n]
+	unknownTier := nodes[n:]
 
 	for _, nodeL := range mainTier {
 		if t.nodes[nodeL.node].Tier == TierUnknown {
