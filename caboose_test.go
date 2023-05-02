@@ -192,7 +192,7 @@ func TestResource(t *testing.T) {
 
 type HarnessOption func(config *caboose.Config)
 
-func WithTieredHashingOpts(opts []tieredhashing.Option) func(config *caboose.Config) {
+func WithTieredHashingOpts(opts []tieredhashing.Option) HarnessOption {
 	return func(config *caboose.Config) {
 		config.TieredHashingOpts = opts
 	}

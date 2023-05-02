@@ -20,9 +20,11 @@ import (
 	"github.com/patrickmn/go-cache"
 )
 
-var (
+const (
 	tierMainToUnknown = "main-to-unknown"
 	tierUnknownToMain = "unknown-to-main"
+	tierMain          = "main"
+	tierUnknown       = "unknown"
 )
 
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
@@ -59,7 +61,7 @@ type pool struct {
 	fetchKeyFailureCache  *cache.Cache // guarded by fetchKeyLk
 	fetchKeyCoolDownCache *cache.Cache // guarded by fetchKeyLk
 
-	lk sync.Mutex
+	lk sync.RWMutex
 	th *tieredhashing.TieredHashing
 
 	poolInitDone sync.Once
@@ -107,12 +109,12 @@ func (p *pool) refreshWithNodes(newEP []string) {
 
 	// update the tier set
 	mu, um := p.th.UpdateMainTierWithTopN()
-	poolTierChangMetric.WithLabelValues(tierMainToUnknown).Set(float64(mu))
-	poolTierChangMetric.WithLabelValues(tierUnknownToMain).Set(float64(um))
+	poolTierChangeMetric.WithLabelValues(tierMainToUnknown).Set(float64(mu))
+	poolTierChangeMetric.WithLabelValues(tierUnknownToMain).Set(float64(um))
 
 	mt := p.th.GetPoolMetrics()
-	poolSizeMetric.WithLabelValues("unknown").Set(float64(mt.Unknown))
-	poolSizeMetric.WithLabelValues("main").Set(float64(mt.Main))
+	poolSizeMetric.WithLabelValues(tierUnknown).Set(float64(mt.Unknown))
+	poolSizeMetric.WithLabelValues(tierMain).Set(float64(mt.Main))
 
 	// Update aggregate latency & speed distribution for peers
 	latencyHist := prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -203,9 +205,9 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 		aff = cidToKey(c)
 	}
 
-	p.lk.Lock()
+	p.lk.RLock()
 	nodes := p.th.GetNodes(aff, p.config.MaxRetrievalAttempts)
-	p.lk.Unlock()
+	p.lk.RUnlock()
 	if len(nodes) < p.config.MaxRetrievalAttempts {
 		return nil, ErrNoBackend
 	}
@@ -290,9 +292,9 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 		aff = path
 	}
 
-	p.lk.Lock()
+	p.lk.RLock()
 	nodes := p.th.GetNodes(aff, p.config.MaxRetrievalAttempts)
-	p.lk.Unlock()
+	p.lk.RUnlock()
 	if len(nodes) == 0 {
 		return ErrNoBackend
 	}
@@ -401,8 +403,8 @@ func (p *pool) commonUpdate(node string, rm tieredhashing.ResponseMetrics, err e
 		poolRemovedNon2xxTotalMetric.WithLabelValues(fr.Tier).Add(float64(fr.ResponseCodes))
 
 		if fr.MainToUnknownChange != 0 || fr.UnknownToMainChange != 0 {
-			poolTierChangMetric.WithLabelValues("main-to-unknown").Set(float64(fr.MainToUnknownChange))
-			poolTierChangMetric.WithLabelValues("unknown-to-main").Set(float64(fr.UnknownToMainChange))
+			poolTierChangeMetric.WithLabelValues(tierMainToUnknown).Set(float64(fr.MainToUnknownChange))
+			poolTierChangeMetric.WithLabelValues(tierUnknownToMain).Set(float64(fr.UnknownToMainChange))
 		}
 	}
 

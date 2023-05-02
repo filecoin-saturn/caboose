@@ -75,7 +75,6 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 }
 
 // TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
-// rm will be nil only for context cancellation errors
 func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (rm tieredhashing.ResponseMetrics, err error) {
 	rm = tieredhashing.ResponseMetrics{}
 	resourceType := resourceTypeCar
@@ -227,7 +226,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			}
 		}
 	}
-	req.Header.Add("User-Agent", "bifrost-"+os.Getenv(EnvironmentKey))
 
 	//trace
 	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
