@@ -23,8 +23,6 @@ import (
 const (
 	tierMainToUnknown = "main-to-unknown"
 	tierUnknownToMain = "unknown-to-main"
-	tierMain          = "main"
-	tierUnknown       = "unknown"
 )
 
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
@@ -113,8 +111,8 @@ func (p *pool) refreshWithNodes(newEP []string) {
 	poolTierChangeMetric.WithLabelValues(tierUnknownToMain).Set(float64(um))
 
 	mt := p.th.GetPoolMetrics()
-	poolSizeMetric.WithLabelValues(tierUnknown).Set(float64(mt.Unknown))
-	poolSizeMetric.WithLabelValues(tierMain).Set(float64(mt.Main))
+	poolSizeMetric.WithLabelValues(string(tieredhashing.TierUnknown)).Set(float64(mt.Unknown))
+	poolSizeMetric.WithLabelValues(string(tieredhashing.TierMain)).Set(float64(mt.Main))
 
 	// Update aggregate latency & speed distribution for peers
 	latencyHist := prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -132,7 +130,7 @@ func (p *pool) refreshWithNodes(newEP []string) {
 		}
 
 		for _, pt := range percentiles {
-			latencyHist.WithLabelValues(perf.Tier, fmt.Sprintf("P%f", pt)).Observe(perf.LatencyDigest.Reduce(rolling.Percentile(pt)))
+			latencyHist.WithLabelValues(string(perf.Tier), fmt.Sprintf("P%f", pt)).Observe(perf.LatencyDigest.Reduce(rolling.Percentile(pt)))
 		}
 	}
 	peerLatencyDistribution = latencyHist
@@ -206,7 +204,12 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 	}
 
 	p.lk.RLock()
-	nodes := p.th.GetNodes(aff, p.config.MaxRetrievalAttempts)
+	nodes := p.th.GetNodes(tieredhashing.TierMain, aff, p.config.MaxRetrievalAttempts)
+	if len(nodes) < p.config.MaxRetrievalAttempts {
+		nodes = append(nodes,
+			p.th.GetNodes(tieredhashing.TierUnknown, aff, p.config.MaxRetrievalAttempts-len(nodes))...,
+		)
+	}
 	p.lk.RUnlock()
 	if len(nodes) < p.config.MaxRetrievalAttempts {
 		return nil, ErrNoBackend
@@ -293,7 +296,12 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 	}
 
 	p.lk.RLock()
-	nodes := p.th.GetNodes(aff, p.config.MaxRetrievalAttempts)
+	nodes := p.th.GetNodes(tieredhashing.TierMain, aff, p.config.MaxRetrievalAttempts)
+	if len(nodes) < p.config.MaxRetrievalAttempts {
+		nodes = append(nodes,
+			p.th.GetNodes(tieredhashing.TierUnknown, aff, p.config.MaxRetrievalAttempts-len(nodes))...,
+		)
+	}
 	p.lk.RUnlock()
 	if len(nodes) == 0 {
 		return ErrNoBackend
@@ -397,10 +405,10 @@ func (p *pool) commonUpdate(node string, rm tieredhashing.ResponseMetrics, err e
 
 	fr := p.th.RecordFailure(node, rm)
 	if fr != nil {
-		poolRemovedFailureTotalMetric.WithLabelValues(fr.Tier, fr.Reason).Inc()
-		poolRemovedConnFailureTotalMetric.WithLabelValues(fr.Tier).Add(float64(fr.ConnErrors))
-		poolRemovedReadFailureTotalMetric.WithLabelValues(fr.Tier).Add(float64(fr.NetworkErrors))
-		poolRemovedNon2xxTotalMetric.WithLabelValues(fr.Tier).Add(float64(fr.ResponseCodes))
+		poolRemovedFailureTotalMetric.WithLabelValues(string(fr.Tier), fr.Reason).Inc()
+		poolRemovedConnFailureTotalMetric.WithLabelValues(string(fr.Tier)).Add(float64(fr.ConnErrors))
+		poolRemovedReadFailureTotalMetric.WithLabelValues(string(fr.Tier)).Add(float64(fr.NetworkErrors))
+		poolRemovedNon2xxTotalMetric.WithLabelValues(string(fr.Tier)).Add(float64(fr.ResponseCodes))
 
 		if fr.MainToUnknownChange != 0 || fr.UnknownToMainChange != 0 {
 			poolTierChangeMetric.WithLabelValues(tierMainToUnknown).Set(float64(fr.MainToUnknownChange))

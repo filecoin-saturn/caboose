@@ -20,7 +20,7 @@ func TestRecordSuccess(t *testing.T) {
 	th.assertSize(t, 0, 1)
 
 	// cache hits
-	th.recordCacheHitAndAssertSet(t, unknownNode, 200, 0, 1, tierUnknown)
+	th.recordCacheHitAndAssertSet(t, unknownNode, 200, 0, 1, string(TierUnknown))
 	require.EqualValues(t, 1, th.h.nodes[unknownNode].NLatencyDigest)
 	require.EqualValues(t, 200, th.h.nodes[unknownNode].LatencyDigest.Reduce(rolling.Sum))
 
@@ -79,7 +79,7 @@ func TestRecordFailure(t *testing.T) {
 	// node is evicted as we have enough observations
 	rm := th.h.RecordFailure(unknownNode, ResponseMetrics{NetworkError: true})
 	require.NotNil(t, rm)
-	require.EqualValues(t, tierUnknown, rm.Tier)
+	require.EqualValues(t, TierUnknown, rm.Tier)
 	require.EqualValues(t, unknownNode, rm.Node)
 
 	// when main node is removed, it is replaced
@@ -111,7 +111,7 @@ func TestNodeEvictionWithWindowing(t *testing.T) {
 
 	th.h.mainSet.AddNode(unknownNode)
 	th.h.unknownSet.RemoveNode(unknownNode)
-	th.h.nodes[unknownNode].Tier = tierMain
+	th.h.nodes[unknownNode].Tier = TierMain
 
 	// record success
 	th.h.RecordSuccess(unknownNode, ResponseMetrics{})
@@ -122,7 +122,7 @@ func TestNodeEvictionWithWindowing(t *testing.T) {
 	// evicted as pct < 80 because of windowing
 	rm := th.h.RecordFailure(unknownNode, ResponseMetrics{NetworkError: true})
 	require.NotNil(t, rm)
-	require.EqualValues(t, tierMain, rm.Tier)
+	require.EqualValues(t, TierMain, rm.Tier)
 	require.EqualValues(t, unknownNode, rm.Node)
 }
 
@@ -133,7 +133,7 @@ func TestGetNodes(t *testing.T) {
 		var countMain int
 		var countUnknown int
 		for _, n := range resp {
-			if th.h.nodes[n].Tier == tierMain {
+			if th.h.nodes[n].Tier == TierMain {
 				countMain++
 			} else {
 				countUnknown++
@@ -144,60 +144,63 @@ func TestGetNodes(t *testing.T) {
 	}
 
 	// empty
-	nds := th.h.GetNodes("test", 1)
+	nds := th.h.GetNodes(TierMain, "test", 1)
 	require.Empty(t, nds)
 
 	// has 3 unknown, 0 main
 	unknownNodes := th.genAndAddAll(t, 3)
 	th.assertSize(t, 0, 3)
-	resp := th.h.GetNodes("test", 100)
+	resp := th.h.GetNodes(TierUnknown, "test", 100)
 	require.Len(t, resp, 3)
 	assertCountF(t, resp, 0, 3)
 
 	// has 2 main, 3 unknown
 	mainNodes := th.genAndAddAll(t, 2)
 	for _, n := range mainNodes {
-		th.h.nodes[n].Tier = tierMain
+		th.h.nodes[n].Tier = TierMain
 		th.h.mainSet = th.h.mainSet.AddNode(n)
 		th.h.unknownSet = th.h.unknownSet.RemoveNode(n)
 	}
 
 	th.assertSize(t, 2, 3)
-	resp = th.h.GetNodes("test", 100)
-	require.Len(t, resp, 5)
-	assertCountF(t, resp, 2, 3)
+	resp = th.h.GetNodes(TierMain, "test", 100)
+	require.Len(t, resp, 2)
+	assertCountF(t, resp, 2, 0)
 
-	assertGetAndCountF := func(t *testing.T, mainS int, unknownS int, n int, len int, mc, uc int) {
+	assertGetAndCountF := func(t *testing.T, mainS int, unknownS int, n int, mc, uc int) {
 		th.assertSize(t, mainS, unknownS)
-		resp = th.h.GetNodes("test", n)
-		require.Len(t, resp, len)
-		assertCountF(t, resp, mc, uc)
+		resp = th.h.GetNodes(TierMain, "test", n)
+		require.Len(t, resp, mc)
+		assertCountF(t, resp, mc, 0)
+		resp = th.h.GetNodes(TierUnknown, "test", n)
+		require.Len(t, resp, uc)
+		assertCountF(t, resp, 0, uc)
 	}
 
 	// has both main
-	assertGetAndCountF(t, 2, 3, 2, 2, 2, 0)
+	assertGetAndCountF(t, 2, 3, 2, 2, 2)
 
 	th.h.removeFailedNode(mainNodes[0])
-	assertGetAndCountF(t, 1, 3, 10, 4, 1, 3)
+	assertGetAndCountF(t, 1, 3, 10, 1, 3)
 
 	// has 1 main, 1 unknown
-	assertGetAndCountF(t, 1, 3, 2, 2, 1, 1)
+	assertGetAndCountF(t, 1, 3, 2, 1, 2)
 
 	// has 1 main, 0 unknown
-	assertGetAndCountF(t, 1, 3, 1, 1, 1, 0)
+	assertGetAndCountF(t, 1, 3, 1, 1, 1)
 
 	// has 1 main, 2 unknown
 	th.h.removeFailedNode(unknownNodes[0])
-	assertGetAndCountF(t, 1, 2, 10, 3, 1, 2)
+	assertGetAndCountF(t, 1, 2, 10, 1, 2)
 
 	// has 0 main, 1 unknown
 	th.h.removeFailedNode(mainNodes[1])
-	assertGetAndCountF(t, 0, 2, 1, 1, 0, 1)
+	assertGetAndCountF(t, 0, 2, 1, 0, 1)
 
 	// has 0 main, 0 unknown
 	th.h.removeFailedNode(unknownNodes[1])
 	th.h.removeFailedNode(unknownNodes[2])
-	assertGetAndCountF(t, 0, 0, 1, 0, 0, 0)
+	assertGetAndCountF(t, 0, 0, 1, 0, 0)
 }
 
 func TestConsistentHashing(t *testing.T) {
@@ -205,13 +208,11 @@ func TestConsistentHashing(t *testing.T) {
 
 	th.genAndAddAll(t, 10)
 	th.assertSize(t, 0, 10)
-	resp1 := th.h.GetNodes("test", 3)
+	resp1 := th.h.GetNodes(TierUnknown, "test", 3)
 	require.Len(t, resp1, 3)
 
-	resp2 := th.h.GetNodes("test", 2)
-	require.Len(t, resp2, 2)
-
-	require.EqualValues(t, resp1[:2], resp2[:2])
+	resp2 := th.h.GetNodes(TierMain, "test", 2)
+	require.Len(t, resp2, 0)
 }
 
 func TestRecordCorrectness(t *testing.T) {
@@ -247,7 +248,7 @@ func (th *TieredHashingHarness) updateTiersAndAsert(t *testing.T, mcs, ucs, main
 	var mnodes []string
 	for n, perf := range th.h.nodes {
 		perf := perf
-		if perf.Tier == tierMain {
+		if perf.Tier == TierMain {
 			mnodes = append(mnodes, n)
 		}
 	}
