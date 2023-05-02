@@ -11,7 +11,6 @@ var (
 	distLk sync.Mutex
 
 	peerLatencyDistribution prometheus.Collector // guarded by pool.lock
-	peerSpeedDistribution   prometheus.Collector // guarded by pool.lock
 )
 
 type m_collector struct {
@@ -60,34 +59,6 @@ var (
 	// buckets to measure latency between a caboose peer a Saturn L1,
 	// [50ms, 75ms, 100ms, ...,  500 ms]
 	latencyDistMsHistogram = prometheus.LinearBuckets(25, 25, 20)
-)
-
-// pool metrics
-var (
-	poolErrorMetric = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_errors"),
-		Help: "Number of errors refreshing the caboose pool",
-	})
-
-	// The below metrics are only updated periodically on every Caboose pool refresh
-	poolSizeMetric = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_size"),
-		Help: "Number of active caboose peers",
-	})
-
-	poolHealthMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_health"),
-		Help: "Health of the caboose pool",
-	}, []string{"weight"})
-
-	poolNewMembersMetric = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_new_members"),
-		Help: "New members added to the Caboose pool",
-	}, []string{"weight"})
-
-	poolWeightBumpMetric = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_weight_bump"),
-	})
 )
 
 var (
@@ -236,13 +207,34 @@ var (
 	}, []string{"resourceType", "cache_status", "lifecycleStage"})
 )
 
+var (
+	saturnCallsTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_total"),
+	}, []string{"resourceType"})
+
+	saturnCallsSuccessTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_success_total"),
+	}, []string{"resourceType", "cache_status"})
+
+	saturnCallsFailureTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_failure_total"),
+	}, []string{"resourceType", "reason", "code"})
+)
+
 var CabooseMetrics = prometheus.NewRegistry()
 
 func init() {
-	CabooseMetrics.MustRegister(poolErrorMetric)
+	// POOL Metrics
+	CabooseMetrics.MustRegister(poolRefreshErrorMetric)
 	CabooseMetrics.MustRegister(poolSizeMetric)
-	CabooseMetrics.MustRegister(poolHealthMetric)
 	CabooseMetrics.MustRegister(poolNewMembersMetric)
+	CabooseMetrics.MustRegister(poolRemovedFailureTotalMetric)
+	CabooseMetrics.MustRegister(poolRemovedConnFailureTotalMetric)
+	CabooseMetrics.MustRegister(poolRemovedReadFailureTotalMetric)
+	CabooseMetrics.MustRegister(poolRemovedNon2xxTotalMetric)
+	CabooseMetrics.MustRegister(poolMembersNotAddedBecauseRemovedMetric)
+	CabooseMetrics.MustRegister(poolEnoughObservationsForMainSetDurationMetric)
+	CabooseMetrics.MustRegister(poolTierChangeMetric)
 
 	CabooseMetrics.MustRegister(fetchResponseCodeMetric)
 	CabooseMetrics.MustRegister(fetchSpeedPerPeerSuccessMetric)
@@ -267,7 +259,6 @@ func init() {
 	CabooseMetrics.MustRegister(fetchNetworkLatencyPeerSuccessMetric)
 
 	CabooseMetrics.MustRegister(m_collector{&peerLatencyDistribution})
-	CabooseMetrics.MustRegister(m_collector{&peerSpeedDistribution})
 
 	CabooseMetrics.MustRegister(fetchSizeCarMetric)
 	CabooseMetrics.MustRegister(fetchSizeBlockMetric)
@@ -276,5 +267,8 @@ func init() {
 	CabooseMetrics.MustRegister(fetchCalledTotalMetric)
 	CabooseMetrics.MustRegister(fetchRequestSuccessTimeTraceMetric)
 
-	CabooseMetrics.MustRegister(poolWeightBumpMetric)
+	CabooseMetrics.MustRegister(saturnCallsTotalMetric)
+	CabooseMetrics.MustRegister(saturnCallsFailureTotalMetric)
+
+	CabooseMetrics.MustRegister(saturnCallsSuccessTotalMetric)
 }

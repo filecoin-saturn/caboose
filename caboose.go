@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/filecoin-saturn/caboose/tieredhashing"
 	"io"
 	"net/http"
 	"net/url"
@@ -16,6 +17,10 @@ import (
 	"github.com/ipfs/go-cid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+)
+
+const (
+	EnvironmentKey = "STRN_ENV_TAG"
 )
 
 type Config struct {
@@ -47,16 +52,6 @@ type Config struct {
 	// PoolRefresh is the interval at which we refresh the pool of Saturn nodes.
 	PoolRefresh time.Duration
 
-	// PoolWeightChangeDebounce is the amount of time we wait between consecutive updates to the weight of a Saturn node
-	// in our pool after a retrieval success/failure.
-	PoolWeightChangeDebounce time.Duration
-
-	// PoolMembershipDebounce is the amount of time we wait after a saturn node is removed from the pool
-	// before we add it again to the pool.
-	PoolMembershipDebounce time.Duration
-
-	// trigger early refreshes when pool size drops below this low watermark
-	PoolLowWatermark int
 	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
 	MaxRetrievalAttempts int
 
@@ -71,10 +66,7 @@ type Config struct {
 	// SaturnNodeCoolOff is the cool off duration for a saturn node once we determine that we shouldn't be sending requests to it for a while.
 	SaturnNodeCoolOff time.Duration
 
-	MinCoolOff time.Duration
-
-	// MaxNCoolOff is the number of times we will cool off a node before downvoting it.
-	MaxNCoolOff int
+	TieredHashingOpts []tieredhashing.Option
 }
 
 const DefaultLoggingInterval = 5 * time.Second
@@ -85,9 +77,6 @@ const DefaultSaturnBlockRequestTimeout = 19 * time.Second
 const DefaultSaturnCarRequestTimeout = 30 * time.Minute
 
 const DefaultMaxRetries = 3
-const DefaultPoolFailureDownvoteDebounce = 1 * time.Minute
-const DefaultPoolMembershipDebounce = 3 * DefaultPoolRefreshInterval
-const DefaultPoolLowWatermark = 5
 
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
@@ -103,7 +92,6 @@ const DefaultFetchKeyCoolDownDuration = 1 * time.Minute // how long will a sane 
 // we cool off sending requests to a Saturn node if it returns transient errors rather than immediately downvoting it;
 // however, only upto a certain max number of cool-offs.
 const DefaultSaturnNodeCoolOff = 5 * time.Minute
-const DefaultMaxNCoolOff = 3
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available saturn backend")
@@ -189,13 +177,6 @@ func NewCaboose(config *Config) (*Caboose, error) {
 	if config.SaturnNodeCoolOff == 0 {
 		config.SaturnNodeCoolOff = DefaultSaturnNodeCoolOff
 	}
-	if config.MinCoolOff == 0 {
-		config.MinCoolOff = 1 * time.Minute
-	}
-
-	if config.MaxNCoolOff == 0 {
-		config.MaxNCoolOff = DefaultMaxNCoolOff
-	}
 
 	c := Caboose{
 		config: config,
@@ -221,15 +202,6 @@ func NewCaboose(config *Config) (*Caboose, error) {
 		c.config.PoolRefresh = DefaultPoolRefreshInterval
 	}
 
-	if c.config.PoolWeightChangeDebounce == 0 {
-		c.config.PoolWeightChangeDebounce = DefaultPoolFailureDownvoteDebounce
-	}
-	if c.config.PoolMembershipDebounce == 0 {
-		c.config.PoolMembershipDebounce = DefaultPoolMembershipDebounce
-	}
-	if c.config.PoolLowWatermark == 0 {
-		c.config.PoolLowWatermark = DefaultPoolLowWatermark
-	}
 	if c.config.MaxRetrievalAttempts == 0 {
 		c.config.MaxRetrievalAttempts = DefaultMaxRetries
 	}
@@ -242,14 +214,6 @@ func NewCaboose(config *Config) (*Caboose, error) {
 
 // Caboose is a blockstore.
 var _ ipfsblockstore.Blockstore = (*Caboose)(nil)
-
-// GetMemberWeights is for testing ONLY
-func (c *Caboose) GetMemberWeights() map[string]int {
-	c.pool.lk.RLock()
-	defer c.pool.lk.RUnlock()
-
-	return c.pool.endpoints.ToWeights()
-}
 
 func (c *Caboose) Close() {
 	c.pool.Close()
@@ -273,6 +237,11 @@ func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
 		return false, err
 	}
 	return blk != nil, nil
+}
+
+// for testing only
+func (c *Caboose) GetPoolPerf() map[string]*tieredhashing.NodePerf {
+	return c.pool.th.GetPerf()
 }
 
 func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
