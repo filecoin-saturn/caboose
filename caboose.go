@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/filecoin-saturn/caboose/tieredhashing"
 	"io"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/filecoin-saturn/caboose/tieredhashing"
 
 	ipfsblockstore "github.com/ipfs/boxo/blockstore"
 	ipath "github.com/ipfs/boxo/coreiface/path"
@@ -51,6 +52,9 @@ type Config struct {
 
 	// PoolRefresh is the interval at which we refresh the pool of Saturn nodes.
 	PoolRefresh time.Duration
+
+	// MirrorFraction is what fraction of requests will be mirrored to another random node in order to track metrics / determine the current best nodes.
+	MirrorFraction float64
 
 	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
 	MaxRetrievalAttempts int

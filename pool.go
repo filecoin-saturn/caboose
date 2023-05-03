@@ -5,19 +5,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math/rand"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/asecurityteam/rolling"
+	"github.com/patrickmn/go-cache"
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
 
+	"github.com/ipfs/boxo/path"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
-	"github.com/patrickmn/go-cache"
+	"github.com/ipld/go-car"
 )
 
 const (
@@ -47,13 +51,21 @@ func (p *pool) loadPool() ([]string, error) {
 	return responses, nil
 }
 
+type poolRequest struct {
+	node string
+	path string
+	// the key for node affinity for the request
+	key string
+}
+
 type pool struct {
 	config *Config
 	logger *logger
 
-	started chan struct{} // started signals that we've already initialized the pool once with Saturn endpoints.
-	refresh chan struct{} // refresh is used to signal the need for doing a refresh of the Saturn endpoints pool.
-	done    chan struct{} // done is used to signal that we're shutting down the Saturn endpoints pool and don't need to refresh it anymore.
+	started       chan struct{} // started signals that we've already initialized the pool once with Saturn endpoints.
+	refresh       chan struct{} // refresh is used to signal the need for doing a refresh of the Saturn endpoints pool.
+	done          chan struct{} // done is used to signal that we're shutting down the Saturn endpoints pool and don't need to refresh it anymore.
+	mirrorSamples chan poolRequest
 
 	fetchKeyLk            sync.RWMutex
 	fetchKeyFailureCache  *cache.Cache // guarded by fetchKeyLk
@@ -67,10 +79,11 @@ type pool struct {
 
 func newPool(c *Config) *pool {
 	p := pool{
-		config:  c,
-		started: make(chan struct{}),
-		refresh: make(chan struct{}, 1),
-		done:    make(chan struct{}, 1),
+		config:        c,
+		started:       make(chan struct{}),
+		refresh:       make(chan struct{}, 1),
+		done:          make(chan struct{}, 1),
+		mirrorSamples: make(chan poolRequest, 10),
 
 		fetchKeyCoolDownCache: cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 		fetchKeyFailureCache:  cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
@@ -82,6 +95,7 @@ func newPool(c *Config) *pool {
 
 func (p *pool) Start() {
 	go p.refreshPool()
+	go p.checkPool()
 }
 
 func (p *pool) doRefresh() {
@@ -164,6 +178,70 @@ func (p *pool) refreshPool() {
 	}
 }
 
+func (p *pool) checkPool() {
+	for {
+		select {
+		case msg := <-p.mirrorSamples:
+			// see if it is to a main-tier node - if so find appropriate test node to test against.
+			p.lk.RLock()
+			if p.th.NodeTier(msg.node) != tieredhashing.TierMain {
+				p.lk.RUnlock()
+				continue
+			}
+			testNodes := p.th.GetNodes(tieredhashing.TierUnknown, msg.key, 1)
+			p.lk.RUnlock()
+			if len(testNodes) == 0 {
+				continue
+			}
+			trialTimeout, cancel := context.WithTimeout(context.Background(), time.Second*19)
+			_ = p.fetchResourceAndUpdate(trialTimeout, testNodes[0], msg.path, 0, p.mirrorValidator)
+			cancel()
+		case <-p.done:
+			return
+		}
+	}
+}
+
+func (p *pool) mirrorValidator(resource string, reader io.Reader) error {
+	parse, err := path.ParsePath(resource)
+	if err != nil {
+		return err
+	}
+	matchedCid := cid.Undef
+	if parse.IsJustAKey() && len(parse) > 0 {
+		matchedCid, err = cid.Parse(parse.Segments()[0])
+	} else if len(parse) > 1 {
+		matchedCid, err = cid.Parse(parse.Segments()[1])
+	} else {
+		err = fmt.Errorf("unrecognized resource: %s", resource)
+	}
+	if err != nil {
+		return err
+	}
+
+	br, err := car.NewCarReader(reader)
+	if err != nil {
+		return err
+	}
+	has := false
+	for {
+		blk, err := br.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if matchedCid.Equals(blk.Cid()) {
+			has = true
+		}
+	}
+	if !has {
+		return fmt.Errorf("response did not have requested root")
+	}
+	return nil
+}
+
 func (p *pool) Close() {
 	select {
 	case p.done <- struct{}{}:
@@ -220,6 +298,15 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 		if recordIfContextErr(resourceTypeBlock, ctx, "fetchBlockWithLoop") {
 			return nil, ctx.Err()
 		}
+
+		// sample request for mirroring
+		if p.config.MirrorFraction > rand.Float64() {
+			select {
+			case p.mirrorSamples <- poolRequest{node: nodes[i], path: fmt.Sprintf("/ipfs/%s?format=raw", c), key: aff}:
+			default:
+			}
+		}
+
 		blk, err = p.fetchBlockAndUpdate(ctx, nodes[i], c, i)
 		if err != nil && errors.Is(err, context.Canceled) {
 			return nil, err
@@ -315,6 +402,13 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 			return ctx.Err()
 		}
 
+		// sample request for mirroring
+		if p.config.MirrorFraction > rand.Float64() {
+			select {
+			case p.mirrorSamples <- poolRequest{node: nodes[i], path: pq[0], key: aff}:
+			default:
+			}
+		}
 		err = p.fetchResourceAndUpdate(ctx, nodes[i], pq[0], i, cb)
 		if err != nil && errors.Is(err, context.Canceled) {
 			return err

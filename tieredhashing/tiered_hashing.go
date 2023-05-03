@@ -225,6 +225,15 @@ func (t *TieredHashing) GetNodes(from Tier, key string, n int) []string {
 	return nodes
 }
 
+func (t *TieredHashing) NodeTier(node string) Tier {
+	for k, n := range t.nodes {
+		if k == node {
+			return n.Tier
+		}
+	}
+	return TierUnknown
+}
+
 func (t *TieredHashing) unknownPossible(n int) int {
 	if n > t.unknownSet.Size() {
 		return t.unknownSet.Size()
