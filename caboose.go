@@ -78,7 +78,7 @@ const DefaultSaturnCarRequestTimeout = 30 * time.Minute
 const DefaultMaxRetries = 3
 
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
-const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
+const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=200"
 const DefaultPoolRefreshInterval = 5 * time.Minute
 
 // we cool off sending requests to Saturn for a cid for a certain duration
