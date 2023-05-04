@@ -98,7 +98,19 @@ func TestRecordFailure(t *testing.T) {
 	th.h.RecordFailure(mn, ResponseMetrics{NetworkError: true})
 	th.h.RecordFailure(mn, ResponseMetrics{NetworkError: true})
 	th.assertSize(t, 1, 0)
+}
 
+func TestNodeNotRemovedWithVar(t *testing.T) {
+	window := 2
+	th := NewTieredHashingHarness(WithCorrectnessWindowSize(window), WithFailureDebounce(0), WithNoRemove(true))
+	// unknown node
+	unknownNode := th.genAndAddAll(t, 1)[0]
+	th.assertSize(t, 0, 1)
+
+	for i := 0; i < 1000; i++ {
+		require.Nil(t, th.h.RecordFailure(unknownNode, ResponseMetrics{NetworkError: true}))
+	}
+	th.assertSize(t, 0, 1)
 }
 
 func TestNodeEvictionWithWindowing(t *testing.T) {

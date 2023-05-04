@@ -83,6 +83,7 @@ func New(opts ...Option) *TieredHashing {
 		CorrectnessWindowSize: correctnessWindowSize,
 		CorrectnessPct:        minAcceptableCorrectnessPct,
 		MaxMainTierSize:       maxMainTierSize,
+		NoRemove:              false,
 	}
 	for _, opt := range opts {
 		opt(cfg)
@@ -165,17 +166,19 @@ func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *RemovedN
 		perf.responseCodes++
 	}
 
-	if _, ok := t.isCorrectnessPolicyEligible(perf); !ok {
-		mc, uc := t.removeFailedNode(node)
-		return &RemovedNode{
-			Node:                node,
-			Tier:                perf.Tier,
-			Reason:              reasonCorrectness,
-			ConnErrors:          perf.connFailures,
-			NetworkErrors:       perf.networkErrors,
-			ResponseCodes:       perf.responseCodes,
-			MainToUnknownChange: mc,
-			UnknownToMainChange: uc,
+	if !t.cfg.NoRemove {
+		if _, ok := t.isCorrectnessPolicyEligible(perf); !ok {
+			mc, uc := t.removeFailedNode(node)
+			return &RemovedNode{
+				Node:                node,
+				Tier:                perf.Tier,
+				Reason:              reasonCorrectness,
+				ConnErrors:          perf.connFailures,
+				NetworkErrors:       perf.networkErrors,
+				ResponseCodes:       perf.responseCodes,
+				MainToUnknownChange: mc,
+				UnknownToMainChange: uc,
+			}
 		}
 	}
 
