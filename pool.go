@@ -103,9 +103,10 @@ func (p *pool) refreshWithNodes(newEP []string) {
 	distLk.Lock()
 	defer distLk.Unlock()
 
-	added, alreadyRemoved := p.th.AddOrchestratorNodes(newEP)
+	added, alreadyRemoved, back := p.th.AddOrchestratorNodes(newEP)
 	poolNewMembersMetric.Set(float64(added))
 	poolMembersNotAddedBecauseRemovedMetric.Set(float64(alreadyRemoved))
+	poolMembersRemovedAndAddedBackMetric.Set(float64(back))
 
 	// update the tier set
 	mu, um := p.th.UpdateMainTierWithTopN()

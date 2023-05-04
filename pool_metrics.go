@@ -25,6 +25,10 @@ var (
 		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_members_not_added"),
 	})
 
+	poolMembersRemovedAndAddedBackMetric = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_removed_and_added_back"),
+	})
+
 	poolRefreshErrorMetric = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "pool_refresh_errors"),
 		Help: "Number of errors refreshing the caboose pool",

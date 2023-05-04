@@ -256,10 +256,7 @@ func (t *TieredHashing) GetPerf() map[string]*NodePerf {
 	return t.nodes
 }
 
-func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemoved int) {
-	added = 0
-	alreadyRemoved = 0
-
+func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemoved, removedAndAddedBack int) {
 	for _, node := range nodes {
 		// TODO Add nodes that are closer than the ones we have even if the pool is full
 		if len(t.nodes) >= t.cfg.MaxPoolSize {
@@ -284,6 +281,33 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 			Tier:              tierUnknown,
 		}
 		t.unknownSet = t.unknownSet.AddNode(node)
+	}
+
+	// Avoid Pool starvation -> if we still don't have enough nodes, add the ones we have already removed
+	// we ensure we iterate in descending order of node closeness
+	for _, node := range nodes {
+		if len(t.nodes) >= t.cfg.MaxPoolSize {
+			return
+		}
+
+		// do we already have this node ?
+		if _, ok := t.nodes[node]; ok {
+			continue
+		}
+
+		if _, ok := t.removedNodesTimeCache.Get(node); !ok {
+			continue
+		}
+
+		added++
+		removedAndAddedBack++
+		t.nodes[node] = &NodePerf{
+			LatencyDigest:     rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.LatencyWindowSize))),
+			CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.CorrectnessWindowSize))),
+			Tier:              tierUnknown,
+		}
+		t.unknownSet = t.unknownSet.AddNode(node)
+		t.removedNodesTimeCache.Delete(node)
 	}
 
 	return
