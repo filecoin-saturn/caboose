@@ -138,7 +138,7 @@ var (
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_ttfb_car_peer_success"),
 		Help:    "TTFB observed during a successful caboose CAR fetch from a single peer in milliseconds",
 		Buckets: durationMsPerCarHistogram,
-	}, []string{"cache_status", "car_size"})
+	}, []string{"cache_status"})
 
 	// failure
 	fetchDurationPerCarPerPeerFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -233,7 +233,6 @@ func init() {
 	CabooseMetrics.MustRegister(poolRemovedReadFailureTotalMetric)
 	CabooseMetrics.MustRegister(poolRemovedNon2xxTotalMetric)
 	CabooseMetrics.MustRegister(poolMembersNotAddedBecauseRemovedMetric)
-	CabooseMetrics.MustRegister(poolMembersRemovedAndAddedBackMetric)
 	CabooseMetrics.MustRegister(poolEnoughObservationsForMainSetDurationMetric)
 	CabooseMetrics.MustRegister(poolTierChangeMetric)
 

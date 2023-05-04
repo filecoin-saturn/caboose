@@ -424,13 +424,12 @@ func TestAddOrchestratorNodes(t *testing.T) {
 	th.addNewNodesAll(t, nodes2)
 	th.assertSize(t, 0, 20)
 
-	th.addAndAssert(t, append(nodes[:3], nodes2[:3]...), 0, 0, 0, 0, 20)
+	th.addAndAssert(t, append(nodes[:3], nodes2[:3]...), 0, 0, 0, 20)
 
 	th.h.removeFailedNode(nodes[0])
 	th.assertSize(t, 0, 19)
 
-	// removed node gets added back as we are not full
-	th.addAndAssert(t, append(nodes[:3], nodes2[:3]...), 1, 1, 1, 0, 20)
+	th.addAndAssert(t, append(nodes[:3], nodes2[:3]...), 0, 1, 0, 19)
 }
 
 func TestAddOrchestratorNodesMax(t *testing.T) {
@@ -438,13 +437,13 @@ func TestAddOrchestratorNodesMax(t *testing.T) {
 
 	// empty -> 10 get added
 	nodes := th.genNodes(t, 30)
-	a, _, _ := th.h.AddOrchestratorNodes(nodes)
+	a, _ := th.h.AddOrchestratorNodes(nodes)
 	require.EqualValues(t, 10, a)
 	th.assertSize(t, 0, 10)
 
 	// nothing gets added as we are full
 	nodes2 := th.genNodes(t, 30)
-	a, _, _ = th.h.AddOrchestratorNodes(append(nodes, nodes2...))
+	a, _ = th.h.AddOrchestratorNodes(append(nodes, nodes2...))
 	require.EqualValues(t, 0, a)
 	th.assertSize(t, 0, 10)
 
@@ -455,19 +454,18 @@ func TestAddOrchestratorNodesMax(t *testing.T) {
 	th.assertSize(t, 0, 8)
 
 	// 2 get added now
-	a, _, _ = th.h.AddOrchestratorNodes(append(nodes, nodes2...))
+	a, _ = th.h.AddOrchestratorNodes(append(nodes, nodes2...))
 	require.EqualValues(t, 2, a)
 	th.assertSize(t, 0, 10)
 
+	// removed node does not get added back
 	th.h.removeFailedNode(nodes[2])
 	th.assertSize(t, 0, 9)
 
-	// removed node does not get added back as we are already full without it
-	a, ar, back := th.h.AddOrchestratorNodes(append(nodes, "newnode"))
-	require.EqualValues(t, 1, a)
+	a, ar := th.h.AddOrchestratorNodes(nodes[:10])
+	require.EqualValues(t, 0, a)
 	require.EqualValues(t, 3, ar)
-	th.assertSize(t, 0, 10)
-	require.EqualValues(t, 0, back)
+	th.assertSize(t, 0, 9)
 }
 
 type TieredHashingHarness struct {
@@ -504,19 +502,17 @@ func (th *TieredHashingHarness) addNewNodesAll(t *testing.T, nodes []string) {
 		old = append(old, key)
 	}
 
-	added, already, _ := th.h.AddOrchestratorNodes(append(nodes, old...))
+	added, already := th.h.AddOrchestratorNodes(append(nodes, old...))
 	require.Zero(t, already)
 	require.EqualValues(t, len(nodes), added)
 }
 
-func (th *TieredHashingHarness) addAndAssert(t *testing.T, nodes []string, added, already, ab int, main, unknown int) {
-	a, ar, addedBack := th.h.AddOrchestratorNodes(nodes)
+func (th *TieredHashingHarness) addAndAssert(t *testing.T, nodes []string, added, already int, main, unknown int) {
+	a, ar := th.h.AddOrchestratorNodes(nodes)
 	require.EqualValues(t, added, a)
 
 	require.EqualValues(t, already, ar)
 	th.assertSize(t, main, unknown)
-
-	require.EqualValues(t, ab, addedBack)
 }
 
 func (th *TieredHashingHarness) assertSize(t *testing.T, main int, unknown int) {

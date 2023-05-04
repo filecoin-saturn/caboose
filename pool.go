@@ -103,10 +103,9 @@ func (p *pool) refreshWithNodes(newEP []string) {
 	distLk.Lock()
 	defer distLk.Unlock()
 
-	added, alreadyRemoved, back := p.th.AddOrchestratorNodes(newEP)
+	added, alreadyRemoved := p.th.AddOrchestratorNodes(newEP)
 	poolNewMembersMetric.Set(float64(added))
 	poolMembersNotAddedBecauseRemovedMetric.Set(float64(alreadyRemoved))
-	poolMembersRemovedAndAddedBackMetric.Set(float64(back))
 
 	// update the tier set
 	mu, um := p.th.UpdateMainTierWithTopN()
@@ -209,7 +208,7 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 	p.lk.RLock()
 	nodes := p.th.GetNodes(aff, p.config.MaxRetrievalAttempts)
 	p.lk.RUnlock()
-	if len(nodes) == 0 {
+	if len(nodes) < p.config.MaxRetrievalAttempts {
 		return nil, ErrNoBackend
 	}
 

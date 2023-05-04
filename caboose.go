@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	SaturnEnvKey = "STRN_ENV_TAG"
+	EnvironmentKey = "STRN_ENV_TAG"
 )
 
 type Config struct {
@@ -70,6 +70,7 @@ type Config struct {
 }
 
 const DefaultLoggingInterval = 5 * time.Second
+
 const DefaultSaturnOrchestratorRequestTimeout = 30 * time.Second
 
 const DefaultSaturnBlockRequestTimeout = 19 * time.Second
@@ -78,7 +79,7 @@ const DefaultSaturnCarRequestTimeout = 30 * time.Minute
 const DefaultMaxRetries = 3
 
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
-const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=200"
+const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
 const DefaultPoolRefreshInterval = 5 * time.Minute
 
 // we cool off sending requests to Saturn for a cid for a certain duration
