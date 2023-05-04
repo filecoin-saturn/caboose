@@ -10,9 +10,16 @@ type TieredHashingConfig struct {
 	CorrectnessWindowSize int
 	CorrectnessPct        float64
 	MaxMainTierSize       int
+	NoRemove              bool
 }
 
 type Option func(config *TieredHashingConfig)
+
+func WithNoRemove(noRemove bool) Option {
+	return func(c *TieredHashingConfig) {
+		c.NoRemove = noRemove
+	}
+}
 
 func WithAlwaysMainFirst() Option {
 	return func(c *TieredHashingConfig) {

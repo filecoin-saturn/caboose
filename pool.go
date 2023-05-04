@@ -25,12 +25,14 @@ const (
 	tierUnknownToMain = "unknown-to-main"
 	tierMain          = "main"
 	tierUnknown       = "unknown"
+
+	BackendOverrideKey = "CABOOSE_BACKEND_OVERRIDE"
 )
 
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
 func (p *pool) loadPool() ([]string, error) {
-	if override := os.Getenv("CABOOSE_BACKEND_OVERRIDE"); len(override) > 0 {
+	if override := os.Getenv(BackendOverrideKey); len(override) > 0 {
 		return strings.Split(override, ","), nil
 	}
 	resp, err := p.config.OrchestratorClient.Get(p.config.OrchestratorEndpoint.String())
@@ -68,6 +70,13 @@ type pool struct {
 }
 
 func newPool(c *Config) *pool {
+	noRemove := false
+	if len(os.Getenv(BackendOverrideKey)) > 0 {
+		noRemove = true
+	}
+
+	topts := append(c.TieredHashingOpts, tieredhashing.WithNoRemove(noRemove))
+
 	p := pool{
 		config:  c,
 		started: make(chan struct{}),
@@ -76,7 +85,7 @@ func newPool(c *Config) *pool {
 
 		fetchKeyCoolDownCache: cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 		fetchKeyFailureCache:  cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
-		th:                    tieredhashing.New(c.TieredHashingOpts...),
+		th:                    tieredhashing.New(topts...),
 	}
 
 	return &p
