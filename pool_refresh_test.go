@@ -32,7 +32,7 @@ func TestPoolRefresh(t *testing.T) {
 	// removed node is NOT added back as pool is  full without it
 	andAndAssertPool(t, p, []string{"node1", "node2", "node3", "node4", "node5", "node6"}, 0, 5, 5, 0)
 	nds := p.th.GetPerf()
-	for node, _ := range nds {
+	for node := range nds {
 		require.NotEqual(t, "node4", node)
 	}
 
