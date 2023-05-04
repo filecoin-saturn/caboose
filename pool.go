@@ -209,7 +209,7 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 	p.lk.RLock()
 	nodes := p.th.GetNodes(aff, p.config.MaxRetrievalAttempts)
 	p.lk.RUnlock()
-	if len(nodes) < p.config.MaxRetrievalAttempts {
+	if len(nodes) == 0 {
 		return nil, ErrNoBackend
 	}
 
