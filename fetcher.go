@@ -34,6 +34,16 @@ const (
 	resourceTypeBlock   = "block"
 )
 
+var (
+	// 256 Kib to 8Gib
+	carSizes = []float64{262144, 524288, 1.048576e+06, 2.097152e+06, 4.194304e+06,
+		8.388608e+06, 1.6777216e+07, 3.3554432e+07, 6.7108864e+07, 1.34217728e+08,
+		2.68435456e+08, 5.36870912e+08, 1.073741824e+09, 2.147483648e+09, 4.294967296e+09, 8.589934592e+09}
+
+	carSizesStr = []string{"256.0 Kib", "512.0 Kib", "1.0 Mib", "2.0 Mib",
+		"4.0 Mib", "8.0 Mib", "16.0 Mib", "32.0 Mib", "64.0 Mib", "128.0 Mib", "256.0 Mib", "512.0 Mib", "1.0 Gib", "2.0 Gib", "4.0 Gib", "8.0 Gib"}
+)
+
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
 func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, rm tieredhashing.ResponseMetrics, e error) {
 	reqUrl := fmt.Sprintf(saturnReqTmpl, c)
@@ -163,7 +173,16 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				fetchTTFBPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(ttfbMs))
 				fetchDurationPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
 			} else {
-				fetchTTFBPerCARPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(ttfbMs))
+				ci := 0
+				for index, value := range carSizes {
+					if float64(received) < value {
+						ci = index
+						break
+					}
+				}
+				carSizeStr := carSizesStr[ci]
+
+				fetchTTFBPerCARPerPeerSuccessMetric.WithLabelValues(cacheStatus, carSizeStr).Observe(float64(ttfbMs))
 				fetchDurationPerCarPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
 			}
 
@@ -191,7 +210,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				// my address
 				Range:          "",
 				Referrer:       respReq.Referer(),
-				UserAgent:      "bifrost-" + os.Getenv(EnvironmentKey) + respReq.UserAgent(),
+				UserAgent:      respReq.UserAgent(),
 				NodeId:         saturnNodeId,
 				NodeIpAddress:  from,
 				IfNetworkError: networkError,
@@ -227,8 +246,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			}
 		}
 	}
+
 	agent := req.Header.Get("User-Agent")
-	req.Header.Set("User-Agent", " bifrost-"+os.Getenv(EnvironmentKey)+agent)
+	req.Header.Set("User-Agent", os.Getenv(STRN_ENV_KEY)+"/"+agent)
 
 	//trace
 	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
