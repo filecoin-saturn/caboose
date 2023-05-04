@@ -138,7 +138,7 @@ var (
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_ttfb_car_peer_success"),
 		Help:    "TTFB observed during a successful caboose CAR fetch from a single peer in milliseconds",
 		Buckets: durationMsPerCarHistogram,
-	}, []string{"cache_status"})
+	}, []string{"cache_status", "car_size"})
 
 	// failure
 	fetchDurationPerCarPerPeerFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
