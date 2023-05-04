@@ -247,8 +247,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 	}
 
+	agent := req.Header.Get("User-Agent")
+	req.Header.Set("User-Agent", os.Getenv(STRN_ENV_KEY)+"/"+agent)
+
 	//trace
-	req.Header.Add(CLIENT_ENV_KEY, os.Getenv(STRN_ENV_KEY))
 	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
 
 	var resp *http.Response

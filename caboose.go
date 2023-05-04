@@ -20,8 +20,7 @@ import (
 )
 
 const (
-	STRN_ENV_KEY   = "STRN_ENV_TAG"
-	CLIENT_ENV_KEY = "CLIENT_ENV"
+	STRN_ENV_KEY = "STRN_ENV_TAG"
 )
 
 type Config struct {
@@ -69,10 +68,6 @@ type Config struct {
 
 	TieredHashingOpts []tieredhashing.Option
 }
-
-const DefaultLoggingInterval = 5 * time.Second
-
-const DefaultSaturnOrchestratorRequestTimeout = 30 * time.Second
 
 const DefaultSaturnBlockRequestTimeout = 19 * time.Second
 const DefaultSaturnCarRequestTimeout = 30 * time.Minute
