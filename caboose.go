@@ -20,7 +20,8 @@ import (
 )
 
 const (
-	EnvironmentKey = "STRN_ENV_TAG"
+	STRN_ENV_KEY   = "STRN_ENV_TAG"
+	CLIENT_ENV_KEY = "CLIENT_ENV"
 )
 
 type Config struct {

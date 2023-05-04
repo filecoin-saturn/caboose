@@ -210,7 +210,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				// my address
 				Range:          "",
 				Referrer:       respReq.Referer(),
-				UserAgent:      "bifrost-" + os.Getenv(EnvironmentKey) + respReq.UserAgent(),
+				UserAgent:      respReq.UserAgent(),
 				NodeId:         saturnNodeId,
 				NodeIpAddress:  from,
 				IfNetworkError: networkError,
@@ -246,10 +246,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			}
 		}
 	}
-	agent := req.Header.Get("User-Agent")
-	req.Header.Set("User-Agent", " bifrost-"+os.Getenv(EnvironmentKey)+agent)
 
 	//trace
+	req.Header.Add(CLIENT_ENV_KEY, os.Getenv(STRN_ENV_KEY))
 	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
 
 	var resp *http.Response
