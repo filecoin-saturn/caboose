@@ -194,6 +194,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			} else {
 				fetchDurationPerCarPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
 			}
+
+			if code == http.StatusBadGateway || code == http.StatusGatewayTimeout {
+				updateLassie5xxTime(respHeader.Values(servertiming.HeaderKey), resourceType)
+			}
 		}
 
 		if err == nil || !errors.Is(err, context.Canceled) {
@@ -376,6 +380,28 @@ func recordIfContextErr(resourceType string, ctx context.Context, requestState s
 		return true
 	}
 	return false
+}
+
+func updateLassie5xxTime(timingHeaders []string, resourceType string) {
+	if len(timingHeaders) == 0 {
+		goLogger.Debug("no timing headers in request response.")
+		return
+	}
+
+	for _, th := range timingHeaders {
+		if subReqTiming, err := servertiming.ParseHeader(th); err == nil {
+			for _, m := range subReqTiming.Metrics {
+				switch m.Name {
+				case "shim_lassie_headers":
+					if m.Duration.Milliseconds() != 0 {
+						lassie5XXTimeMetric.WithLabelValues(resourceType).Observe(float64(m.Duration.Milliseconds()))
+					}
+					return
+				default:
+				}
+			}
+		}
+	}
 }
 
 // todo: refactor for dryness
