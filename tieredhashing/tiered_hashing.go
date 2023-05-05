@@ -209,16 +209,10 @@ func (t *TieredHashing) GetNodes(from Tier, key string, n int) []string {
 		if !ok {
 			return nil
 		}
-		if len(nodes) == n {
-			return nodes
-		}
 	} else if from == TierMain {
 		nodes, ok = t.mainSet.GetNodes(key, t.mainPossible(n))
 		if !ok {
 			return nil
-		}
-		if len(nodes) == n {
-			return nodes
 		}
 	}
 

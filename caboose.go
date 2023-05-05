@@ -81,6 +81,7 @@ const DefaultSaturnBlockRequestTimeout = 19 * time.Second
 const DefaultSaturnCarRequestTimeout = 30 * time.Minute
 
 const DefaultMaxRetries = 3
+const DefaultMirrorFraction = 0.01
 
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=1000"
@@ -180,6 +181,9 @@ func NewCaboose(config *Config) (*Caboose, error) {
 
 	if config.SaturnNodeCoolOff == 0 {
 		config.SaturnNodeCoolOff = DefaultSaturnNodeCoolOff
+	}
+	if config.MirrorFraction == 0 {
+		config.MirrorFraction = DefaultMirrorFraction
 	}
 
 	c := Caboose{

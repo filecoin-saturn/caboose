@@ -202,6 +202,7 @@ func (p *pool) checkPool() {
 	}
 }
 
+// TODO: this should be replaced with a real validator once one exists from boxo.
 func (p *pool) mirrorValidator(resource string, reader io.Reader) error {
 	parse, err := path.ParsePath(resource)
 	if err != nil {
@@ -302,7 +303,7 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 		// sample request for mirroring
 		if p.config.MirrorFraction > rand.Float64() {
 			select {
-			case p.mirrorSamples <- poolRequest{node: nodes[i], path: fmt.Sprintf("/ipfs/%s?format=raw", c), key: aff}:
+			case p.mirrorSamples <- poolRequest{node: nodes[i], path: fmt.Sprintf("/ipfs/%s?format=car&car-scope=block", c), key: aff}:
 			default:
 			}
 		}
