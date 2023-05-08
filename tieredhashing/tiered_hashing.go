@@ -160,7 +160,8 @@ func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *RemovedN
 	} else if rm.NetworkError {
 		recordFailureFnc()
 		perf.networkErrors++
-	} else if rm.ResponseCode != http.StatusBadGateway && rm.ResponseCode != http.StatusGatewayTimeout && rm.ResponseCode != http.StatusTooManyRequests {
+	} else if rm.ResponseCode != http.StatusBadGateway && rm.ResponseCode != http.StatusGatewayTimeout &&
+		rm.ResponseCode != http.StatusTooManyRequests && rm.ResponseCode != http.StatusForbidden {
 		// TODO Improve this in the next iteration but keep it for now as we are seeing a very high percentage of 502s
 		recordFailureFnc()
 		perf.responseCodes++
