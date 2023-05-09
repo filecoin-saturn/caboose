@@ -80,7 +80,7 @@ const DefaultSaturnBlockRequestTimeout = 19 * time.Second
 const DefaultSaturnCarRequestTimeout = 30 * time.Minute
 
 const DefaultMaxRetries = 3
-const DefaultMirrorFraction = 0.01
+const DefaultMirrorFraction = 0.05
 
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=200"

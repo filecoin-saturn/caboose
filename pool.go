@@ -202,9 +202,14 @@ func (p *pool) checkPool() {
 			if len(testNodes) == 0 {
 				continue
 			}
-			trialTimeout, cancel := context.WithTimeout(context.Background(), time.Second*19)
-			_ = p.fetchResourceAndUpdate(trialTimeout, testNodes[0], msg.path, 0, p.mirrorValidator)
+			trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			err := p.fetchResourceAndUpdate(trialTimeout, testNodes[0], msg.path, 0, p.mirrorValidator)
 			cancel()
+			if err != nil {
+				mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
+			} else {
+				mirroredTrafficTotalMetric.WithLabelValues("no-error").Inc()
+			}
 		case <-p.done:
 			return
 		}
