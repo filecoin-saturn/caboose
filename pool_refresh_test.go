@@ -7,7 +7,7 @@ import (
 )
 
 func TestPoolRefresh(t *testing.T) {
-	opts := []tieredhashing.Option{tieredhashing.WithCorrectnessWindowSize(1)}
+	opts := []tieredhashing.Option{tieredhashing.WithCorrectnessWindowSize(1), tieredhashing.WithMaxPoolSize(5)}
 
 	p := newPool(&Config{TieredHashingOpts: opts})
 
@@ -27,7 +27,15 @@ func TestPoolRefresh(t *testing.T) {
 	// record failure so that node is removed and then assert
 	rm := p.th.RecordFailure("node4", tieredhashing.ResponseMetrics{ConnFailure: true})
 	require.NotNil(t, rm)
-	andAndAssertPool(t, p, []string{"node1", "node2", "node3", "node4", "node5"}, 0, 4, 4, 0)
+	require.EqualValues(t, "node4", rm.Node)
+
+	// removed node is NOT added back as pool is  full without it
+	andAndAssertPool(t, p, []string{"node1", "node2", "node3", "node4", "node5", "node6"}, 0, 5, 5, 0)
+	nds := p.th.GetPerf()
+	for node := range nds {
+		require.NotEqual(t, "node4", node)
+	}
+
 }
 
 func TestPoolRefreshWithLatencyDistribution(t *testing.T) {

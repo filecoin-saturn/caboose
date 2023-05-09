@@ -25,14 +25,15 @@ import (
 )
 
 const (
-	tierMainToUnknown = "main-to-unknown"
-	tierUnknownToMain = "unknown-to-main"
+	tierMainToUnknown  = "main-to-unknown"
+	tierUnknownToMain  = "unknown-to-main"
+	BackendOverrideKey = "CABOOSE_BACKEND_OVERRIDE"
 )
 
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
 func (p *pool) loadPool() ([]string, error) {
-	if override := os.Getenv("CABOOSE_BACKEND_OVERRIDE"); len(override) > 0 {
+	if override := os.Getenv(BackendOverrideKey); len(override) > 0 {
 		return strings.Split(override, ","), nil
 	}
 	resp, err := p.config.OrchestratorClient.Get(p.config.OrchestratorEndpoint.String())
@@ -78,6 +79,13 @@ type pool struct {
 }
 
 func newPool(c *Config) *pool {
+	noRemove := false
+	if len(os.Getenv(BackendOverrideKey)) > 0 {
+		noRemove = true
+	}
+
+	topts := append(c.TieredHashingOpts, tieredhashing.WithNoRemove(noRemove))
+
 	p := pool{
 		config:        c,
 		started:       make(chan struct{}),
@@ -87,7 +95,7 @@ func newPool(c *Config) *pool {
 
 		fetchKeyCoolDownCache: cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 		fetchKeyFailureCache:  cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
-		th:                    tieredhashing.New(c.TieredHashingOpts...),
+		th:                    tieredhashing.New(topts...),
 	}
 
 	return &p
@@ -115,9 +123,10 @@ func (p *pool) refreshWithNodes(newEP []string) {
 	distLk.Lock()
 	defer distLk.Unlock()
 
-	added, alreadyRemoved := p.th.AddOrchestratorNodes(newEP)
+	added, alreadyRemoved, back := p.th.AddOrchestratorNodes(newEP)
 	poolNewMembersMetric.Set(float64(added))
 	poolMembersNotAddedBecauseRemovedMetric.Set(float64(alreadyRemoved))
+	poolMembersRemovedAndAddedBackMetric.Set(float64(back))
 
 	// update the tier set
 	mu, um := p.th.UpdateMainTierWithTopN()
@@ -290,7 +299,7 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 		)
 	}
 	p.lk.RUnlock()
-	if len(nodes) < p.config.MaxRetrievalAttempts {
+	if len(nodes) == 0 {
 		return nil, ErrNoBackend
 	}
 

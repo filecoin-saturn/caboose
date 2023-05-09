@@ -84,9 +84,7 @@ func TestFetchBlock(t *testing.T) {
 		return true
 	}, http.StatusNotAcceptable)
 
-	// one node gets evicted as correctness window is full
 	h.fetchAndAssertFailure(t, ctx, testCid, "406")
-	h.assertPoolSize(t, 0, 2, 2)
 }
 
 func (h *CabooseHarness) assertLatencyCount(t *testing.T, expected int) {

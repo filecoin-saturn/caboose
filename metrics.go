@@ -138,7 +138,7 @@ var (
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_ttfb_car_peer_success"),
 		Help:    "TTFB observed during a successful caboose CAR fetch from a single peer in milliseconds",
 		Buckets: durationMsPerCarHistogram,
-	}, []string{"cache_status"})
+	}, []string{"cache_status", "car_size"})
 
 	// failure
 	fetchDurationPerCarPerPeerFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -175,6 +175,12 @@ var (
 	fetchDurationPerPeerSuccessCacheMissTotalLassieMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_peer_cache_miss_total_lassie"),
 		Help:    "Time spent in Lassie for a Saturn L1 Nginx cache miss for a successful fetch per peer in milliseconds",
+		Buckets: durationMsPerCarHistogram,
+	}, []string{"resourceType"})
+
+	lassie5XXTimeMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_5xx_total_lassie"),
+		Help:    "Time spent in Lassie for a Saturn L1 Nginx cache miss for a 5xx in milliseconds",
 		Buckets: durationMsPerCarHistogram,
 	}, []string{"resourceType"})
 
@@ -233,6 +239,7 @@ func init() {
 	CabooseMetrics.MustRegister(poolRemovedReadFailureTotalMetric)
 	CabooseMetrics.MustRegister(poolRemovedNon2xxTotalMetric)
 	CabooseMetrics.MustRegister(poolMembersNotAddedBecauseRemovedMetric)
+	CabooseMetrics.MustRegister(poolMembersRemovedAndAddedBackMetric)
 	CabooseMetrics.MustRegister(poolEnoughObservationsForMainSetDurationMetric)
 	CabooseMetrics.MustRegister(poolTierChangeMetric)
 
@@ -254,6 +261,7 @@ func init() {
 
 	CabooseMetrics.MustRegister(fetchDurationPerPeerSuccessTotalL1NodeMetric)
 	CabooseMetrics.MustRegister(fetchDurationPerPeerSuccessCacheMissTotalLassieMetric)
+	CabooseMetrics.MustRegister(lassie5XXTimeMetric)
 
 	CabooseMetrics.MustRegister(fetchNetworkSpeedPerPeerSuccessMetric)
 	CabooseMetrics.MustRegister(fetchNetworkLatencyPeerSuccessMetric)
