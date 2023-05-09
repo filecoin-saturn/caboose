@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -204,7 +205,12 @@ func (p *pool) checkPool() {
 
 // TODO: this should be replaced with a real validator once one exists from boxo.
 func (p *pool) mirrorValidator(resource string, reader io.Reader) error {
-	parse, err := path.ParsePath(resource)
+	// first get the 'path' part to remove query string if present.
+	pth, err := url.Parse(resource)
+	if err != nil {
+		return err
+	}
+	parse, err := path.ParsePath(pth.Path)
 	if err != nil {
 		return err
 	}
