@@ -229,7 +229,7 @@ func (p *pool) mirrorValidator(resource string, reader io.Reader) error {
 		return err
 	}
 	matchedCid := cid.Undef
-	if parse.IsJustAKey() && len(parse) > 0 {
+	if parse.IsJustAKey() && len(parse) == 1 {
 		matchedCid, err = cid.Parse(parse.Segments()[0])
 	} else if len(parse) > 1 {
 		matchedCid, err = cid.Parse(parse.Segments()[1])
