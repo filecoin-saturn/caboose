@@ -22,7 +22,7 @@ func TestNodesSortedLatency(t *testing.T) {
 			expected: nil,
 			initFn: func(h *TieredHashing) {
 				h.nodes["node1"] = &NodePerf{
-					Tier:          tierUnknown,
+					Tier:          TierUnknown,
 					LatencyDigest: rolling.NewPointPolicy(rolling.NewWindow(window)),
 				}
 
@@ -36,12 +36,12 @@ func TestNodesSortedLatency(t *testing.T) {
 			expected: nil,
 			initFn: func(h *TieredHashing) {
 				h.nodes["node1"] = &NodePerf{
-					Tier:          tierUnknown,
+					Tier:          TierUnknown,
 					LatencyDigest: rolling.NewPointPolicy(rolling.NewWindow(window)),
 				}
 
 				h.nodes["node2"] = &NodePerf{
-					Tier:          tierUnknown,
+					Tier:          TierUnknown,
 					LatencyDigest: rolling.NewPointPolicy(rolling.NewWindow(window)),
 				}
 
@@ -50,7 +50,7 @@ func TestNodesSortedLatency(t *testing.T) {
 		"one node with enough observations": {
 			initFn: func(h *TieredHashing) {
 				h.nodes["node1"] = &NodePerf{
-					Tier:          tierUnknown,
+					Tier:          TierUnknown,
 					LatencyDigest: rolling.NewPointPolicy(rolling.NewWindow(window)),
 				}
 
@@ -64,11 +64,11 @@ func TestNodesSortedLatency(t *testing.T) {
 		"two nodes with enough observations": {
 			initFn: func(h *TieredHashing) {
 				h.nodes["node1"] = &NodePerf{
-					Tier:          tierUnknown,
+					Tier:          TierUnknown,
 					LatencyDigest: rolling.NewPointPolicy(rolling.NewWindow(window)),
 				}
 				h.nodes["node2"] = &NodePerf{
-					Tier:          tierUnknown,
+					Tier:          TierUnknown,
 					LatencyDigest: rolling.NewPointPolicy(rolling.NewWindow(window)),
 				}
 
@@ -85,16 +85,16 @@ func TestNodesSortedLatency(t *testing.T) {
 		"3 nodes; 2 have enough observations": {
 			initFn: func(h *TieredHashing) {
 				h.nodes["node1"] = &NodePerf{
-					Tier:          tierUnknown,
+					Tier:          TierUnknown,
 					LatencyDigest: rolling.NewPointPolicy(rolling.NewWindow(window)),
 				}
 				h.nodes["node2"] = &NodePerf{
-					Tier:          tierUnknown,
+					Tier:          TierUnknown,
 					LatencyDigest: rolling.NewPointPolicy(rolling.NewWindow(window)),
 				}
 
 				h.nodes["node3"] = &NodePerf{
-					Tier:          tierUnknown,
+					Tier:          TierUnknown,
 					LatencyDigest: rolling.NewPointPolicy(rolling.NewWindow(window)),
 				}
 
@@ -116,7 +116,7 @@ func TestNodesSortedLatency(t *testing.T) {
 		"rolling window": {
 			initFn: func(h *TieredHashing) {
 				h.nodes["node1"] = &NodePerf{
-					Tier:          tierUnknown,
+					Tier:          TierUnknown,
 					LatencyDigest: rolling.NewPointPolicy(rolling.NewWindow(window)),
 				}
 

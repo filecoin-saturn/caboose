@@ -1,7 +1,6 @@
 package tieredhashing
 
 import (
-	"math/rand"
 	"net/http"
 	"time"
 
@@ -19,8 +18,8 @@ const (
 	PLatency        = 90
 
 	// main tier has the top `maxMainTierSize` nodes
-	tierMain    = "main"
-	tierUnknown = "unknown"
+	TierMain    = Tier("main")
+	TierUnknown = Tier("unknown")
 
 	reasonCorrectness = "correctness"
 
@@ -39,6 +38,8 @@ const (
 	maxDebounceLatency = 500
 )
 
+type Tier string
+
 type NodePerf struct {
 	LatencyDigest  *rolling.PointPolicy
 	NLatencyDigest float64
@@ -46,7 +47,7 @@ type NodePerf struct {
 	CorrectnessDigest  *rolling.PointPolicy
 	NCorrectnessDigest float64
 
-	Tier string
+	Tier
 
 	lastFailureAt time.Time
 
@@ -124,8 +125,8 @@ func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) {
 }
 
 type RemovedNode struct {
-	Node                string
-	Tier                string
+	Node string
+	Tier
 	Reason              string
 	ConnErrors          int
 	NetworkErrors       int
@@ -203,41 +204,32 @@ func (t *TieredHashing) GetPoolMetrics() PoolMetrics {
 	}
 }
 
-func (t *TieredHashing) GetNodes(key string, n int) []string {
-	// TODO Replace this with mirroring once we have some metrics and correctness info
-	// Pick nodes from the unknown tier 1 in every 5 times
+func (t *TieredHashing) GetNodes(from Tier, key string, n int) []string {
 	var nodes []string
 	var ok bool
 
-	if !t.cfg.AlwaysMainFirst && rand.Float64() <= 0.2 {
-		if t.unknownSet.Size() != 0 {
-			nodes, ok = t.unknownSet.GetNodes(key, t.unknownPossible(n))
-			if !ok {
-				return nil
-			}
-			if len(nodes) == n {
-				return nodes
-			}
+	if from == TierUnknown {
+		nodes, ok = t.unknownSet.GetNodes(key, t.unknownPossible(n))
+		if !ok {
+			return nil
 		}
-
-		nodes2, _ := t.mainSet.GetNodes(key, t.mainPossible(n-len(nodes)))
-		nodes = append(nodes, nodes2...)
-	} else {
-		if t.mainSet.Size() != 0 {
-			nodes, ok = t.mainSet.GetNodes(key, t.mainPossible(n))
-			if !ok {
-				return nil
-			}
-			if len(nodes) == n {
-				return nodes
-			}
+	} else if from == TierMain {
+		nodes, ok = t.mainSet.GetNodes(key, t.mainPossible(n))
+		if !ok {
+			return nil
 		}
-
-		nodes2, _ := t.unknownSet.GetNodes(key, t.unknownPossible(n-len(nodes)))
-		nodes = append(nodes, nodes2...)
 	}
 
 	return nodes
+}
+
+func (t *TieredHashing) NodeTier(node string) Tier {
+	for k, n := range t.nodes {
+		if k == node {
+			return n.Tier
+		}
+	}
+	return TierUnknown
 }
 
 func (t *TieredHashing) unknownPossible(n int) int {
@@ -282,7 +274,7 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 		t.nodes[node] = &NodePerf{
 			LatencyDigest:     rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.LatencyWindowSize))),
 			CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.CorrectnessWindowSize))),
-			Tier:              tierUnknown,
+			Tier:              TierUnknown,
 		}
 		t.unknownSet = t.unknownSet.AddNode(node)
 	}
@@ -308,7 +300,7 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 		t.nodes[node] = &NodePerf{
 			LatencyDigest:     rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.LatencyWindowSize))),
 			CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.CorrectnessWindowSize))),
-			Tier:              tierUnknown,
+			Tier:              TierUnknown,
 		}
 		t.unknownSet = t.unknownSet.AddNode(node)
 		t.removedNodesTimeCache.Delete(node)
@@ -342,22 +334,22 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 	unknownTier := nodes[n:]
 
 	for _, nodeL := range mainTier {
-		if t.nodes[nodeL.node].Tier == tierUnknown {
+		if t.nodes[nodeL.node].Tier == TierUnknown {
 			unknownToMain++
 			n := nodeL.node
 			t.mainSet = t.mainSet.AddNode(n)
 			t.unknownSet = t.unknownSet.RemoveNode(n)
-			t.nodes[n].Tier = tierMain
+			t.nodes[n].Tier = TierMain
 		}
 	}
 
 	for _, nodeL := range unknownTier {
-		if t.nodes[nodeL.node].Tier == tierMain {
+		if t.nodes[nodeL.node].Tier == TierMain {
 			mainToUnknown++
 			n := nodeL.node
 			t.unknownSet = t.unknownSet.AddNode(n)
 			t.mainSet = t.mainSet.RemoveNode(n)
-			t.nodes[n].Tier = tierUnknown
+			t.nodes[n].Tier = TierUnknown
 		}
 	}
 
@@ -397,7 +389,7 @@ func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
 	delete(t.nodes, node)
 	t.removedNodesTimeCache.Set(node, struct{}{}, cache.DefaultExpiration)
 
-	if perf.Tier == tierMain {
+	if perf.Tier == TierMain {
 		// if we've removed a main set node we should replace it
 		mc, uc = t.UpdateMainTierWithTopN()
 	}

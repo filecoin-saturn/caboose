@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/filecoin-saturn/caboose/tieredhashing"
 	"io"
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/filecoin-saturn/caboose/tieredhashing"
 
 	ipfsblockstore "github.com/ipfs/boxo/blockstore"
 	ipath "github.com/ipfs/boxo/coreiface/path"
@@ -52,6 +53,9 @@ type Config struct {
 	// PoolRefresh is the interval at which we refresh the pool of Saturn nodes.
 	PoolRefresh time.Duration
 
+	// MirrorFraction is what fraction of requests will be mirrored to another random node in order to track metrics / determine the current best nodes.
+	MirrorFraction float64
+
 	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
 	MaxRetrievalAttempts int
 
@@ -76,6 +80,7 @@ const DefaultSaturnBlockRequestTimeout = 19 * time.Second
 const DefaultSaturnCarRequestTimeout = 30 * time.Minute
 
 const DefaultMaxRetries = 3
+const DefaultMirrorFraction = 0.05
 
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=200"
@@ -175,6 +180,9 @@ func NewCaboose(config *Config) (*Caboose, error) {
 
 	if config.SaturnNodeCoolOff == 0 {
 		config.SaturnNodeCoolOff = DefaultSaturnNodeCoolOff
+	}
+	if config.MirrorFraction == 0 {
+		config.MirrorFraction = DefaultMirrorFraction
 	}
 
 	c := Caboose{
