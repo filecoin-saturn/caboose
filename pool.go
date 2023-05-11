@@ -148,6 +148,7 @@ func (p *pool) refreshWithNodes(newEP []string) {
 
 	for _, perf := range p.th.GetPerf() {
 		perf := perf
+		fmt.Printf("perf: %+v\n", perf)
 		if perf.NLatencyDigest <= 0 {
 			continue
 		}

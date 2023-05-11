@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -55,10 +54,9 @@ func (e *ep) Setup() {
 
 func TestPoolMiroring(t *testing.T) {
 	opts := []tieredhashing.Option{
-		tieredhashing.WithCorrectnessWindowSize(1),
+		tieredhashing.WithCorrectnessWindowSize(2),
+		tieredhashing.WithLatencyWindowSize(2),
 		tieredhashing.WithMaxMainTierSize(1),
-		tieredhashing.WithAlwaysMainFirst(),
-		tieredhashing.WithLatencyWindowSize(1),
 	}
 
 	saturnClient := &http.Client{
@@ -112,10 +110,11 @@ func TestPoolMiroring(t *testing.T) {
 	p := newPool(&conf)
 	p.Start()
 	time.Sleep(time.Millisecond)
+
 	// promote one node to main pool. other will remain in uknown pool.
 	p.th.RecordSuccess(eURL, tieredhashing.ResponseMetrics{Success: true, TTFBMs: 30, SpeedPerMs: 30})
+	p.th.RecordSuccess(eURL, tieredhashing.ResponseMetrics{Success: true, TTFBMs: 30, SpeedPerMs: 30})
 	p.th.UpdateMainTierWithTopN()
-	fmt.Printf("metrics: %v\n", p.th.GetPoolMetrics())
 
 	_, err = p.fetchBlockWith(context.Background(), finalC, "")
 	if err != nil {
