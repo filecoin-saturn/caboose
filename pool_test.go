@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -53,7 +54,12 @@ func (e *ep) Setup() {
 }
 
 func TestPoolMiroring(t *testing.T) {
-	opts := []tieredhashing.Option{tieredhashing.WithCorrectnessWindowSize(1), tieredhashing.WithMaxPoolSize(5)}
+	opts := []tieredhashing.Option{
+		tieredhashing.WithCorrectnessWindowSize(1),
+		tieredhashing.WithMaxMainTierSize(1),
+		tieredhashing.WithAlwaysMainFirst(),
+		tieredhashing.WithLatencyWindowSize(1),
+	}
 
 	saturnClient := &http.Client{
 		Transport: &http.Transport{
@@ -62,24 +68,6 @@ func TestPoolMiroring(t *testing.T) {
 			},
 		},
 	}
-	conf := Config{
-		OrchestratorEndpoint: nil,
-		OrchestratorClient:   http.DefaultClient,
-		OrchestratorOverride: []string{},
-		LoggingEndpoint:      url.URL{},
-		LoggingClient:        http.DefaultClient,
-		LoggingInterval:      time.Hour,
-
-		SaturnClient:         saturnClient,
-		DoValidation:         false,
-		PoolRefresh:          time.Millisecond * 50,
-		MaxRetrievalAttempts: 1,
-		TieredHashingOpts:    opts,
-		MirrorFraction:       1.0,
-	}
-
-	p := newPool(&conf)
-	p.Start()
 
 	data := []byte("hello world")
 	ls := cidlink.DefaultLinkSystem()
@@ -98,18 +86,49 @@ func TestPoolMiroring(t *testing.T) {
 	e := ep{}
 	e.Setup()
 	e.resp = carBytes.Bytes()
+	eURL := strings.TrimPrefix(e.server.URL, "https://")
 
-	conf.OrchestratorOverride = []string{e.server.URL}
+	e2 := ep{}
+	e2.Setup()
+	e2.resp = carBytes.Bytes()
+	e2URL := strings.TrimPrefix(e2.server.URL, "https://")
 
-	urlWOScheme := strings.TrimPrefix(e.server.URL, "https://")
-	_, _, err = p.doFetch(context.Background(), urlWOScheme, finalC, 1)
+	conf := Config{
+		OrchestratorEndpoint: nil,
+		OrchestratorClient:   http.DefaultClient,
+		OrchestratorOverride: []string{eURL, e2URL},
+		LoggingEndpoint:      url.URL{},
+		LoggingClient:        http.DefaultClient,
+		LoggingInterval:      time.Hour,
+
+		SaturnClient:         saturnClient,
+		DoValidation:         false,
+		PoolRefresh:          time.Millisecond * 50,
+		MaxRetrievalAttempts: 1,
+		TieredHashingOpts:    opts,
+		MirrorFraction:       1.0,
+	}
+
+	p := newPool(&conf)
+	p.Start()
+	time.Sleep(time.Millisecond)
+	// promote one node to main pool. other will remain in uknown pool.
+	p.th.RecordSuccess(eURL, tieredhashing.ResponseMetrics{Success: true, TTFBMs: 30, SpeedPerMs: 30})
+	p.th.UpdateMainTierWithTopN()
+	fmt.Printf("metrics: %v\n", p.th.GetPoolMetrics())
+
+	_, err = p.fetchBlockWith(context.Background(), finalC, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	time.Sleep(20 * time.Millisecond)
 	p.Close()
 
-	if e.cnt != 2 {
-		t.Fatalf("expected 2 fetches with mirroring, got %d", e.cnt)
+	if e.cnt != 1 {
+		t.Fatalf("expected 1 primary fetch, got %d", e.cnt)
+	}
+	if e2.cnt != 1 {
+		t.Fatalf("expected 1 mirrored fetch, got %d", e2.cnt)
 	}
 }

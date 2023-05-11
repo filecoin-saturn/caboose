@@ -194,12 +194,14 @@ func (p *pool) checkPool() {
 			// see if it is to a main-tier node - if so find appropriate test node to test against.
 			p.lk.RLock()
 			if p.th.NodeTier(msg.node) != tieredhashing.TierMain {
+				fmt.Printf("initial node not main\n")
 				p.lk.RUnlock()
 				continue
 			}
 			testNodes := p.th.GetNodes(tieredhashing.TierUnknown, msg.key, 1)
 			p.lk.RUnlock()
 			if len(testNodes) == 0 {
+				fmt.Printf("no uknown to test\n")
 				continue
 			}
 			trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
