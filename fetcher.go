@@ -259,6 +259,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	var resp *http.Response
 	saturnCallsTotalMetric.WithLabelValues(resourceType).Add(1)
+	startReq := time.Now()
 	resp, err = p.config.SaturnClient.Do(req)
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
@@ -276,6 +277,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		rm.ConnFailure = true
 		return rm, fmt.Errorf("http request failed: %w", err)
 	}
+
+	headerTTFBPerPeerMetric.WithLabelValues(resourceType, getCacheStatus(respHeader.Get(saturnCacheHitKey) == saturnCacheHit)).Observe(float64(time.Since(startReq).Milliseconds()))
+
 	respHeader = resp.Header
 	defer resp.Body.Close()
 
@@ -365,6 +369,15 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tcp_connection").Observe(float64(result.TCPConnection.Milliseconds()))
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tls_handshake").Observe(float64(result.TLSHandshake.Milliseconds()))
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "wait_after_request_sent_for_header").Observe(float64(result.ServerProcessing.Milliseconds()))
+
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "name_lookup").
+		Observe(float64(result.NameLookup.Milliseconds()))
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "connect").
+		Observe(float64(result.Connect.Milliseconds()))
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "pre_transfer").
+		Observe(float64(result.Pretransfer.Milliseconds()))
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "start_transfer").
+		Observe(float64(result.StartTransfer.Milliseconds()))
 
 	rm.TTFBMs = float64(wrapped.firstByte.Sub(start).Milliseconds())
 	rm.Success = true
