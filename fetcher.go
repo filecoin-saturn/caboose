@@ -278,9 +278,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		return rm, fmt.Errorf("http request failed: %w", err)
 	}
 
+	respHeader = resp.Header
 	headerTTFBPerPeerMetric.WithLabelValues(resourceType, getCacheStatus(respHeader.Get(saturnCacheHitKey) == saturnCacheHit)).Observe(float64(time.Since(startReq).Milliseconds()))
 
-	respHeader = resp.Header
 	defer resp.Body.Close()
 
 	code = resp.StatusCode
