@@ -86,6 +86,12 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 
 // TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
 func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (rm tieredhashing.ResponseMetrics, err error) {
+	var left time.Duration
+	deadline, ok := ctx.Deadline()
+	if ok {
+		left = deadline.Sub(time.Now())
+	}
+
 	rm = tieredhashing.ResponseMetrics{}
 	resourceType := resourceTypeCar
 	if mime == "application/vnd.ipld.raw" {
@@ -153,7 +159,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 		durationSecs := time.Since(start).Seconds()
 		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "duration", durationSecs, "attempt", attempt, "error", err,
-			"proto", proto)
+			"proto", proto, "left", left)
 		fetchResponseCodeMetric.WithLabelValues(resourceType, fmt.Sprintf("%d", code)).Add(1)
 		var ttfbMs int64
 
