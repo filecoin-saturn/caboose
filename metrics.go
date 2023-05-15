@@ -140,6 +140,11 @@ var (
 		Buckets: durationMsPerCarHistogram,
 	}, []string{"cache_status", "car_size"})
 
+	headerTTFBPerPeerMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "header_ttfb_peer"),
+		Buckets: durationMsPerCarHistogram,
+	}, []string{"resourceType", "cache_status"})
+
 	// failure
 	fetchDurationPerCarPerPeerFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_car_peer_failure"),
@@ -260,6 +265,7 @@ func init() {
 	CabooseMetrics.MustRegister(fetchDurationCarFailureMetric)
 	CabooseMetrics.MustRegister(fetchTTFBPerBlockPerPeerSuccessMetric)
 	CabooseMetrics.MustRegister(fetchTTFBPerCARPerPeerSuccessMetric)
+	CabooseMetrics.MustRegister(headerTTFBPerPeerMetric)
 
 	CabooseMetrics.MustRegister(fetchCacheCountSuccessTotalMetric)
 

@@ -152,7 +152,8 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		durationSecs := time.Since(start).Seconds()
-		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "duration", durationSecs, "attempt", attempt, "error", err)
+		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "duration", durationSecs, "attempt", attempt, "error", err,
+			"proto", proto)
 		fetchResponseCodeMetric.WithLabelValues(resourceType, fmt.Sprintf("%d", code)).Add(1)
 		var ttfbMs int64
 
@@ -259,6 +260,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	var resp *http.Response
 	saturnCallsTotalMetric.WithLabelValues(resourceType).Add(1)
+	startReq := time.Now()
 	resp, err = p.config.SaturnClient.Do(req)
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
@@ -276,7 +278,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		rm.ConnFailure = true
 		return rm, fmt.Errorf("http request failed: %w", err)
 	}
+
 	respHeader = resp.Header
+	headerTTFBPerPeerMetric.WithLabelValues(resourceType, getCacheStatus(respHeader.Get(saturnCacheHitKey) == saturnCacheHit)).Observe(float64(time.Since(startReq).Milliseconds()))
+
 	defer resp.Body.Close()
 
 	code = resp.StatusCode
@@ -365,6 +370,15 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tcp_connection").Observe(float64(result.TCPConnection.Milliseconds()))
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tls_handshake").Observe(float64(result.TLSHandshake.Milliseconds()))
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "wait_after_request_sent_for_header").Observe(float64(result.ServerProcessing.Milliseconds()))
+
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "name_lookup").
+		Observe(float64(result.NameLookup.Milliseconds()))
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "connect").
+		Observe(float64(result.Connect.Milliseconds()))
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "pre_transfer").
+		Observe(float64(result.Pretransfer.Milliseconds()))
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "start_transfer").
+		Observe(float64(result.StartTransfer.Milliseconds()))
 
 	rm.TTFBMs = float64(wrapped.firstByte.Sub(start).Milliseconds())
 	rm.Success = true
