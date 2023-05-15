@@ -152,7 +152,8 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		durationSecs := time.Since(start).Seconds()
-		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "duration", durationSecs, "attempt", attempt, "error", err)
+		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "duration", durationSecs, "attempt", attempt, "error", err,
+			"proto", proto)
 		fetchResponseCodeMetric.WithLabelValues(resourceType, fmt.Sprintf("%d", code)).Add(1)
 		var ttfbMs int64
 
