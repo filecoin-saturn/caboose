@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"time"
@@ -229,6 +230,11 @@ func (c *Caboose) Close() {
 
 // Fetch allows fetching car archives by a path of the form `/ipfs/<cid>[/path/to/file]`
 func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error {
+	// reduce load by half
+	if rand.Float64() < 0.5 {
+		return errors.New("not possible")
+	}
+
 	ctx, span := spanTrace(ctx, "Fetch", trace.WithAttributes(attribute.String("path", path)))
 	defer span.End()
 
@@ -252,6 +258,11 @@ func (c *Caboose) GetPoolPerf() map[string]*tieredhashing.NodePerf {
 }
 
 func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
+	// reduce load by half
+	if rand.Float64() < 0.5 {
+		return nil, errors.New("not possible")
+	}
+
 	ctx, span := spanTrace(ctx, "Get", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
