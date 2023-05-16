@@ -380,11 +380,6 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 		}
 	}
 
-	// if we don't have enough nodes in the main set, pick the best from the unknown set
-	if t.mainSet.Size() < t.cfg.MaxMainTierSize {
-		unknownToMain = unknownToMain + t.MoveBestUnknownToMain()
-	}
-
 	return
 }
 
@@ -424,6 +419,11 @@ func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
 	if perf.Tier == TierMain {
 		// if we've removed a main set node we should replace it
 		mc, uc = t.UpdateMainTierWithTopN()
+
+		// if we don't have enough nodes in the main set, pick the best from the unknown set
+		if t.mainSet.Size() < t.cfg.MaxMainTierSize {
+			uc = uc + t.MoveBestUnknownToMain()
+		}
 	}
 	return
 }
