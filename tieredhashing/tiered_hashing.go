@@ -13,8 +13,8 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize     = 50
-	maxMainTierSize = 10
+	maxPoolSize     = 30
+	maxMainTierSize = 20
 	PLatency        = 90
 
 	// main tier has the top `maxMainTierSize` nodes
@@ -24,16 +24,16 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 50
-	correctnessWindowSize = 100
+	latencyWindowSize     = 500
+	correctnessWindowSize = 500
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
-	minAcceptableCorrectnessPct = float64(75)
+	minAcceptableCorrectnessPct = float64(70)
 
 	// helps shield nodes against bursty failures
 	failureDebounce = 2 * time.Second
-	removalDuration = 24 * time.Hour
+	removalDuration = 2 * time.Hour
 
 	maxDebounceLatency = 500
 )
@@ -137,7 +137,7 @@ type RemovedNode struct {
 }
 
 func (t *TieredHashing) DoRefresh() bool {
-	return t.GetPoolMetrics().Total <= (t.cfg.MaxPoolSize / 10)
+	return t.GetPoolMetrics().Total <= ((t.cfg.MaxPoolSize * 3) / 4)
 }
 
 func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *RemovedNode {
@@ -171,6 +171,12 @@ func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *RemovedN
 	if !t.cfg.NoRemove {
 		if _, ok := t.isCorrectnessPolicyEligible(perf); !ok {
 			mc, uc := t.removeFailedNode(node)
+
+			// if we don't have enough nodes in the main set, pick the best from the unknown set
+			if t.mainSet.Size() < t.cfg.MaxMainTierSize {
+				uc = uc + t.MoveBestUnknownToMain()
+			}
+
 			return &RemovedNode{
 				Node:                node,
 				Tier:                perf.Tier,
@@ -307,6 +313,30 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 	}
 
 	return
+}
+
+func (t *TieredHashing) MoveBestUnknownToMain() int {
+	var max float64
+	var node string
+
+	for n, perf := range t.nodes {
+		pc := perf
+		if pc.Tier == TierUnknown {
+			if pc.NLatencyDigest > max {
+				max = pc.NLatencyDigest
+				node = n
+			}
+		}
+	}
+
+	if len(node) == 0 {
+		return 0
+	}
+
+	t.unknownSet = t.unknownSet.RemoveNode(node)
+	t.mainSet = t.mainSet.AddNode(node)
+	t.nodes[node].Tier = TierMain
+	return 1
 }
 
 func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {

@@ -57,7 +57,8 @@ type poolRequest struct {
 	node string
 	path string
 	// the key for node affinity for the request
-	key string
+	key          string
+	resourceType string
 }
 
 type pool struct {
@@ -207,9 +208,9 @@ func (p *pool) checkPool() {
 			err := p.fetchResourceAndUpdate(trialTimeout, testNodes[0], msg.path, 0, p.mirrorValidator)
 			cancel()
 			if err != nil {
-				mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
+				mirroredTrafficTotalMetric.WithLabelValues(msg.resourceType, "error").Inc()
 			} else {
-				mirroredTrafficTotalMetric.WithLabelValues("no-error").Inc()
+				mirroredTrafficTotalMetric.WithLabelValues(msg.resourceType, "no-error").Inc()
 			}
 		case <-p.done:
 			return
@@ -323,7 +324,8 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 		// sample request for mirroring
 		if p.config.MirrorFraction > rand.Float64() {
 			select {
-			case p.mirrorSamples <- poolRequest{node: nodes[i], path: fmt.Sprintf("/ipfs/%s?format=car&car-scope=block", c), key: aff}:
+			case p.mirrorSamples <- poolRequest{node: nodes[i], path: fmt.Sprintf("/ipfs/%s?format=car&car-scope=block", c), key: aff,
+				resourceType: resourceTypeBlock}:
 			default:
 			}
 		}
@@ -426,7 +428,7 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 		// sample request for mirroring
 		if p.config.MirrorFraction > rand.Float64() {
 			select {
-			case p.mirrorSamples <- poolRequest{node: nodes[i], path: pq[0], key: aff}:
+			case p.mirrorSamples <- poolRequest{node: nodes[i], path: pq[0], key: aff, resourceType: resourceTypeCar}:
 			default:
 			}
 		}

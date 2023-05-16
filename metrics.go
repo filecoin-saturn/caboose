@@ -233,7 +233,7 @@ var (
 
 	mirroredTrafficTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "mirrored_traffic_total"),
-	}, []string{"error_status"})
+	}, []string{"resourceType", "error_status"})
 )
 
 var CabooseMetrics = prometheus.NewRegistry()
