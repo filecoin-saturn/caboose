@@ -274,20 +274,24 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	startReq := time.Now()
 	resp, err = p.config.SaturnClient.Do(req)
 	if err != nil {
-		if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
-			if errors.Is(err, context.Canceled) {
-				return rm, reqCtx.Err()
+		// retry once more
+		resp, err = p.config.SaturnClient.Do(req)
+		if err != nil {
+			if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
+				if errors.Is(err, context.Canceled) {
+					return rm, reqCtx.Err()
+				}
 			}
-		}
 
-		if errors.Is(err, context.DeadlineExceeded) {
-			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure-timeout", "0").Add(1)
-		} else {
-			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure", "0").Add(1)
+			if errors.Is(err, context.DeadlineExceeded) {
+				saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure-timeout", "0").Add(1)
+			} else {
+				saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure", "0").Add(1)
+			}
+			networkError = err.Error()
+			rm.ConnFailure = true
+			return rm, fmt.Errorf("http request failed: %w", err)
 		}
-		networkError = err.Error()
-		rm.ConnFailure = true
-		return rm, fmt.Errorf("http request failed: %w", err)
 	}
 
 	respHeader = resp.Header
@@ -316,6 +320,8 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// empty body so it can be re-used.
+		_, _ = io.Copy(io.Discard, resp.Body)
 		saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "non-2xx", fmt.Sprintf("%d", resp.StatusCode)).Add(1)
 		if resp.StatusCode == http.StatusTooManyRequests {
 			var retryAfter time.Duration
@@ -333,8 +339,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			return rm, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, &ErrSaturnTooManyRequests{retryAfter: retryAfter, Node: from})
 		}
 
-		// empty body so it can be re-used.
-		_, _ = io.Copy(io.Discard, resp.Body)
 		if resp.StatusCode == http.StatusGatewayTimeout {
 			return rm, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
 		}

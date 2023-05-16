@@ -446,6 +446,14 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 			return ctx.Err()
 		}
 
+		// sample request for mirroring
+		if p.config.SuccessMirrorFraction > rand.Float64() {
+			select {
+			case p.mirrorSamples <- poolRequest{node: nodes[i], path: pq[0], key: aff, resourceType: "rand-car"}:
+			default:
+			}
+		}
+
 		err = p.fetchResourceAndUpdate(ctx, nodes[i], pq[0], i, cb, false)
 		if err != nil && errors.Is(err, context.Canceled) {
 			return err
