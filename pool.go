@@ -226,7 +226,7 @@ func (p *pool) checkPool() {
 				continue
 			}
 			trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			err := p.fetchResourceAndUpdate(trialTimeout, testNodes[0], msg.path, 0, p.mirrorValidator)
+			err := p.fetchResourceAndUpdate(trialTimeout, testNodes[0], msg.path, 0, p.mirrorValidator, true)
 			cancel()
 			if err != nil {
 				mirroredTrafficTotalMetric.WithLabelValues(msg.resourceType, "error").Inc()
@@ -342,15 +342,6 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 			return nil, ctx.Err()
 		}
 
-		// sample request for mirroring
-		if p.config.MirrorFraction > rand.Float64() {
-			select {
-			case p.mirrorSamples <- poolRequest{node: nodes[i], path: fmt.Sprintf("/ipfs/%s?format=car&car-scope=block", c), key: aff,
-				resourceType: resourceTypeBlock}:
-			default:
-			}
-		}
-
 		blk, err = p.fetchBlockAndUpdate(ctx, nodes[i], c, i)
 		if err != nil && errors.Is(err, context.Canceled) {
 			return nil, err
@@ -359,6 +350,15 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 		if err == nil {
 			durationMs := time.Since(blockFetchStart).Milliseconds()
 			fetchDurationBlockSuccessMetric.Observe(float64(durationMs))
+
+			// sample request for mirroring
+			if p.config.SuccessMirrorFraction > rand.Float64() {
+				select {
+				case p.mirrorSamples <- poolRequest{node: nodes[i], path: fmt.Sprintf("/ipfs/%s?format=car&car-scope=block", c), key: aff,
+					resourceType: resourceTypeBlock}:
+				default:
+				}
+			}
 			return
 		}
 	}
@@ -446,14 +446,7 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 			return ctx.Err()
 		}
 
-		// sample request for mirroring
-		if p.config.MirrorFraction > rand.Float64() {
-			select {
-			case p.mirrorSamples <- poolRequest{node: nodes[i], path: pq[0], key: aff, resourceType: resourceTypeCar}:
-			default:
-			}
-		}
-		err = p.fetchResourceAndUpdate(ctx, nodes[i], pq[0], i, cb)
+		err = p.fetchResourceAndUpdate(ctx, nodes[i], pq[0], i, cb, false)
 		if err != nil && errors.Is(err, context.Canceled) {
 			return err
 		}
@@ -466,6 +459,15 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 				// TODO: how to account for total retrieved data
 				//fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
 				fetchDurationCarSuccessMetric.Observe(float64(durationMs))
+
+				// sample request for mirroring
+				if p.config.SuccessMirrorFraction > rand.Float64() {
+					select {
+					case p.mirrorSamples <- poolRequest{node: nodes[i], path: pq[0], key: aff, resourceType: resourceTypeCar}:
+					default:
+					}
+				}
+
 				return
 			} else {
 				// TODO: potentially worth doing something smarter here based on what the current state
@@ -510,8 +512,8 @@ func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, 
 	return
 }
 
-func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path string, attempt int, cb DataCallback) (err error) {
-	rm, err := p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
+func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path string, attempt int, cb DataCallback, mirrored bool) (err error) {
+	rm, err := p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb, mirrored)
 	if err != nil && errors.Is(err, context.Canceled) {
 		return err
 	}

@@ -80,12 +80,13 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 			return e
 		}
 		return nil
-	})
+	}, false)
 	return
 }
 
 // TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
-func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (rm tieredhashing.ResponseMetrics, err error) {
+func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback,
+	mirrored bool) (rm tieredhashing.ResponseMetrics, err error) {
 	rm = tieredhashing.ResponseMetrics{}
 	resourceType := resourceTypeCar
 	if mime == "application/vnd.ipld.raw" {
@@ -154,7 +155,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		durationSecs := time.Since(start).Seconds()
 		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "duration", durationSecs, "attempt", attempt, "error", err,
 			"proto", proto)
-		fetchResponseCodeMetric.WithLabelValues(resourceType, fmt.Sprintf("%d", code)).Add(1)
+		if !mirrored {
+			fetchResponseCodeMetric.WithLabelValues(resourceType, fmt.Sprintf("%d", code)).Add(1)
+		}
 		var ttfbMs int64
 
 		if err == nil && received > 0 {
@@ -171,8 +174,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			fetchCacheCountSuccessTotalMetric.WithLabelValues(resourceType, cacheStatus).Add(1)
 			// track individual block metrics separately
 			if isBlockRequest {
-				fetchTTFBPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(ttfbMs))
-				fetchDurationPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
+				if !mirrored {
+					fetchTTFBPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(ttfbMs))
+					fetchDurationPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
+				}
 			} else {
 				ci := 0
 				for index, value := range carSizes {
@@ -183,12 +188,16 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				}
 				carSizeStr := carSizesStr[ci]
 
-				fetchTTFBPerCARPerPeerSuccessMetric.WithLabelValues(cacheStatus, carSizeStr).Observe(float64(ttfbMs))
-				fetchDurationPerCarPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
+				if !mirrored {
+					fetchTTFBPerCARPerPeerSuccessMetric.WithLabelValues(cacheStatus, carSizeStr).Observe(float64(ttfbMs))
+					fetchDurationPerCarPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
+				}
 			}
 
 			// update L1 server timings
-			updateSuccessServerTimingMetrics(respHeader.Values(servertiming.HeaderKey), resourceType, isCacheHit, durationMs, ttfbMs, received)
+			if !mirrored {
+				updateSuccessServerTimingMetrics(respHeader.Values(servertiming.HeaderKey), resourceType, isCacheHit, durationMs, ttfbMs, received)
+			}
 		} else {
 			if isBlockRequest {
 				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
@@ -197,7 +206,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			}
 
 			if code == http.StatusBadGateway || code == http.StatusGatewayTimeout {
-				updateLassie5xxTime(respHeader.Values(servertiming.HeaderKey), resourceType)
+				if !mirrored {
+					updateLassie5xxTime(respHeader.Values(servertiming.HeaderKey), resourceType)
+				}
 			}
 		}
 
@@ -280,7 +291,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	respHeader = resp.Header
-	headerTTFBPerPeerMetric.WithLabelValues(resourceType, getCacheStatus(respHeader.Get(saturnCacheHitKey) == saturnCacheHit)).Observe(float64(time.Since(startReq).Milliseconds()))
+	if !mirrored {
+		headerTTFBPerPeerMetric.WithLabelValues(resourceType, getCacheStatus(respHeader.Get(saturnCacheHitKey) == saturnCacheHit)).Observe(float64(time.Since(startReq).Milliseconds()))
+	}
 
 	defer resp.Body.Close()
 
