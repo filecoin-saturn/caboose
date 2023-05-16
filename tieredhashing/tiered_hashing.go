@@ -15,7 +15,7 @@ import (
 const (
 	maxPoolSize     = 50
 	maxMainTierSize = 20
-	PLatency        = 90
+	PLatency        = 99
 
 	// main tier has the top `maxMainTierSize` nodes
 	TierMain    = Tier("main")
