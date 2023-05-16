@@ -29,13 +29,13 @@ const (
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
-	minAcceptableCorrectnessPct = float64(70)
+	minAcceptableCorrectnessPct = float64(75)
 
 	// helps shield nodes against bursty failures
 	failureDebounce = 2 * time.Second
 	removalDuration = 2 * time.Hour
 
-	maxDebounceLatency = 500
+	maxDebounceLatency = 1000
 )
 
 type Tier string
