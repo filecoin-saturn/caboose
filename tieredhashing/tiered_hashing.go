@@ -14,7 +14,7 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize     = 50
+	maxPoolSize     = 20
 	maxMainTierSize = 10
 	PLatency        = 90
 
@@ -26,11 +26,11 @@ const (
 
 	// use rolling windows for latency and correctness calculations
 	latencyWindowSize     = 500
-	correctnessWindowSize = 500
+	correctnessWindowSize = 1000
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
-	minAcceptableCorrectnessPct = float64(75)
+	minAcceptableCorrectnessPct = float64(70)
 
 	// helps shield nodes against bursty failures
 	failureDebounce = 2 * time.Second
