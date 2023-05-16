@@ -172,11 +172,6 @@ func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *RemovedN
 		if _, ok := t.isCorrectnessPolicyEligible(perf); !ok {
 			mc, uc := t.removeFailedNode(node)
 
-			// if we don't have enough nodes in the main set, pick the best from the unknown set
-			if t.mainSet.Size() < t.cfg.MaxMainTierSize {
-				uc = uc + t.MoveBestUnknownToMain()
-			}
-
 			return &RemovedNode{
 				Node:                node,
 				Tier:                perf.Tier,
@@ -381,6 +376,11 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 			t.mainSet = t.mainSet.RemoveNode(n)
 			t.nodes[n].Tier = TierUnknown
 		}
+	}
+
+	// if we don't have enough nodes in the main set, pick the best from the unknown set
+	if t.mainSet.Size() < t.cfg.MaxMainTierSize {
+		unknownToMain = unknownToMain + t.MoveBestUnknownToMain()
 	}
 
 	return
