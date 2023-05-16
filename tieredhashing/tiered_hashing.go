@@ -14,7 +14,7 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize     = 40
+	maxPoolSize     = 50
 	maxMainTierSize = 10
 	PLatency        = 90
 
