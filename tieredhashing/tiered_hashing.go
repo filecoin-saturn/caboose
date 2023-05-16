@@ -25,8 +25,8 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 1000
-	correctnessWindowSize = 1000
+	latencyWindowSize     = 2000
+	correctnessWindowSize = 2000
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
@@ -34,7 +34,7 @@ const (
 
 	// helps shield nodes against bursty failures
 	failureDebounce = 2 * time.Second
-	removalDuration = 2 * time.Hour
+	removalDuration = 3 * time.Hour
 
 	maxDebounceLatency = 1000
 )
