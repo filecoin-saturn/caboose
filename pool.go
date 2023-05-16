@@ -167,7 +167,7 @@ func (p *pool) refreshWithNodes(newEP []string) {
 		Buckets: latencyDistMsHistogram,
 	}, []string{"tier", "percentile"})
 
-	percentiles := []float64{25, 50, 75, 90, 95}
+	percentiles := []float64{25, 50, 75, 90, 95, 99}
 
 	for _, perf := range p.th.GetPerf() {
 		perf := perf
