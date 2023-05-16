@@ -1,6 +1,7 @@
 package tieredhashing
 
 import (
+	"math"
 	"net/http"
 	"time"
 
@@ -311,7 +312,7 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 }
 
 func (t *TieredHashing) MoveBestUnknownToMain() int {
-	var min float64
+	min := math.MaxFloat64
 	var node string
 
 	for n, perf := range t.nodes {
