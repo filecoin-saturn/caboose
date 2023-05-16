@@ -25,8 +25,8 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 2000
-	correctnessWindowSize = 2000
+	latencyWindowSize     = 1000
+	correctnessWindowSize = 1000
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
