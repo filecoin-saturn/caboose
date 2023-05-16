@@ -449,7 +449,7 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 		// sample request for mirroring
 		if p.config.SuccessMirrorFraction > rand.Float64() {
 			select {
-			case p.mirrorSamples <- poolRequest{node: nodes[i], path: pq[0], key: aff, resourceType: "rand-car"}:
+			case p.mirrorSamples <- poolRequest{node: nodes[i], path: pq[0], key: aff, resourceType: resourceTypeCar}:
 			default:
 			}
 		}
@@ -463,19 +463,12 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 		if err == nil {
 			pq = pq[1:]
 			if len(pq) == 0 {
+				carRequestCompleteMetric.Inc()
+
 				durationMs := time.Since(carFetchStart).Milliseconds()
 				// TODO: how to account for total retrieved data
 				//fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
 				fetchDurationCarSuccessMetric.Observe(float64(durationMs))
-
-				// sample request for mirroring
-				if p.config.SuccessMirrorFraction > rand.Float64() {
-					select {
-					case p.mirrorSamples <- poolRequest{node: nodes[i], path: pq[0], key: aff, resourceType: resourceTypeCar}:
-					default:
-					}
-				}
-
 				return
 			} else {
 				// TODO: potentially worth doing something smarter here based on what the current state
