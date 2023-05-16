@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/asecurityteam/rolling"
@@ -99,6 +100,26 @@ func newPool(c *Config) *pool {
 		fetchKeyFailureCache:  cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 		th:                    tieredhashing.New(topts...),
 	}
+
+	// Set ulimit
+	var rLimit syscall.Rlimit
+	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+	if err != nil {
+		goLogger.Error("Error Getting Rlimit ", err)
+	}
+	goLogger.Info("Rlimit Init", rLimit)
+	rLimit.Max = 999999
+	rLimit.Cur = 999999
+	err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+	if err != nil {
+		goLogger.Error("Error Getting Rlimit ", err)
+
+	}
+	err = syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+	if err != nil {
+		goLogger.Error("Error Getting Rlimit ", err)
+	}
+	goLogger.Info("Rlimit Init", rLimit)
 
 	return &p
 }

@@ -13,7 +13,7 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize     = 30
+	maxPoolSize     = 50
 	maxMainTierSize = 20
 	PLatency        = 90
 
@@ -137,7 +137,7 @@ type RemovedNode struct {
 }
 
 func (t *TieredHashing) DoRefresh() bool {
-	return t.GetPoolMetrics().Total <= ((t.cfg.MaxPoolSize * 3) / 4)
+	return t.GetPoolMetrics().Total <= (t.cfg.MaxPoolSize / 2)
 }
 
 func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *RemovedNode {
@@ -311,14 +311,15 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 }
 
 func (t *TieredHashing) MoveBestUnknownToMain() int {
-	var max float64
+	var min float64
 	var node string
 
 	for n, perf := range t.nodes {
 		pc := perf
 		if pc.Tier == TierUnknown {
-			if pc.NLatencyDigest > max {
-				max = pc.NLatencyDigest
+			latency := pc.LatencyDigest.Reduce(rolling.Percentile(PLatency))
+			if latency != 0 && latency < min {
+				min = latency
 				node = n
 			}
 		}
