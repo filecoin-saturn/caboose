@@ -14,8 +14,8 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize     = 50
-	maxMainTierSize = 20
+	maxPoolSize     = 40
+	maxMainTierSize = 10
 	PLatency        = 90
 
 	// main tier has the top `maxMainTierSize` nodes
