@@ -1,6 +1,7 @@
 package tieredhashing
 
 import (
+	"math"
 	"net/http"
 	"time"
 
@@ -13,9 +14,10 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize     = 50
-	maxMainTierSize = 10
-	PLatency        = 90
+	maxPoolSize          = 100
+	maxMainTierSize      = 10
+	PLatency             = 90
+	maxPoolSizeAfterInit = 20
 
 	// main tier has the top `maxMainTierSize` nodes
 	TierMain    = Tier("main")
@@ -24,18 +26,16 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 50
-	correctnessWindowSize = 100
+	latencyWindowSize     = 2000
+	correctnessWindowSize = 2000
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
-	minAcceptableCorrectnessPct = float64(75)
+	minAcceptableCorrectnessPct = float64(70)
 
 	// helps shield nodes against bursty failures
 	failureDebounce = 2 * time.Second
-	removalDuration = 24 * time.Hour
-
-	maxDebounceLatency = 500
+	removalDuration = 3 * time.Hour
 )
 
 type Tier string
@@ -55,9 +55,6 @@ type NodePerf struct {
 	connFailures  int
 	networkErrors int
 	responseCodes int
-
-	// latency
-	lastBadLatencyAt time.Time
 }
 
 // locking is left to the caller
@@ -111,17 +108,9 @@ func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) {
 	}
 	perf := t.nodes[node]
 	t.recordCorrectness(perf, true)
-
-	// show some lineancy if the node is having a bad time
-	if rm.TTFBMs > maxDebounceLatency && time.Since(perf.lastBadLatencyAt) < t.cfg.FailureDebounce {
-		return
-	}
 	// record the latency and update the last bad latency record time if needed
 	perf.LatencyDigest.Append(rm.TTFBMs)
 	perf.NLatencyDigest++
-	if rm.TTFBMs > maxDebounceLatency {
-		perf.lastBadLatencyAt = time.Now()
-	}
 }
 
 type RemovedNode struct {
@@ -137,7 +126,7 @@ type RemovedNode struct {
 }
 
 func (t *TieredHashing) DoRefresh() bool {
-	return t.GetPoolMetrics().Total <= (t.cfg.MaxPoolSize / 10)
+	return t.GetPoolMetrics().Total <= (t.cfg.MaxPoolSize*3)/4
 }
 
 func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *RemovedNode {
@@ -309,6 +298,31 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 	return
 }
 
+func (t *TieredHashing) MoveBestUnknownToMain() int {
+	min := math.MaxFloat64
+	var node string
+
+	for n, perf := range t.nodes {
+		pc := perf
+		if pc.Tier == TierUnknown {
+			latency := pc.LatencyDigest.Reduce(rolling.Percentile(PLatency))
+			if latency != 0 && latency < min {
+				min = latency
+				node = n
+			}
+		}
+	}
+
+	if len(node) == 0 {
+		return 0
+	}
+
+	t.unknownSet = t.unknownSet.RemoveNode(node)
+	t.mainSet = t.mainSet.AddNode(node)
+	t.nodes[node].Tier = TierMain
+	return 1
+}
+
 func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
 	// sort all nodes by P95 and pick the top N as main tier nodes
 	nodes := t.nodesSortedLatency()
@@ -321,7 +335,6 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 		if len(nodes) < t.cfg.MaxMainTierSize {
 			return
 		}
-		t.initDone = true
 	}
 
 	// Main Tier should have MIN(number of eligible nodes, max main tier size) nodes
@@ -352,6 +365,45 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 			t.nodes[n].Tier = TierUnknown
 		}
 	}
+
+	// if we've already finished initialisation, nothing to do here
+	if t.initDone {
+		return
+	}
+
+	t.initDone = true
+	t.cfg.MaxPoolSize = maxPoolSizeAfterInit // only
+
+	// get unknown nodes sorted by latency
+	usl := t.unknownNodesSortedLatency()
+	toKeep := t.cfg.MaxPoolSize - t.cfg.MaxMainTierSize
+	if toKeep > len(usl) {
+		toKeep = len(usl)
+	}
+
+	unodes := usl[:toKeep]
+	uNodesMap := make(map[string]struct{})
+	for _, n := range unodes {
+		uNodesMap[n.node] = struct{}{}
+	}
+
+	var toRemove []string
+	for node := range t.nodes {
+		if t.nodes[node].Tier == TierUnknown {
+			if _, ok := uNodesMap[node]; !ok {
+				toRemove = append(toRemove, node)
+			}
+		}
+	}
+
+	for _, node := range toRemove {
+		t.unknownSet = t.unknownSet.RemoveNode(node)
+		delete(t.nodes, node)
+	}
+
+	// remove all others
+
+	// reduce unknown pool size to 10 so they recieve higher mirrored traffic
 
 	return
 }
@@ -392,6 +444,11 @@ func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
 	if perf.Tier == TierMain {
 		// if we've removed a main set node we should replace it
 		mc, uc = t.UpdateMainTierWithTopN()
+
+		// if we don't have enough nodes in the main set, pick the best from the unknown set
+		if t.mainSet.Size() < t.cfg.MaxMainTierSize {
+			uc = uc + t.MoveBestUnknownToMain()
+		}
 	}
 	return
 }

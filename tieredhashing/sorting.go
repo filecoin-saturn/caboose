@@ -13,11 +13,37 @@ func (t *TieredHashing) nodesSortedLatency() []nodeWithLatency {
 		pc := perf
 
 		if t.isLatencyWindowFull(pc) {
+			latency := pc.LatencyDigest.Reduce(rolling.Percentile(PLatency))
+			if latency <= 0 {
+				continue
+			}
 			nodes = append(nodes, nodeWithLatency{
 				node:    n,
-				latency: pc.LatencyDigest.Reduce(rolling.Percentile(PLatency)),
+				latency: latency,
 			})
 		}
+	}
+
+	sort.Sort(sortedNodes(nodes))
+	return nodes
+}
+
+func (t *TieredHashing) unknownNodesSortedLatency() []nodeWithLatency {
+	var nodes []nodeWithLatency
+
+	for n, perf := range t.nodes {
+		pc := perf
+		if pc.Tier != TierUnknown {
+			continue
+		}
+		latency := pc.LatencyDigest.Reduce(rolling.Percentile(PLatency))
+		if latency <= 0 {
+			continue
+		}
+		nodes = append(nodes, nodeWithLatency{
+			node:    n,
+			latency: latency,
+		})
 	}
 
 	sort.Sort(sortedNodes(nodes))

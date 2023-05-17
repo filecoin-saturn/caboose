@@ -89,6 +89,8 @@ func TestRecordFailure(t *testing.T) {
 	th.assertSize(t, 0, 2)
 	th.h.RecordSuccess(mn, ResponseMetrics{TTFBMs: 100})
 	th.h.RecordSuccess(mn, ResponseMetrics{TTFBMs: 150})
+	th.h.RecordSuccess(node2, ResponseMetrics{TTFBMs: 150})
+
 	th.h.UpdateMainTierWithTopN()
 	th.assertSize(t, 1, 1)
 

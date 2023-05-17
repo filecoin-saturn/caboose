@@ -80,12 +80,13 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 			return e
 		}
 		return nil
-	})
+	}, false)
 	return
 }
 
 // TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
-func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (rm tieredhashing.ResponseMetrics, err error) {
+func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback,
+	mirrored bool) (rm tieredhashing.ResponseMetrics, err error) {
 	rm = tieredhashing.ResponseMetrics{}
 	resourceType := resourceTypeCar
 	if mime == "application/vnd.ipld.raw" {
@@ -154,7 +155,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		durationSecs := time.Since(start).Seconds()
 		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "duration", durationSecs, "attempt", attempt, "error", err,
 			"proto", proto)
-		fetchResponseCodeMetric.WithLabelValues(resourceType, fmt.Sprintf("%d", code)).Add(1)
+
+		if !mirrored {
+			fetchResponseCodeMetric.WithLabelValues(resourceType, fmt.Sprintf("%d", code)).Add(1)
+		}
 		var ttfbMs int64
 
 		if err == nil && received > 0 {
@@ -171,8 +175,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			fetchCacheCountSuccessTotalMetric.WithLabelValues(resourceType, cacheStatus).Add(1)
 			// track individual block metrics separately
 			if isBlockRequest {
-				fetchTTFBPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(ttfbMs))
-				fetchDurationPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
+				if !mirrored {
+					fetchTTFBPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(ttfbMs))
+					fetchDurationPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
+				}
 			} else {
 				ci := 0
 				for index, value := range carSizes {
@@ -183,8 +189,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				}
 				carSizeStr := carSizesStr[ci]
 
-				fetchTTFBPerCARPerPeerSuccessMetric.WithLabelValues(cacheStatus, carSizeStr).Observe(float64(ttfbMs))
-				fetchDurationPerCarPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
+				if !mirrored {
+					fetchTTFBPerCARPerPeerSuccessMetric.WithLabelValues(cacheStatus, carSizeStr).Observe(float64(ttfbMs))
+					fetchDurationPerCarPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
+				}
 			}
 
 			// update L1 server timings
@@ -263,25 +271,30 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	startReq := time.Now()
 	resp, err = p.config.SaturnClient.Do(req)
 	if err != nil {
-		if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
-			if errors.Is(err, context.Canceled) {
-				return rm, reqCtx.Err()
+		// retry-once
+		resp, err = p.config.SaturnClient.Do(req)
+		if err != nil {
+			if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
+				if errors.Is(err, context.Canceled) {
+					return rm, reqCtx.Err()
+				}
 			}
-		}
 
-		if errors.Is(err, context.DeadlineExceeded) {
-			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure-timeout", "0").Add(1)
-		} else {
-			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure", "0").Add(1)
+			if errors.Is(err, context.DeadlineExceeded) && !mirrored {
+				saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure-timeout", "0").Add(1)
+			} else if !mirrored {
+				saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure", "0").Add(1)
+			}
+			networkError = err.Error()
+			rm.ConnFailure = true
+			return rm, fmt.Errorf("http request failed: %w", err)
 		}
-		networkError = err.Error()
-		rm.ConnFailure = true
-		return rm, fmt.Errorf("http request failed: %w", err)
 	}
 
 	respHeader = resp.Header
-	headerTTFBPerPeerMetric.WithLabelValues(resourceType, getCacheStatus(respHeader.Get(saturnCacheHitKey) == saturnCacheHit)).Observe(float64(time.Since(startReq).Milliseconds()))
-
+	if !mirrored {
+		headerTTFBPerPeerMetric.WithLabelValues(resourceType, getCacheStatus(respHeader.Get(saturnCacheHitKey) == saturnCacheHit)).Observe(float64(time.Since(startReq).Milliseconds()))
+	}
 	defer resp.Body.Close()
 
 	code = resp.StatusCode
@@ -303,6 +316,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		// empty body so it can be re-used.
+		_, _ = io.Copy(io.Discard, resp.Body)
+
 		saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "non-2xx", fmt.Sprintf("%d", resp.StatusCode)).Add(1)
 		if resp.StatusCode == http.StatusTooManyRequests {
 			var retryAfter time.Duration
@@ -320,8 +336,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			return rm, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, &ErrSaturnTooManyRequests{retryAfter: retryAfter, Node: from})
 		}
 
-		// empty body so it can be re-used.
-		_, _ = io.Copy(io.Discard, resp.Body)
 		if resp.StatusCode == http.StatusGatewayTimeout {
 			return rm, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
 		}
