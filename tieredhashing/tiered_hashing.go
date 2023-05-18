@@ -255,7 +255,7 @@ func (t *TieredHashing) GetPerf() map[string]*NodePerf {
 }
 
 func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemoved, removedAndAddedBack int) {
-	if len(nodes) == 0 {
+	if len(t.nodes) == 0 {
 		t.cfg.MaxPoolSize = 100
 	} else {
 		t.cfg.MaxPoolSize = 50
