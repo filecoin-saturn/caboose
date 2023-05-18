@@ -15,7 +15,7 @@ import (
 // TODO Make env vars for tuning
 const (
 	maxPoolSize     = 100
-	maxMainTierSize = 20
+	maxMainTierSize = 30
 	PLatency        = 90
 
 	// main tier has the top `maxMainTierSize` nodes
@@ -25,7 +25,7 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 2000
+	latencyWindowSize     = 1000
 	correctnessWindowSize = 1000
 
 	// ------------------ CORRECTNESS -------------------
