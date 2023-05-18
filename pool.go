@@ -320,6 +320,13 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 		if recordIfContextErr(resourceTypeBlock, ctx, "fetchBlockWithLoop") {
 			return nil, ctx.Err()
 		}
+		if p.config.MirrorFraction > rand.Float64() {
+			select {
+			case p.mirrorSamples <- poolRequest{node: nodes[i], path: fmt.Sprintf("/ipfs/%s?format=car&car-scope=block", c), key: aff,
+				resourceType: resourceTypeBlock}:
+			default:
+			}
+		}
 
 		blk, err = p.fetchBlockAndUpdate(ctx, nodes[i], c, i)
 		if err != nil && errors.Is(err, context.Canceled) {
@@ -330,13 +337,6 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 			durationMs := time.Since(blockFetchStart).Milliseconds()
 			fetchDurationBlockSuccessMetric.Observe(float64(durationMs))
 			// sample request for mirroring
-			if p.config.MirrorFraction > rand.Float64() {
-				select {
-				case p.mirrorSamples <- poolRequest{node: nodes[i], path: fmt.Sprintf("/ipfs/%s?format=car&car-scope=block", c), key: aff,
-					resourceType: resourceTypeBlock}:
-				default:
-				}
-			}
 			return
 		}
 	}

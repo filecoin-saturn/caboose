@@ -14,10 +14,9 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize          = 100
-	maxMainTierSize      = 10
-	PLatency             = 90
-	maxPoolSizeAfterInit = 20
+	maxPoolSize     = 100
+	maxMainTierSize = 20
+	PLatency        = 90
 
 	// main tier has the top `maxMainTierSize` nodes
 	TierMain    = Tier("main")
@@ -27,15 +26,15 @@ const (
 
 	// use rolling windows for latency and correctness calculations
 	latencyWindowSize     = 2000
-	correctnessWindowSize = 2000
+	correctnessWindowSize = 1000
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
 	minAcceptableCorrectnessPct = float64(70)
 
 	// helps shield nodes against bursty failures
-	failureDebounce = 2 * time.Second
-	removalDuration = 3 * time.Hour
+	failureDebounce = 1 * time.Second
+	removalDuration = 2 * time.Hour
 )
 
 type Tier string
@@ -336,6 +335,7 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 			return
 		}
 	}
+	t.initDone = true
 
 	// Main Tier should have MIN(number of eligible nodes, max main tier size) nodes
 	n := t.cfg.MaxMainTierSize
@@ -365,45 +365,6 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 			t.nodes[n].Tier = TierUnknown
 		}
 	}
-
-	// if we've already finished initialisation, nothing to do here
-	if t.initDone {
-		return
-	}
-
-	t.initDone = true
-	t.cfg.MaxPoolSize = maxPoolSizeAfterInit // only
-
-	// get unknown nodes sorted by latency
-	usl := t.unknownNodesSortedLatency()
-	toKeep := t.cfg.MaxPoolSize - t.cfg.MaxMainTierSize
-	if toKeep > len(usl) {
-		toKeep = len(usl)
-	}
-
-	unodes := usl[:toKeep]
-	uNodesMap := make(map[string]struct{})
-	for _, n := range unodes {
-		uNodesMap[n.node] = struct{}{}
-	}
-
-	var toRemove []string
-	for node := range t.nodes {
-		if t.nodes[node].Tier == TierUnknown {
-			if _, ok := uNodesMap[node]; !ok {
-				toRemove = append(toRemove, node)
-			}
-		}
-	}
-
-	for _, node := range toRemove {
-		t.unknownSet = t.unknownSet.RemoveNode(node)
-		delete(t.nodes, node)
-	}
-
-	// remove all others
-
-	// reduce unknown pool size to 10 so they recieve higher mirrored traffic
 
 	return
 }
