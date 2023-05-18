@@ -14,7 +14,7 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize     = 100
+	maxPoolSize     = 50
 	maxMainTierSize = 20
 	PLatency        = 90
 
@@ -25,8 +25,8 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 300
-	correctnessWindowSize = 500
+	latencyWindowSize     = 1000
+	correctnessWindowSize = 1000
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
@@ -113,7 +113,7 @@ func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) *RemovedN
 
 	if t.isLatencyWindowFull(perf) {
 		latency := perf.LatencyDigest.Reduce(rolling.Percentile(PLatency))
-		if latency > 10000 {
+		if latency > 15000 {
 			_, _ = t.removeFailedNode(node)
 			return &RemovedNode{
 				Node:   node,
@@ -255,11 +255,6 @@ func (t *TieredHashing) GetPerf() map[string]*NodePerf {
 }
 
 func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemoved, removedAndAddedBack int) {
-	if len(t.nodes) == 0 {
-		t.cfg.MaxPoolSize = 100
-	} else {
-		t.cfg.MaxPoolSize = 50
-	}
 	for _, node := range nodes {
 		// TODO Add nodes that are closer than the ones we have even if the pool is full
 		if len(t.nodes) >= t.cfg.MaxPoolSize {
