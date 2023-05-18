@@ -25,8 +25,8 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 300
-	correctnessWindowSize = 300
+	latencyWindowSize     = 500
+	correctnessWindowSize = 600
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
@@ -34,7 +34,7 @@ const (
 
 	// helps shield nodes against bursty failures
 	failureDebounce = 2 * time.Second
-	removalDuration = 3 * time.Hour
+	removalDuration = 2 * time.Hour
 )
 
 type Tier string
@@ -113,7 +113,7 @@ func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) *RemovedN
 
 	if t.isLatencyWindowFull(perf) {
 		latency := perf.LatencyDigest.Reduce(rolling.Percentile(PLatency))
-		if latency > 8000 {
+		if latency > 10000 {
 			_, _ = t.removeFailedNode(node)
 			return &RemovedNode{
 				Node:   node,
