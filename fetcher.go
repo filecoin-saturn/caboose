@@ -269,26 +269,28 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	var resp *http.Response
 	saturnCallsTotalMetric.WithLabelValues(resourceType).Add(1)
 	startReq := time.Now()
-	resp, err = p.config.SaturnClient.Do(req)
-	if err != nil {
-		// retry-once
-		resp, err = p.config.SaturnClient.Do(req)
-		if err != nil {
-			if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
-				if errors.Is(err, context.Canceled) {
-					return rm, reqCtx.Err()
-				}
-			}
 
-			if errors.Is(err, context.DeadlineExceeded) && !mirrored {
-				saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure-timeout", "0").Add(1)
-			} else if !mirrored {
-				saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure", "0").Add(1)
-			}
-			networkError = err.Error()
-			rm.ConnFailure = true
-			return rm, fmt.Errorf("http request failed: %w", err)
+	for i := 0; i < 3; i++ {
+		resp, err = p.config.SaturnClient.Do(req)
+		if err == nil {
+			break
 		}
+	}
+	if err != nil {
+		if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
+			if errors.Is(err, context.Canceled) {
+				return rm, reqCtx.Err()
+			}
+		}
+
+		if errors.Is(err, context.DeadlineExceeded) && !mirrored {
+			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure-timeout", "0").Add(1)
+		} else if !mirrored {
+			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure", "0").Add(1)
+		}
+		networkError = err.Error()
+		rm.ConnFailure = true
+		return rm, fmt.Errorf("http request failed: %w", err)
 	}
 
 	respHeader = resp.Header

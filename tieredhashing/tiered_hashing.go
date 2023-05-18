@@ -33,7 +33,7 @@ const (
 	minAcceptableCorrectnessPct = float64(70)
 
 	// helps shield nodes against bursty failures
-	failureDebounce = 1 * time.Second
+	failureDebounce = 2 * time.Second
 	removalDuration = 2 * time.Hour
 )
 
