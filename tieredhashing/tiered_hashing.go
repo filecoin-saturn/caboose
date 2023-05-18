@@ -125,7 +125,7 @@ type RemovedNode struct {
 }
 
 func (t *TieredHashing) DoRefresh() bool {
-	return t.GetPoolMetrics().Total <= (t.cfg.MaxPoolSize*3)/4
+	return t.GetPoolMetrics().Total <= (t.cfg.MaxPoolSize)/4
 }
 
 func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *RemovedNode {
