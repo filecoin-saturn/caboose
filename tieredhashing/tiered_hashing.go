@@ -25,8 +25,8 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 2000
-	correctnessWindowSize = 1000
+	latencyWindowSize     = 300
+	correctnessWindowSize = 300
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
@@ -34,7 +34,7 @@ const (
 
 	// helps shield nodes against bursty failures
 	failureDebounce = 2 * time.Second
-	removalDuration = 2 * time.Hour
+	removalDuration = 3 * time.Hour
 )
 
 type Tier string
@@ -101,15 +101,29 @@ func (t *TieredHashing) IsInitDone() bool {
 	return t.initDone
 }
 
-func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) {
+func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) *RemovedNode {
 	if _, ok := t.nodes[node]; !ok {
-		return
+		return nil
 	}
 	perf := t.nodes[node]
 	t.recordCorrectness(perf, true)
 	// record the latency and update the last bad latency record time if needed
 	perf.LatencyDigest.Append(rm.TTFBMs)
 	perf.NLatencyDigest++
+
+	if t.isLatencyWindowFull(perf) {
+		latency := perf.LatencyDigest.Reduce(rolling.Percentile(PLatency))
+		if latency > 8000 {
+			_, _ = t.removeFailedNode(node)
+			return &RemovedNode{
+				Node:   node,
+				Tier:   perf.Tier,
+				Reason: "latency",
+			}
+		}
+	}
+
+	return nil
 }
 
 type RemovedNode struct {
@@ -241,6 +255,11 @@ func (t *TieredHashing) GetPerf() map[string]*NodePerf {
 }
 
 func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemoved, removedAndAddedBack int) {
+	if len(nodes) == 0 {
+		t.cfg.MaxPoolSize = 100
+	} else {
+		t.cfg.MaxPoolSize = 50
+	}
 	for _, node := range nodes {
 		// TODO Add nodes that are closer than the ones we have even if the pool is full
 		if len(t.nodes) >= t.cfg.MaxPoolSize {
@@ -323,8 +342,9 @@ func (t *TieredHashing) MoveBestUnknownToMain() int {
 }
 
 func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
+
 	// sort all nodes by P95 and pick the top N as main tier nodes
-	nodes := t.nodesSortedLatency()
+	/*nodes := t.nodesSortedLatency()
 	if len(nodes) == 0 {
 		return
 	}
@@ -364,7 +384,7 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 			t.mainSet = t.mainSet.RemoveNode(n)
 			t.nodes[n].Tier = TierUnknown
 		}
-	}
+	}*/
 
 	return
 }
