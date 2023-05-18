@@ -507,7 +507,10 @@ func (p *pool) commonUpdate(node string, rm tieredhashing.ResponseMetrics, err e
 
 	ferr = err
 	if err == nil && rm.Success {
-		p.th.RecordSuccess(node, rm)
+		rm := p.th.RecordSuccess(node, rm)
+		if rm != nil {
+			poolRemovedFailureTotalMetric.WithLabelValues(string(rm.Tier), rm.Reason).Inc()
+		}
 
 		if p.th.IsInitDone() {
 			p.poolInitDone.Do(func() {

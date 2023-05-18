@@ -14,7 +14,7 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize     = 100
+	maxPoolSize     = 50
 	maxMainTierSize = 30
 	PLatency        = 90
 
@@ -25,16 +25,17 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 1000
-	correctnessWindowSize = 1000
+	latencyWindowSize     = 2000
+	correctnessWindowSize = 2000
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
 	minAcceptableCorrectnessPct = float64(70)
 
 	// helps shield nodes against bursty failures
-	failureDebounce = 2 * time.Second
-	removalDuration = 2 * time.Hour
+	failureDebounce           = 2 * time.Second
+	removalDuration           = 2 * time.Hour
+	unacceptableLatencyMillis = 12000
 )
 
 type Tier string
@@ -101,15 +102,28 @@ func (t *TieredHashing) IsInitDone() bool {
 	return t.initDone
 }
 
-func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) {
+func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) *RemovedNode {
 	if _, ok := t.nodes[node]; !ok {
-		return
+		return nil
 	}
 	perf := t.nodes[node]
 	t.recordCorrectness(perf, true)
 	// record the latency and update the last bad latency record time if needed
 	perf.LatencyDigest.Append(rm.TTFBMs)
 	perf.NLatencyDigest++
+
+	if t.isLatencyWindowFull(perf) {
+		latency := perf.LatencyDigest.Reduce(rolling.Percentile(PLatency))
+		if latency > unacceptableLatencyMillis {
+			_, _ = t.removeFailedNode(node)
+			return &RemovedNode{
+				Node:   node,
+				Tier:   perf.Tier,
+				Reason: "latency",
+			}
+		}
+	}
+	return nil
 }
 
 type RemovedNode struct {
@@ -323,49 +337,49 @@ func (t *TieredHashing) MoveBestUnknownToMain() int {
 }
 
 func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
-	// sort all nodes by P95 and pick the top N as main tier nodes
-	nodes := t.nodesSortedLatency()
-	if len(nodes) == 0 {
-		return
-	}
-
-	// bulk update initially so we don't end up dosing the nodes
-	if !t.initDone {
-		if len(nodes) < t.cfg.MaxMainTierSize {
+	/*// sort all nodes by P95 and pick the top N as main tier nodes
+		nodes := t.nodesSortedLatency()
+		if len(nodes) == 0 {
 			return
 		}
-	}
-	t.initDone = true
 
-	// Main Tier should have MIN(number of eligible nodes, max main tier size) nodes
-	n := t.cfg.MaxMainTierSize
-	if len(nodes) < t.cfg.MaxMainTierSize {
-		n = len(nodes)
-	}
-
-	mainTier := nodes[:n]
-	unknownTier := nodes[n:]
-
-	for _, nodeL := range mainTier {
-		if t.nodes[nodeL.node].Tier == TierUnknown {
-			unknownToMain++
-			n := nodeL.node
-			t.mainSet = t.mainSet.AddNode(n)
-			t.unknownSet = t.unknownSet.RemoveNode(n)
-			t.nodes[n].Tier = TierMain
+		// bulk update initially so we don't end up dosing the nodes
+		if !t.initDone {
+			if len(nodes) < t.cfg.MaxMainTierSize {
+				return
+			}
 		}
-	}
+		t.initDone = true
 
-	for _, nodeL := range unknownTier {
-		if t.nodes[nodeL.node].Tier == TierMain {
-			mainToUnknown++
-			n := nodeL.node
-			t.unknownSet = t.unknownSet.AddNode(n)
-			t.mainSet = t.mainSet.RemoveNode(n)
-			t.nodes[n].Tier = TierUnknown
+		// Main Tier should have MIN(number of eligible nodes, max main tier size) nodes
+		n := t.cfg.MaxMainTierSize
+		if len(nodes) < t.cfg.MaxMainTierSize {
+			n = len(nodes)
 		}
-	}
 
+		mainTier := nodes[:n]
+		unknownTier := nodes[n:]
+
+		for _, nodeL := range mainTier {
+			if t.nodes[nodeL.node].Tier == TierUnknown {
+				unknownToMain++
+				n := nodeL.node
+				t.mainSet = t.mainSet.AddNode(n)
+				t.unknownSet = t.unknownSet.RemoveNode(n)
+				t.nodes[n].Tier = TierMain
+			}
+		}
+
+		for _, nodeL := range unknownTier {
+			if t.nodes[nodeL.node].Tier == TierMain {
+				mainToUnknown++
+				n := nodeL.node
+				t.unknownSet = t.unknownSet.AddNode(n)
+				t.mainSet = t.mainSet.RemoveNode(n)
+				t.nodes[n].Tier = TierUnknown
+			}
+		}
+	return*/
 	return
 }
 
