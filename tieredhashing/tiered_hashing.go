@@ -25,8 +25,8 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 50
-	correctnessWindowSize = 100
+	latencyWindowSize     = 1000
+	correctnessWindowSize = 1000
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
@@ -34,9 +34,7 @@ const (
 
 	// helps shield nodes against bursty failures
 	failureDebounce = 2 * time.Second
-	removalDuration = 24 * time.Hour
-
-	maxDebounceLatency = 500
+	removalDuration = 3 * time.Hour
 )
 
 type NodePerf struct {
@@ -54,9 +52,6 @@ type NodePerf struct {
 	connFailures  int
 	networkErrors int
 	responseCodes int
-
-	// latency
-	lastBadLatencyAt time.Time
 }
 
 // locking is left to the caller
@@ -109,17 +104,9 @@ func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) {
 	}
 	perf := t.nodes[node]
 	t.recordCorrectness(perf, true)
-
-	// show some lineancy if the node is having a bad time
-	if rm.TTFBMs > maxDebounceLatency && time.Since(perf.lastBadLatencyAt) < t.cfg.FailureDebounce {
-		return
-	}
 	// record the latency and update the last bad latency record time if needed
 	perf.LatencyDigest.Append(rm.TTFBMs)
 	perf.NLatencyDigest++
-	if rm.TTFBMs > maxDebounceLatency {
-		perf.lastBadLatencyAt = time.Now()
-	}
 }
 
 type RemovedNode struct {
