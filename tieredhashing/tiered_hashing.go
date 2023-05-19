@@ -24,18 +24,16 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 50
-	correctnessWindowSize = 100
+	latencyWindowSize     = 1000
+	correctnessWindowSize = 1000
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
-	minAcceptableCorrectnessPct = float64(75)
+	minAcceptableCorrectnessPct = float64(70)
 
 	// helps shield nodes against bursty failures
 	failureDebounce = 2 * time.Second
-	removalDuration = 24 * time.Hour
-
-	maxDebounceLatency = 500
+	removalDuration = 2 * time.Hour
 )
 
 type Tier string
@@ -55,9 +53,6 @@ type NodePerf struct {
 	connFailures  int
 	networkErrors int
 	responseCodes int
-
-	// latency
-	lastBadLatencyAt time.Time
 }
 
 // locking is left to the caller
@@ -111,17 +106,9 @@ func (t *TieredHashing) RecordSuccess(node string, rm ResponseMetrics) {
 	}
 	perf := t.nodes[node]
 	t.recordCorrectness(perf, true)
-
-	// show some lineancy if the node is having a bad time
-	if rm.TTFBMs > maxDebounceLatency && time.Since(perf.lastBadLatencyAt) < t.cfg.FailureDebounce {
-		return
-	}
 	// record the latency and update the last bad latency record time if needed
 	perf.LatencyDigest.Append(rm.TTFBMs)
 	perf.NLatencyDigest++
-	if rm.TTFBMs > maxDebounceLatency {
-		perf.lastBadLatencyAt = time.Now()
-	}
 }
 
 type RemovedNode struct {
@@ -310,7 +297,7 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 }
 
 func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
-	// sort all nodes by P95 and pick the top N as main tier nodes
+	/*// sort all nodes by P95 and pick the top N as main tier nodes
 	nodes := t.nodesSortedLatency()
 	if len(nodes) == 0 {
 		return
@@ -351,7 +338,7 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 			t.mainSet = t.mainSet.RemoveNode(n)
 			t.nodes[n].Tier = TierUnknown
 		}
-	}
+	}*/
 
 	return
 }
