@@ -1,6 +1,7 @@
 package tieredhashing
 
 import (
+	"math"
 	"net/http"
 	"time"
 
@@ -13,8 +14,8 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize     = 50
-	maxMainTierSize = 10
+	maxPoolSize     = 60
+	maxMainTierSize = 50
 	PLatency        = 90
 
 	// main tier has the top `maxMainTierSize` nodes
@@ -296,8 +297,33 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 	return
 }
 
+func (t *TieredHashing) MoveBestUnknownToMain() int {
+	min := math.MaxFloat64
+	var node string
+
+	for n, perf := range t.nodes {
+		pc := perf
+		if pc.Tier == TierUnknown {
+			latency := pc.LatencyDigest.Reduce(rolling.Percentile(PLatency))
+			if latency != 0 && latency < min {
+				min = latency
+				node = n
+			}
+		}
+	}
+
+	if len(node) == 0 {
+		return 0
+	}
+
+	t.unknownSet = t.unknownSet.RemoveNode(node)
+	t.mainSet = t.mainSet.AddNode(node)
+	t.nodes[node].Tier = TierMain
+	return 1
+}
+
 func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
-	/*// sort all nodes by P95 and pick the top N as main tier nodes
+	// sort all nodes by P95 and pick the top N as main tier nodes
 	nodes := t.nodesSortedLatency()
 	if len(nodes) == 0 {
 		return
@@ -338,7 +364,7 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 			t.mainSet = t.mainSet.RemoveNode(n)
 			t.nodes[n].Tier = TierUnknown
 		}
-	}*/
+	}
 
 	return
 }
@@ -379,6 +405,10 @@ func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
 	if perf.Tier == TierMain {
 		// if we've removed a main set node we should replace it
 		mc, uc = t.UpdateMainTierWithTopN()
+		// if we weren't able to fill the main set, pick the best from the unknown set
+		if t.mainSet.Size() < t.cfg.MaxMainTierSize {
+			uc = uc + t.MoveBestUnknownToMain()
+		}
 	}
 	return
 }
