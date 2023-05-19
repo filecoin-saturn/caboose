@@ -164,7 +164,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			if isBlockRequest {
 				fetchSizeBlockMetric.Observe(float64(received))
 			} else {
-				fetchSizeCarMetric.Observe(float64(received))
+				fetchSizeCarMetric.WithLabelValues("success").Observe(float64(received))
 			}
 			durationMs := response_success_end.Sub(start).Milliseconds()
 			fetchSpeedPerPeerSuccessMetric.WithLabelValues(resourceType, cacheStatus).Observe(float64(received) / float64(durationMs))
@@ -194,6 +194,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
 			} else {
 				fetchDurationPerCarPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
+				fetchSizeCarMetric.WithLabelValues("failure").Observe(float64(received))
 			}
 
 			if code == http.StatusBadGateway || code == http.StatusGatewayTimeout {
@@ -263,20 +264,24 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	startReq := time.Now()
 	resp, err = p.config.SaturnClient.Do(req)
 	if err != nil {
-		if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
-			if errors.Is(err, context.Canceled) {
-				return rm, reqCtx.Err()
+		// just retry-once
+		resp, err = p.config.SaturnClient.Do(req)
+		if err != nil {
+			if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
+				if errors.Is(err, context.Canceled) {
+					return rm, reqCtx.Err()
+				}
 			}
-		}
 
-		if errors.Is(err, context.DeadlineExceeded) {
-			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure-timeout", "0").Add(1)
-		} else {
-			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure", "0").Add(1)
+			if errors.Is(err, context.DeadlineExceeded) {
+				saturnConnectionFailureTotalMetric.WithLabelValues(resourceType, "timeout").Add(1)
+			} else {
+				saturnConnectionFailureTotalMetric.WithLabelValues(resourceType, "non-timeout").Add(1)
+			}
+			networkError = err.Error()
+			rm.ConnFailure = true
+			return rm, fmt.Errorf("http request failed: %w", err)
 		}
-		networkError = err.Error()
-		rm.ConnFailure = true
-		return rm, fmt.Errorf("http request failed: %w", err)
 	}
 
 	respHeader = resp.Header
@@ -348,7 +353,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				return rm, reqCtx.Err()
 			}
 		}
-
 		if errors.Is(err, context.DeadlineExceeded) {
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-timeout-%s", getCacheStatus(isCacheHit)),
 				fmt.Sprintf("%d", code)).Add(1)

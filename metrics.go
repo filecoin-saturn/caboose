@@ -158,11 +158,11 @@ var (
 		Buckets: durationMsPerCarHistogram,
 	})
 
-	fetchSizeCarMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+	fetchSizeCarMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_size_car"),
 		Help:    "Size in bytes of caboose CAR fetches",
 		Buckets: carSizeHistogram,
-	})
+	}, []string{"error_status"})
 )
 
 // Saturn Server-timings
@@ -231,6 +231,10 @@ var (
 		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_failure_total"),
 	}, []string{"resourceType", "reason", "code"})
 
+	saturnConnectionFailureTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_connection_failure_total"),
+	}, []string{"resourceType", "reason"})
+
 	mirroredTrafficTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "mirrored_traffic_total"),
 	}, []string{"error_status"})
@@ -287,6 +291,7 @@ func init() {
 
 	CabooseMetrics.MustRegister(saturnCallsTotalMetric)
 	CabooseMetrics.MustRegister(saturnCallsFailureTotalMetric)
+	CabooseMetrics.MustRegister(saturnConnectionFailureTotalMetric)
 
 	CabooseMetrics.MustRegister(saturnCallsSuccessTotalMetric)
 
