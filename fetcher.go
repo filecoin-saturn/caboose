@@ -350,8 +350,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	wrapped := TrackingReader{resp.Body, time.Time{}, 0}
 	err = cb(resource, &wrapped)
+	received = wrapped.len
 	// drain body so it can be re-used.
 	_, _ = io.Copy(io.Discard, resp.Body)
+
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "read-http-response") {
 			if errors.Is(err, context.Canceled) {
@@ -371,7 +373,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	fb = wrapped.firstByte
-	received = wrapped.len
 	response_success_end = time.Now()
 
 	// trace-metrics
