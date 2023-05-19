@@ -263,13 +263,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	saturnCallsTotalMetric.WithLabelValues(resourceType).Add(1)
 	startReq := time.Now()
 
-	count := 0
-	for ; count < 3; count++ {
-		resp, err = p.config.SaturnClient.Do(req)
-		if err == nil {
-			break
-		}
-	}
+	resp, err = p.config.SaturnClient.Do(req)
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
 			if errors.Is(err, context.Canceled) {
@@ -286,8 +280,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		rm.ConnFailure = true
 		return rm, fmt.Errorf("http request failed: %w", err)
 	}
-
-	saturnConnectionRetriesTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("%d", count)).Add(1)
 
 	respHeader = resp.Header
 	headerTTFBPerPeerMetric.WithLabelValues(resourceType, getCacheStatus(respHeader.Get(saturnCacheHitKey) == saturnCacheHit)).Observe(float64(time.Since(startReq).Milliseconds()))

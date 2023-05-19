@@ -241,7 +241,7 @@ var (
 
 	saturnConnectionRetriesTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_connection_retries_total"),
-	}, []string{"resourceType", "count"})
+	}, []string{"resourceType"})
 )
 
 var CabooseMetrics = prometheus.NewRegistry()
