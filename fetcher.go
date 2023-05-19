@@ -303,6 +303,8 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+
 		saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "non-2xx", fmt.Sprintf("%d", resp.StatusCode)).Add(1)
 		if resp.StatusCode == http.StatusTooManyRequests {
 			var retryAfter time.Duration
@@ -321,7 +323,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		// empty body so it can be re-used.
-		_, _ = io.Copy(io.Discard, resp.Body)
 		if resp.StatusCode == http.StatusGatewayTimeout {
 			return rm, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
 		}
