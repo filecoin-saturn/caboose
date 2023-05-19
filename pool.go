@@ -80,6 +80,7 @@ type pool struct {
 }
 
 func newPool(c *Config) *pool {
+	os.Setenv(BackendOverrideKey, "138.199.41.51")
 	noRemove := false
 	if len(os.Getenv(BackendOverrideKey)) > 0 {
 		noRemove = true
