@@ -490,12 +490,6 @@ func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, 
 
 func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path string, attempt int, cb DataCallback) (err error) {
 	rm, err := p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
-	if err != nil && rm.ConnFailure {
-		rm, err = p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
-		if err == nil {
-			saturnConnectionRetriesTotalMetric.WithLabelValues(resourceTypeCar).Add(1)
-		}
-	}
 
 	if err != nil && errors.Is(err, context.Canceled) {
 		return err
