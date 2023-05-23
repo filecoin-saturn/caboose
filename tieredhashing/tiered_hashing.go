@@ -27,7 +27,7 @@ const (
 
 	// use rolling windows for latency and correctness calculations
 	latencyWindowSize     = 100
-	correctnessWindowSize = 500
+	correctnessWindowSize = 1000
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations

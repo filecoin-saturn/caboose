@@ -111,7 +111,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	proto := "unknown"
 	respReq := &http.Request{}
 	received := 0
-	reqUrl := fmt.Sprintf("http://%s%s", from, resource)
+	reqUrl := fmt.Sprintf("https://%s%s", from, resource)
 	var respHeader http.Header
 	saturnNodeId := ""
 	saturnTransferId := ""
