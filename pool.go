@@ -410,6 +410,8 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 		nodes = append(nodes,
 			p.th.GetNodes(tieredhashing.TierUnknown, aff, p.config.MaxRetrievalAttempts-len(nodes))...,
 		)
+	} else {
+		goLogger.Infow("using all main set nodes for CAR", "path", path, "aff", aff, "numNodes", len(nodes))
 	}
 	p.lk.RUnlock()
 	if len(nodes) == 0 {

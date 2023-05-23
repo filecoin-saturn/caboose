@@ -14,8 +14,8 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize                 = 50
-	maxMainTierSize             = 25
+	maxPoolSize                 = 100
+	maxMainTierSize             = 50
 	PLatency                    = 90
 	PMaxLatencyWithoutWindowing = 100
 
@@ -26,7 +26,7 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 1000
+	latencyWindowSize     = 100
 	correctnessWindowSize = 1000
 
 	// ------------------ CORRECTNESS -------------------
@@ -35,7 +35,7 @@ const (
 
 	// helps shield nodes against bursty failures
 	failureDebounce = 2 * time.Second
-	removalDuration = 2 * time.Hour
+	removalDuration = 3 * time.Hour
 )
 
 type Tier string
