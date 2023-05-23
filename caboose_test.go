@@ -216,7 +216,7 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 	for i := 0; i < len(ch.pool); i++ {
 		ch.pool[i] = &ep{}
 		ch.pool[i].Setup()
-		purls[i] = strings.TrimPrefix(ch.pool[i].server.URL, "https://")
+		purls[i] = strings.TrimPrefix(ch.pool[i].server.URL, "http://")
 	}
 	ch.goodOrch = true
 	orch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
