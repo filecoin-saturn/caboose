@@ -98,6 +98,23 @@ func TestRecordFailure(t *testing.T) {
 	th.assertSize(t, 0, 1)
 }
 
+func TestMoveBestUnknownToMain(t *testing.T) {
+	th := NewTieredHashingHarness()
+	require.Zero(t, th.h.MoveBestUnknownToMain())
+
+	nodes := th.genAndAddAll(t, 2)
+
+	th.assertSize(t, 0, 2)
+	th.h.RecordSuccess(nodes[0], ResponseMetrics{TTFBMs: 100})
+	th.h.RecordSuccess(nodes[1], ResponseMetrics{TTFBMs: 50})
+
+	require.EqualValues(t, 1, th.h.MoveBestUnknownToMain())
+	th.assertSize(t, 1, 1)
+
+	th.h.nodes[nodes[1]].Tier = TierMain
+	th.h.nodes[nodes[0]].Tier = TierUnknown
+}
+
 func TestNodeNotRemovedWithVar(t *testing.T) {
 	window := 2
 	th := NewTieredHashingHarness(WithCorrectnessWindowSize(window), WithFailureDebounce(0), WithNoRemove(true))

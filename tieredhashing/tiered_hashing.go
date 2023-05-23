@@ -14,9 +14,10 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize     = 50
-	maxMainTierSize = 25
-	PLatency        = 90
+	maxPoolSize                 = 50
+	maxMainTierSize             = 25
+	PLatency                    = 90
+	PMaxLatencyWithoutWindowing = 100
 
 	// main tier has the top `maxMainTierSize` nodes
 	TierMain    = Tier("main")
@@ -26,7 +27,7 @@ const (
 
 	// use rolling windows for latency and correctness calculations
 	latencyWindowSize     = 500
-	correctnessWindowSize = 500
+	correctnessWindowSize = 2000
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
@@ -304,7 +305,7 @@ func (t *TieredHashing) MoveBestUnknownToMain() int {
 	for n, perf := range t.nodes {
 		pc := perf
 		if pc.Tier == TierUnknown {
-			latency := pc.LatencyDigest.Reduce(rolling.Percentile(PLatency))
+			latency := pc.LatencyDigest.Reduce(rolling.Percentile(PMaxLatencyWithoutWindowing))
 			if latency != 0 && latency < min {
 				min = latency
 				node = n
