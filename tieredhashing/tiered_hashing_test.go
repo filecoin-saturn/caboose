@@ -89,15 +89,30 @@ func TestRecordFailure(t *testing.T) {
 	th.assertSize(t, 0, 2)
 	th.h.RecordSuccess(mn, ResponseMetrics{TTFBMs: 100})
 	th.h.RecordSuccess(mn, ResponseMetrics{TTFBMs: 150})
-	th.h.UpdateMainTierWithTopN()
-	th.assertSize(t, 1, 1)
 
 	th.h.RecordSuccess(node2, ResponseMetrics{TTFBMs: 100})
 	th.h.RecordSuccess(node2, ResponseMetrics{TTFBMs: 150})
 	th.h.RecordFailure(mn, ResponseMetrics{NetworkError: true})
 	th.h.RecordFailure(mn, ResponseMetrics{NetworkError: true})
 	th.h.RecordFailure(mn, ResponseMetrics{NetworkError: true})
-	th.assertSize(t, 1, 0)
+	th.assertSize(t, 0, 1)
+}
+
+func TestMoveBestUnknownToMain(t *testing.T) {
+	th := NewTieredHashingHarness()
+	require.Zero(t, th.h.MoveBestUnknownToMain())
+
+	nodes := th.genAndAddAll(t, 2)
+
+	th.assertSize(t, 0, 2)
+	th.h.RecordSuccess(nodes[0], ResponseMetrics{TTFBMs: 100})
+	th.h.RecordSuccess(nodes[1], ResponseMetrics{TTFBMs: 50})
+
+	require.EqualValues(t, 1, th.h.MoveBestUnknownToMain())
+	th.assertSize(t, 1, 1)
+
+	th.h.nodes[nodes[1]].Tier = TierMain
+	th.h.nodes[nodes[0]].Tier = TierUnknown
 }
 
 func TestNodeNotRemovedWithVar(t *testing.T) {
@@ -277,6 +292,7 @@ func (th *TieredHashingHarness) updateTiersAndAsert(t *testing.T, mcs, ucs, main
 }
 
 func TestUpdateMainTierWithTopN(t *testing.T) {
+	t.Skip("we probably dont need this will we turn on tiered hashing")
 	windowSize := 2
 	th := NewTieredHashingHarness(WithLatencyWindowSize(windowSize), WithMaxMainTierSize(2))
 

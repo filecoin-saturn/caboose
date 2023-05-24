@@ -39,6 +39,7 @@ func TestPoolRefresh(t *testing.T) {
 }
 
 func TestPoolRefreshWithLatencyDistribution(t *testing.T) {
+	t.Skip("ENABLE if we go back to tiered hashing")
 	opts := []tieredhashing.Option{tieredhashing.WithLatencyWindowSize(2), tieredhashing.WithMaxMainTierSize(2)}
 
 	p := newPool(&Config{TieredHashingOpts: opts})
