@@ -239,6 +239,8 @@ func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error
 		if ce := ctx.Err(); ce == nil {
 			goLogger.Errorw("failed to fetch CAR", "affinity", c.getAffinity(ctx), "error", err)
 		}
+	} else {
+		goLogger.Infow("successfully fetched CAR", "affinity", c.getAffinity(ctx))
 	}
 
 	return err
