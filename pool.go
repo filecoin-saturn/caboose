@@ -192,6 +192,7 @@ func (p *pool) checkPool() {
 	for {
 		select {
 		case msg := <-p.mirrorSamples:
+			continue
 			// see if it is to a main-tier node - if so find appropriate test node to test against.
 			p.lk.RLock()
 			if p.th.NodeTier(msg.node) != tieredhashing.TierMain {
