@@ -255,11 +255,6 @@ func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
 	ctx, span := spanTrace(ctx, "Has", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
-	if _, ok := c.successCarFetches[c.getAffinity(ctx)]; ok {
-		c.blockFetches[c.getAffinity(ctx)]++
-		blockFetchesForCarSuccess.WithLabelValues(fmt.Sprintf("%d", c.blockFetches[c.getAffinity(ctx)])).Inc()
-	}
-
 	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
 		return false, err
@@ -276,6 +271,11 @@ func (c *Caboose) GetPoolPerf() map[string]*tieredhashing.NodePerf {
 func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
 	ctx, span := spanTrace(ctx, "Get", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
+
+	if _, ok := c.successCarFetches[c.getAffinity(ctx)]; ok {
+		c.blockFetches[c.getAffinity(ctx)]++
+		blockFetchesForCarSuccess.WithLabelValues(fmt.Sprintf("%d", c.blockFetches[c.getAffinity(ctx)])).Inc()
+	}
 
 	goLogger.Infow("fetching block", "affinity", c.getAffinity(ctx))
 
