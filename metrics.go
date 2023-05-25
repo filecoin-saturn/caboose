@@ -300,5 +300,4 @@ func init() {
 	CabooseMetrics.MustRegister(saturnCallsSuccessTotalMetric)
 
 	CabooseMetrics.MustRegister(mirroredTrafficTotalMetric)
-	CabooseMetrics.MustRegister(blockFetchesForCarSuccess)
 }
