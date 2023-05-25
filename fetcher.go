@@ -86,6 +86,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 
 // TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
 func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (rm tieredhashing.ResponseMetrics, err error) {
+
 	rm = tieredhashing.ResponseMetrics{}
 	resourceType := resourceTypeCar
 	if mime == "application/vnd.ipld.raw" {
@@ -352,6 +353,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				return rm, reqCtx.Err()
 			}
 		}
+		goLogger.Errorw("failed to read response body", "err", err, "cache-status", getCacheStatus(isCacheHit))
 		if errors.Is(err, context.DeadlineExceeded) {
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-timeout-%s", getCacheStatus(isCacheHit)),
 				fmt.Sprintf("%d", code)).Add(1)

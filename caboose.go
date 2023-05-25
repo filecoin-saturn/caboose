@@ -232,7 +232,14 @@ func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error
 	ctx, span := spanTrace(ctx, "Fetch", trace.WithAttributes(attribute.String("path", path)))
 	defer span.End()
 
-	return c.pool.fetchResourceWith(ctx, path, cb, c.getAffinity(ctx))
+	goLogger.Infow("fetching CAR", "affinity", c.getAffinity(ctx))
+
+	err := c.pool.fetchResourceWith(ctx, path, cb, c.getAffinity(ctx))
+	if err != nil {
+		goLogger.Errorw("failed to fetch CAR", "affinity", c.getAffinity(ctx), "error", err)
+	}
+
+	return err
 }
 
 func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
@@ -243,6 +250,7 @@ func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+
 	return blk != nil, nil
 }
 
@@ -255,8 +263,11 @@ func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
 	ctx, span := spanTrace(ctx, "Get", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
+	goLogger.Infow("fetching block", "affinity", c.getAffinity(ctx))
+
 	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
+		goLogger.Errorw("failed to fetch block", "affinity", c.getAffinity(ctx), "error", err)
 		return nil, err
 	}
 	return blk, nil
