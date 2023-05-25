@@ -159,9 +159,11 @@ func (epr ErrPartialResponse) Error() string {
 }
 
 type Caboose struct {
-	config *Config
-	pool   *pool
-	logger *logger
+	config            *Config
+	pool              *pool
+	logger            *logger
+	successCarFetches map[string]int
+	blockFetches      map[string]int
 }
 
 // DataCallback allows for extensible validation of path-retrieved data.
@@ -186,9 +188,11 @@ func NewCaboose(config *Config) (*Caboose, error) {
 	}
 
 	c := Caboose{
-		config: config,
-		pool:   newPool(config),
-		logger: newLogger(config),
+		config:            config,
+		pool:              newPool(config),
+		logger:            newLogger(config),
+		blockFetches:      make(map[string]int),
+		successCarFetches: make(map[string]int),
 	}
 	c.pool.logger = c.logger
 
@@ -241,6 +245,7 @@ func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error
 		}
 	} else {
 		goLogger.Infow("successfully fetched CAR", "affinity", c.getAffinity(ctx))
+		c.successCarFetches[c.getAffinity(ctx)]++
 	}
 
 	return err
@@ -249,6 +254,11 @@ func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error
 func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
 	ctx, span := spanTrace(ctx, "Has", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
+
+	if _, ok := c.successCarFetches[c.getAffinity(ctx)]; ok {
+		c.blockFetches[c.getAffinity(ctx)]++
+		blockFetchesForCarSuccess.WithLabelValues(fmt.Sprintf("%d", c.blockFetches[c.getAffinity(ctx)])).Inc()
+	}
 
 	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
