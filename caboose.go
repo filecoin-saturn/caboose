@@ -236,7 +236,9 @@ func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error
 
 	err := c.pool.fetchResourceWith(ctx, path, cb, c.getAffinity(ctx))
 	if err != nil {
-		goLogger.Errorw("failed to fetch CAR", "affinity", c.getAffinity(ctx), "error", err)
+		if ce := ctx.Err(); ce == nil {
+			goLogger.Errorw("failed to fetch CAR", "affinity", c.getAffinity(ctx), "error", err)
+		}
 	}
 
 	return err
