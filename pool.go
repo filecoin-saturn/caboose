@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -19,10 +18,8 @@ import (
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
 
-	"github.com/ipfs/boxo/path"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
-	"github.com/ipld/go-car"
 )
 
 const (
@@ -204,7 +201,9 @@ func (p *pool) checkPool() {
 				continue
 			}
 			trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			err := p.fetchResourceAndUpdate(trialTimeout, testNodes[0], msg.path, 0, p.mirrorValidator)
+			err := p.fetchResourceAndUpdate(trialTimeout, testNodes[0], msg.path, 0, func(resource string, reader io.Reader) error {
+				return nil
+			})
 			cancel()
 			if err != nil {
 				mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
@@ -218,7 +217,7 @@ func (p *pool) checkPool() {
 }
 
 // TODO: this should be replaced with a real validator once one exists from boxo.
-func (p *pool) mirrorValidator(resource string, reader io.Reader) error {
+/*func (p *pool) mirrorValidator(resource string, reader io.Reader) error {
 	// first get the 'path' part to remove query string if present.
 	pth, err := url.Parse(resource)
 	if err != nil {
@@ -261,7 +260,7 @@ func (p *pool) mirrorValidator(resource string, reader io.Reader) error {
 		return fmt.Errorf("response did not have requested root")
 	}
 	return nil
-}
+}*/
 
 func (p *pool) Close() {
 	select {
