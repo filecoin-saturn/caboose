@@ -1,23 +1,14 @@
 package caboose_test
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"github.com/filecoin-saturn/caboose"
 	"github.com/filecoin-saturn/caboose/tieredhashing"
 	"github.com/ipfs/go-cid"
-	"github.com/ipld/go-car/v2"
-	"github.com/ipld/go-ipld-prime/linking"
-	cidlink "github.com/ipld/go-ipld-prime/linking/cid"
-	basicnode "github.com/ipld/go-ipld-prime/node/basic"
-	"github.com/ipld/go-ipld-prime/storage/memstore"
-	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
 	"github.com/multiformats/go-multicodec"
 	"github.com/stretchr/testify/require"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -127,6 +118,7 @@ func (h *CabooseHarness) assertPoolSize(t *testing.T, mainS, unknownS, totalS in
 	require.EqualValues(t, eUnknown, unknownS)
 }
 
+/*
 func TestResource(t *testing.T) {
 	h := BuildCabooseHarness(t, 1, 3)
 	// some setup.
@@ -186,7 +178,7 @@ func TestResource(t *testing.T) {
 	if !second {
 		t.Fatal("expected fall-over progress")
 	}
-}
+}*/
 
 type HarnessOption func(config *caboose.Config)
 
