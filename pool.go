@@ -108,9 +108,9 @@ func (p *pool) refreshWithNodes(newEP []string) {
 	poolMembersNotAddedBecauseRemovedMetric.Set(float64(alreadyRemoved))
 
 	// update the tier set
-	mu, um := p.th.UpdateMainTierWithTopN()
+	/*mu, um := p.th.UpdateMainTierWithTopN()
 	poolTierChangeMetric.WithLabelValues(tierMainToUnknown).Set(float64(mu))
-	poolTierChangeMetric.WithLabelValues(tierUnknownToMain).Set(float64(um))
+	poolTierChangeMetric.WithLabelValues(tierUnknownToMain).Set(float64(um))*/
 
 	mt := p.th.GetPoolMetrics()
 	poolSizeMetric.WithLabelValues(tierUnknown).Set(float64(mt.Unknown))

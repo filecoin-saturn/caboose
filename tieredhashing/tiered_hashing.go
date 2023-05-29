@@ -14,7 +14,7 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize     = 100
+	maxPoolSize     = 50
 	maxMainTierSize = 50
 	PLatency        = 90
 
@@ -289,6 +289,7 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 	return
 }
 
+/*
 func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
 	// sort all nodes by P95 and pick the top N as main tier nodes
 	nodes := t.nodesSortedLatency()
@@ -330,6 +331,7 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 
 	return
 }
+*/
 
 func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) (float64, bool) {
 	// we don't have enough observations yet
@@ -366,7 +368,7 @@ func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
 
 	if perf.Tier == tierMain {
 		// if we've removed a main set node we should replace it
-		mc, uc = t.UpdateMainTierWithTopN()
+		//mc, uc = t.UpdateMainTierWithTopN()
 	}
 	return
 }
