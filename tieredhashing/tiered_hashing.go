@@ -14,8 +14,8 @@ import (
 
 // TODO Make env vars for tuning
 const (
-	maxPoolSize     = 50
-	maxMainTierSize = 10
+	maxPoolSize     = 100
+	maxMainTierSize = 50
 	PLatency        = 90
 
 	// main tier has the top `maxMainTierSize` nodes
@@ -25,8 +25,8 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 50
-	correctnessWindowSize = 100
+	latencyWindowSize     = 100
+	correctnessWindowSize = 1000
 
 	// ------------------ CORRECTNESS -------------------
 	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
@@ -165,7 +165,7 @@ func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *RemovedN
 		perf.responseCodes++
 	}
 
-	if _, ok := t.isCorrectnessPolicyEligible(perf); !ok {
+	/*if _, ok := t.isCorrectnessPolicyEligible(perf); !ok {
 		mc, uc := t.removeFailedNode(node)
 		return &RemovedNode{
 			Node:                node,
@@ -177,7 +177,7 @@ func (t *TieredHashing) RecordFailure(node string, rm ResponseMetrics) *RemovedN
 			MainToUnknownChange: mc,
 			UnknownToMainChange: uc,
 		}
-	}
+	}*/
 
 	return nil
 }
