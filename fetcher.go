@@ -102,6 +102,12 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	respReq := &http.Request{}
 	received := 0
 	reqUrl := fmt.Sprintf("https://%s%s", from, resource)
+	if resourceType == resourceTypeCar {
+		goLogger.Infow("FETCHING CAR", "reqURL", reqUrl)
+	} else {
+		goLogger.Infow("FETCHING BLOCK", "reqURL", reqUrl)
+	}
+
 	var respHeader http.Header
 	saturnNodeId := ""
 	saturnTransferId := ""

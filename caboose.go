@@ -222,6 +222,7 @@ func (c *Caboose) Close() {
 
 // Fetch allows fetching car archives by a path of the form `/ipfs/<cid>[/path/to/file]`
 func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error {
+	goLogger.Infow("GW CAR Request", "path", path)
 	ctx, span := spanTrace(ctx, "Fetch", trace.WithAttributes(attribute.String("path", path)))
 	defer span.End()
 
