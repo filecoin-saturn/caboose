@@ -60,6 +60,7 @@ func (th *TieredHashingHarness) recordCacheHitAndAssertSet(t *testing.T, node st
 }
 
 func TestRecordFailure(t *testing.T) {
+	t.Skip("skip till we re-enable correctness policy")
 	window := 3
 
 	th := NewTieredHashingHarness(WithCorrectnessWindowSize(window), WithFailureDebounce(0), WithMaxMainTierSize(1), WithLatencyWindowSize(2))
@@ -102,6 +103,7 @@ func TestRecordFailure(t *testing.T) {
 }
 
 func TestNodeEvictionWithWindowing(t *testing.T) {
+	t.Skip("skip till we re-enable correctness policy")
 	window := 4
 
 	th := NewTieredHashingHarness(WithCorrectnessWindowSize(window), WithFailureDebounce(0), WithCorrectnessPct(80))

@@ -24,10 +24,11 @@ func TestPoolRefresh(t *testing.T) {
 	// add a new node with already added nodes
 	andAndAssertPool(t, p, []string{"node1", "node2", "node3", "node4", "node5"}, 0, 5, 5, 1)
 
+	/* re-enable after we enalbe the correctness policy
 	// record failure so that node is removed and then assert
 	rm := p.th.RecordFailure("node4", tieredhashing.ResponseMetrics{ConnFailure: true})
 	require.NotNil(t, rm)
-	andAndAssertPool(t, p, []string{"node1", "node2", "node3", "node4", "node5"}, 0, 4, 4, 0)
+	andAndAssertPool(t, p, []string{"node1", "node2", "node3", "node4", "node5"}, 0, 4, 4, 0)*/
 }
 
 func TestPoolRefreshWithLatencyDistribution(t *testing.T) {
