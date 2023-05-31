@@ -22,8 +22,6 @@ const (
 	tierMain    = "main"
 	tierUnknown = "unknown"
 
-	reasonCorrectness = "correctness"
-
 	// use rolling windows for latency and correctness calculations
 	latencyWindowSize     = 500
 	correctnessWindowSize = 100
