@@ -225,7 +225,13 @@ func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error
 	ctx, span := spanTrace(ctx, "Fetch", trace.WithAttributes(attribute.String("path", path)))
 	defer span.End()
 
-	return c.pool.fetchResourceWith(ctx, path, cb, c.getAffinity(ctx))
+	err := c.pool.fetchResourceWith(ctx, path, cb, c.getAffinity(ctx))
+
+	if err == nil {
+		goLogger.Infow("Caboose FETCH success", "path", path)
+	}
+
+	return err
 }
 
 func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
