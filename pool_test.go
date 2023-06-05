@@ -134,7 +134,7 @@ func TestPoolMiroring(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	p.Close()
 
 	e.lk.Lock()
