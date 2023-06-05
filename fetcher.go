@@ -203,6 +203,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		if err == nil || !errors.Is(err, context.Canceled) {
+			if len(networkError) > 0 {
+				goLogger.Errorw("sending network error logs", "err", networkError, "saturn-requestId", saturnTransferId)
+			}
+
 			p.logger.queue <- log{
 				CacheHit:           isCacheHit,
 				URL:                reqUrl,
@@ -283,6 +287,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	respHeader = resp.Header
 	headerTTFBPerPeerMetric.WithLabelValues(resourceType, getCacheStatus(respHeader.Get(saturnCacheHitKey) == saturnCacheHit)).Observe(float64(time.Since(startReq).Milliseconds()))
+	saturnTransferId = respHeader.Get(saturnTransferIdKey)
 
 	defer resp.Body.Close()
 
@@ -356,6 +361,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-timeout-%s", getCacheStatus(isCacheHit)),
 				fmt.Sprintf("%d", code)).Add(1)
 		} else {
+			if resourceType == resourceTypeCar {
+				goLogger.Errorw("failed to read CAR response body for 200", "err", err, "resource", resource,
+					"saturn-requestId", saturnTransferId)
+			}
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-%s", getCacheStatus(isCacheHit)), fmt.Sprintf("%d", code)).Add(1)
 		}
 
