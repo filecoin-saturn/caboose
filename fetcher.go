@@ -203,23 +203,25 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		if err == nil || !errors.Is(err, context.Canceled) {
-			p.logger.queue <- log{
-				CacheHit:           isCacheHit,
-				URL:                reqUrl,
-				StartTime:          start,
-				NumBytesSent:       received,
-				RequestDurationSec: durationSecs,
-				RequestID:          saturnTransferId,
-				HTTPStatusCode:     code,
-				HTTPProtocol:       proto,
-				TTFBMS:             int(ttfbMs),
-				// my address
-				Range:          "",
-				Referrer:       respReq.Referer(),
-				UserAgent:      respReq.UserAgent(),
-				NodeId:         saturnNodeId,
-				NodeIpAddress:  from,
-				IfNetworkError: networkError,
+			if p.logger != nil {
+				p.logger.queue <- log{
+					CacheHit:           isCacheHit,
+					URL:                reqUrl,
+					StartTime:          start,
+					NumBytesSent:       received,
+					RequestDurationSec: durationSecs,
+					RequestID:          saturnTransferId,
+					HTTPStatusCode:     code,
+					HTTPProtocol:       proto,
+					TTFBMS:             int(ttfbMs),
+					// my address
+					Range:          "",
+					Referrer:       respReq.Referer(),
+					UserAgent:      respReq.UserAgent(),
+					NodeId:         saturnNodeId,
+					NodeIpAddress:  from,
+					IfNetworkError: networkError,
+				}
 			}
 		}
 	}()
