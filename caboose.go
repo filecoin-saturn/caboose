@@ -31,7 +31,7 @@ type Config struct {
 	OrchestratorEndpoint *url.URL
 	// OrchestratorClient is the HTTP client to use when communicating with the Saturn orchestrator.
 	OrchestratorClient *http.Client
-	// OrchestratorOverride replaces calls to the orchestrator with a fixes response.
+	// OrchestratorOverride replaces calls to the orchestrator with a fixed response.
 	OrchestratorOverride []string
 
 	// LoggingEndpoint is the URL of the logging endpoint where we submit logs pertaining to our Saturn retrieval requests.
