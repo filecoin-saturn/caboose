@@ -140,6 +140,11 @@ var (
 		Buckets: durationMsPerCarHistogram,
 	}, []string{"cache_status", "car_size"})
 
+	headerTTFBPerPeerMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "header_ttfb_peer"),
+		Buckets: durationMsPerCarHistogram,
+	}, []string{"resourceType", "cache_status"})
+
 	// failure
 	fetchDurationPerCarPerPeerFailureMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_duration_car_peer_failure"),
@@ -153,11 +158,11 @@ var (
 		Buckets: durationMsPerCarHistogram,
 	})
 
-	fetchSizeCarMetric = prometheus.NewHistogram(prometheus.HistogramOpts{
+	fetchSizeCarMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_size_car"),
 		Help:    "Size in bytes of caboose CAR fetches",
 		Buckets: carSizeHistogram,
-	})
+	}, []string{"error_status"})
 )
 
 // Saturn Server-timings
@@ -226,6 +231,10 @@ var (
 		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_failure_total"),
 	}, []string{"resourceType", "reason", "code"})
 
+	saturnConnectionFailureTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_connection_failure_total"),
+	}, []string{"resourceType", "reason"})
+
 	mirroredTrafficTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "mirrored_traffic_total"),
 	}, []string{"error_status"})
@@ -260,6 +269,7 @@ func init() {
 	CabooseMetrics.MustRegister(fetchDurationCarFailureMetric)
 	CabooseMetrics.MustRegister(fetchTTFBPerBlockPerPeerSuccessMetric)
 	CabooseMetrics.MustRegister(fetchTTFBPerCARPerPeerSuccessMetric)
+	CabooseMetrics.MustRegister(headerTTFBPerPeerMetric)
 
 	CabooseMetrics.MustRegister(fetchCacheCountSuccessTotalMetric)
 
@@ -281,6 +291,7 @@ func init() {
 
 	CabooseMetrics.MustRegister(saturnCallsTotalMetric)
 	CabooseMetrics.MustRegister(saturnCallsFailureTotalMetric)
+	CabooseMetrics.MustRegister(saturnConnectionFailureTotalMetric)
 
 	CabooseMetrics.MustRegister(saturnCallsSuccessTotalMetric)
 

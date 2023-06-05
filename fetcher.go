@@ -152,7 +152,8 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		durationSecs := time.Since(start).Seconds()
-		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "duration", durationSecs, "attempt", attempt, "error", err)
+		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "duration", durationSecs, "attempt", attempt, "error", err,
+			"proto", proto)
 		fetchResponseCodeMetric.WithLabelValues(resourceType, fmt.Sprintf("%d", code)).Add(1)
 		var ttfbMs int64
 
@@ -163,7 +164,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			if isBlockRequest {
 				fetchSizeBlockMetric.Observe(float64(received))
 			} else {
-				fetchSizeCarMetric.Observe(float64(received))
+				fetchSizeCarMetric.WithLabelValues("success").Observe(float64(received))
 			}
 			durationMs := response_success_end.Sub(start).Milliseconds()
 			fetchSpeedPerPeerSuccessMetric.WithLabelValues(resourceType, cacheStatus).Observe(float64(received) / float64(durationMs))
@@ -193,6 +194,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
 			} else {
 				fetchDurationPerCarPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
+				fetchSizeCarMetric.WithLabelValues("failure").Observe(float64(received))
 			}
 
 			if code == http.StatusBadGateway || code == http.StatusGatewayTimeout {
@@ -261,6 +263,8 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	var resp *http.Response
 	saturnCallsTotalMetric.WithLabelValues(resourceType).Add(1)
+	startReq := time.Now()
+
 	resp, err = p.config.SaturnClient.Do(req)
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
@@ -270,15 +274,18 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		if errors.Is(err, context.DeadlineExceeded) {
-			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure-timeout", "0").Add(1)
+			saturnConnectionFailureTotalMetric.WithLabelValues(resourceType, "timeout").Add(1)
 		} else {
-			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure", "0").Add(1)
+			saturnConnectionFailureTotalMetric.WithLabelValues(resourceType, "non-timeout").Add(1)
 		}
 		networkError = err.Error()
 		rm.ConnFailure = true
 		return rm, fmt.Errorf("http request failed: %w", err)
 	}
+
 	respHeader = resp.Header
+	headerTTFBPerPeerMetric.WithLabelValues(resourceType, getCacheStatus(respHeader.Get(saturnCacheHitKey) == saturnCacheHit)).Observe(float64(time.Since(startReq).Milliseconds()))
+
 	defer resp.Body.Close()
 
 	code = resp.StatusCode
@@ -300,6 +307,8 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, resp.Body)
+
 		saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "non-2xx", fmt.Sprintf("%d", resp.StatusCode)).Add(1)
 		if resp.StatusCode == http.StatusTooManyRequests {
 			var retryAfter time.Duration
@@ -318,7 +327,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		// empty body so it can be re-used.
-		_, _ = io.Copy(io.Discard, resp.Body)
 		if resp.StatusCode == http.StatusGatewayTimeout {
 			return rm, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
 		}
@@ -336,15 +344,16 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	wrapped := TrackingReader{resp.Body, time.Time{}, 0}
 	err = cb(resource, &wrapped)
+	received = wrapped.len
 	// drain body so it can be re-used.
 	_, _ = io.Copy(io.Discard, resp.Body)
+
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "read-http-response") {
 			if errors.Is(err, context.Canceled) {
 				return rm, reqCtx.Err()
 			}
 		}
-
 		if errors.Is(err, context.DeadlineExceeded) {
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-timeout-%s", getCacheStatus(isCacheHit)),
 				fmt.Sprintf("%d", code)).Add(1)
@@ -358,7 +367,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	fb = wrapped.firstByte
-	received = wrapped.len
 	response_success_end = time.Now()
 
 	// trace-metrics
@@ -367,6 +375,15 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tcp_connection").Observe(float64(result.TCPConnection.Milliseconds()))
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tls_handshake").Observe(float64(result.TLSHandshake.Milliseconds()))
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "wait_after_request_sent_for_header").Observe(float64(result.ServerProcessing.Milliseconds()))
+
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "name_lookup").
+		Observe(float64(result.NameLookup.Milliseconds()))
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "connect").
+		Observe(float64(result.Connect.Milliseconds()))
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "pre_transfer").
+		Observe(float64(result.Pretransfer.Milliseconds()))
+	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "start_transfer").
+		Observe(float64(result.StartTransfer.Milliseconds()))
 
 	rm.TTFBMs = float64(wrapped.firstByte.Sub(start).Milliseconds())
 	rm.Success = true
