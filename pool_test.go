@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ type ep struct {
 	cnt      int
 	httpCode int
 	resp     []byte
+	lk       sync.Mutex
 }
 
 var testBlock = []byte("hello World")
@@ -36,6 +38,8 @@ func (e *ep) Setup() {
 	e.valid = true
 	e.resp = testBlock
 	e.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		e.lk.Lock()
+		defer e.lk.Unlock()
 		e.cnt++
 		if e.valid {
 			w.Write(e.resp)
@@ -83,16 +87,20 @@ func TestPoolMiroring(t *testing.T) {
 
 	e := ep{}
 	e.Setup()
+	e.lk.Lock()
 	e.resp = carBytes.Bytes()
 	eURL := strings.TrimPrefix(e.server.URL, "https://")
+	e.lk.Unlock()
 
 	e2 := ep{}
 	e2.Setup()
+	e2.lk.Lock()
 	e2.resp = carBytes.Bytes()
 	e2URL := strings.TrimPrefix(e2.server.URL, "https://")
+	e2.lk.Unlock()
 
 	conf := Config{
-		OrchestratorEndpoint: nil,
+		OrchestratorEndpoint: &url.URL{},
 		OrchestratorClient:   http.DefaultClient,
 		OrchestratorOverride: []string{eURL, e2URL},
 		LoggingEndpoint:      url.URL{},
@@ -101,15 +109,16 @@ func TestPoolMiroring(t *testing.T) {
 
 		SaturnClient:         saturnClient,
 		DoValidation:         false,
-		PoolRefresh:          time.Millisecond * 50,
+		PoolRefresh:          time.Minute,
 		MaxRetrievalAttempts: 1,
 		TieredHashingOpts:    opts,
 		MirrorFraction:       1.0,
 	}
 
 	p := newPool(&conf)
+	p.doRefresh()
+	p.config.OrchestratorOverride = nil
 	p.Start()
-	time.Sleep(time.Millisecond)
 
 	// promote one node to main pool. other will remain in uknown pool.
 	p.th.RecordSuccess(eURL, tieredhashing.ResponseMetrics{Success: true, TTFBMs: 30, SpeedPerMs: 30})
@@ -124,9 +133,13 @@ func TestPoolMiroring(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	p.Close()
 
+	e.lk.Lock()
+	defer e.lk.Unlock()
 	if e.cnt != 1 {
 		t.Fatalf("expected 1 primary fetch, got %d", e.cnt)
 	}
+	e2.lk.Lock()
+	defer e2.lk.Unlock()
 	if e2.cnt != 1 {
 		t.Fatalf("expected 1 mirrored fetch, got %d", e2.cnt)
 	}
