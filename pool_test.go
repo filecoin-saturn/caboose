@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
 	"github.com/ipfs/go-cid"
@@ -57,6 +58,9 @@ func (e *ep) Setup() {
 }
 
 func TestPoolMiroring(t *testing.T) {
+	if unsafe.Sizeof(unsafe.Pointer(nil)) <= 4 {
+		t.Skip("skipping for 32bit architectures because too slow")
+	}
 	opts := []tieredhashing.Option{
 		tieredhashing.WithCorrectnessWindowSize(2),
 		tieredhashing.WithLatencyWindowSize(2),
