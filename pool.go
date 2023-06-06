@@ -25,10 +25,9 @@ import (
 )
 
 const (
-	tierMainToUnknown   = "main-to-unknown"
-	tierUnknownToMain   = "unknown-to-main"
-	BackendOverrideKey  = "CABOOSE_BACKEND_OVERRIDE"
-	SaturnOrchUrlEnvKey = "CORE_ONLY"
+	tierMainToUnknown  = "main-to-unknown"
+	tierUnknownToMain  = "unknown-to-main"
+	BackendOverrideKey = "CABOOSE_BACKEND_OVERRIDE"
 )
 
 type OrchestratorResponse struct {

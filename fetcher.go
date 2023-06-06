@@ -7,9 +7,9 @@ import (
 	"hash/crc32"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
@@ -33,6 +33,7 @@ const (
 	saturnRetryAfterKey = "Retry-After"
 	resourceTypeCar     = "car"
 	resourceTypeBlock   = "block"
+	rangeParam          = "entity-bytes"
 )
 
 var (
@@ -87,11 +88,6 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 
 // TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
 func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (rm tieredhashing.ResponseMetrics, err error) {
-	isRange := "no"
-	if strings.Contains(resource, "bytes") {
-		isRange = "yes"
-	}
-
 	rm = tieredhashing.ResponseMetrics{}
 	resourceType := resourceTypeCar
 	if mime == "application/vnd.ipld.raw" {
@@ -118,6 +114,16 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	respReq := &http.Request{}
 	received := 0
 	reqUrl := fmt.Sprintf("https://%s%s", from, resource)
+
+	fu, err := url.Parse(reqUrl)
+	if err != nil {
+		return rm, err
+	}
+	isRange := "no"
+	if len(fu.Query().Get(rangeParam)) != 0 {
+		isRange = "yes"
+	}
+
 	var respHeader http.Header
 	saturnNodeId := ""
 	saturnTransferId := ""
@@ -280,9 +286,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		if errors.Is(err, context.DeadlineExceeded) {
-			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-timeout", fmt.Sprintf("%d", resp.StatusCode), isRange).Add(1)
+			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-timeout", "0", isRange).Add(1)
 		} else {
-			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure-no-timeout", fmt.Sprintf("%d", resp.StatusCode), isRange).Add(1)
+			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure-no-timeout", "0", isRange).Add(1)
 		}
 		networkError = err.Error()
 		rm.ConnFailure = true

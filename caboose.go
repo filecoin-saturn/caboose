@@ -207,13 +207,7 @@ func NewCaboose(config *Config) (*Caboose, error) {
 	}
 	if c.config.OrchestratorEndpoint == nil {
 		var err error
-
-		u := DefaultOrchestratorEndpoint
-		if v := os.Getenv(SaturnOrchUrlEnvKey); len(v) > 0 {
-			u = DefaultOrchestratorCoreEndpoint
-		}
-
-		c.config.OrchestratorEndpoint, err = url.Parse(u)
+		c.config.OrchestratorEndpoint, err = url.Parse(DefaultOrchestratorEndpoint)
 		if err != nil {
 			return nil, err
 		}
