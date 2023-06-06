@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
@@ -83,7 +84,8 @@ const DefaultMaxRetries = 3
 const DefaultMirrorFraction = 0.1
 
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
-const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=200"
+const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=100"
+const DefaultOrchestratorCoreEndpoint = "https://orchestrator.strn.pl/nodes?extra=core&count=100"
 const DefaultPoolRefreshInterval = 5 * time.Minute
 
 // we cool off sending requests to Saturn for a cid for a certain duration
@@ -199,7 +201,13 @@ func NewCaboose(config *Config) (*Caboose, error) {
 	}
 	if c.config.OrchestratorEndpoint == nil {
 		var err error
-		c.config.OrchestratorEndpoint, err = url.Parse(DefaultOrchestratorEndpoint)
+
+		u := DefaultOrchestratorEndpoint
+		if v := os.Getenv(SaturnOrchUrlEnvKey); len(v) > 0 {
+			u = DefaultOrchestratorCoreEndpoint
+		}
+
+		c.config.OrchestratorEndpoint, err = url.Parse(u)
 		if err != nil {
 			return nil, err
 		}

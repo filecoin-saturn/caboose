@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
@@ -86,6 +87,11 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 
 // TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
 func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (rm tieredhashing.ResponseMetrics, err error) {
+	isRange := "no"
+	if strings.Contains(resource, "bytes") {
+		isRange = "yes"
+	}
+
 	rm = tieredhashing.ResponseMetrics{}
 	resourceType := resourceTypeCar
 	if mime == "application/vnd.ipld.raw" {
@@ -154,7 +160,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		durationSecs := time.Since(start).Seconds()
 		goLogger.Debugw("fetch result", "from", from, "of", resource, "status", code, "size", received, "duration", durationSecs, "attempt", attempt, "error", err,
 			"proto", proto)
-		fetchResponseCodeMetric.WithLabelValues(resourceType, fmt.Sprintf("%d", code)).Add(1)
+		fetchResponseCodeMetric.WithLabelValues(resourceType, fmt.Sprintf("%d", code), isRange).Add(1)
 		var ttfbMs int64
 
 		if err == nil && received > 0 {
@@ -272,9 +278,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		if errors.Is(err, context.DeadlineExceeded) {
-			saturnConnectionFailureTotalMetric.WithLabelValues(resourceType, "timeout").Add(1)
+			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-timeout", fmt.Sprintf("%d", resp.StatusCode), isRange).Add(1)
 		} else {
-			saturnConnectionFailureTotalMetric.WithLabelValues(resourceType, "non-timeout").Add(1)
+			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "connection-failure-no-timeout", fmt.Sprintf("%d", resp.StatusCode), isRange).Add(1)
 		}
 		networkError = err.Error()
 		rm.ConnFailure = true
@@ -307,7 +313,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)
 
-		saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "non-2xx", fmt.Sprintf("%d", resp.StatusCode)).Add(1)
+		saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "non-2xx", fmt.Sprintf("%d", resp.StatusCode), isRange).Add(1)
 		if resp.StatusCode == http.StatusTooManyRequests {
 			var retryAfter time.Duration
 			if strnRetryHint := respHeader.Get(saturnRetryAfterKey); strnRetryHint != "" {
@@ -354,9 +360,14 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-timeout-%s", getCacheStatus(isCacheHit)),
-				fmt.Sprintf("%d", code)).Add(1)
+				fmt.Sprintf("%d", code), isRange).Add(1)
 		} else {
-			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-%s", getCacheStatus(isCacheHit)), fmt.Sprintf("%d", code)).Add(1)
+			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-%s", getCacheStatus(isCacheHit)), fmt.Sprintf("%d", code),
+				isRange).Add(1)
+
+			if resourceType == resourceTypeCar {
+				goLogger.Errorw("failed to read CAR response body", "err", err, "resource", resource)
+			}
 		}
 
 		networkError = err.Error()

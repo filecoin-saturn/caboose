@@ -26,9 +26,10 @@ import (
 )
 
 const (
-	tierMainToUnknown  = "main-to-unknown"
-	tierUnknownToMain  = "unknown-to-main"
-	BackendOverrideKey = "CABOOSE_BACKEND_OVERRIDE"
+	tierMainToUnknown   = "main-to-unknown"
+	tierUnknownToMain   = "unknown-to-main"
+	BackendOverrideKey  = "CABOOSE_BACKEND_OVERRIDE"
+	SaturnOrchUrlEnvKey = "CORE_ONLY"
 )
 
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
