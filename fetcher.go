@@ -122,6 +122,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	isRange := "no"
 	if len(fu.Query().Get(rangeParam)) != 0 {
 		isRange = "yes"
+		goLogger.Infow("fetching range", "from", from, "of", resource, "mime", mime, "requestId", requestId)
 	}
 
 	var respHeader http.Header
@@ -274,7 +275,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
 
 	var resp *http.Response
-	saturnCallsTotalMetric.WithLabelValues(resourceType).Add(1)
+	saturnCallsTotalMetric.WithLabelValues(resourceType, isRange).Add(1)
 	startReq := time.Now()
 
 	resp, err = p.config.SaturnClient.Do(req)
@@ -374,7 +375,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				isRange).Add(1)
 
 			if resourceType == resourceTypeCar {
-				goLogger.Errorw("failed to read CAR response body", "err", err, "resource", resource)
+				saturnTransferId = respHeader.Get(saturnTransferIdKey)
+				goLogger.Errorw("failed to read CAR response body", "url", reqUrl, "saturnReqId", saturnTransferId,
+					"isRange", isRange, "err", err)
 			}
 		}
 
@@ -405,7 +408,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	rm.TTFBMs = float64(wrapped.firstByte.Sub(start).Milliseconds())
 	rm.Success = true
 	rm.SpeedPerMs = float64(received) / float64(response_success_end.Sub(start).Milliseconds())
-	saturnCallsSuccessTotalMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit)).Add(1)
+	saturnCallsSuccessTotalMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), isRange).Add(1)
 
 	return rm, nil
 }

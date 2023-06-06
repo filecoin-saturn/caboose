@@ -221,11 +221,11 @@ var (
 var (
 	saturnCallsTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_total"),
-	}, []string{"resourceType"})
+	}, []string{"resourceType", "range"})
 
 	saturnCallsSuccessTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_success_total"),
-	}, []string{"resourceType", "cache_status"})
+	}, []string{"resourceType", "cache_status", "range"})
 
 	saturnCallsFailureTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_failure_total"),
