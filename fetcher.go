@@ -351,6 +351,8 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 		return rm, fmt.Errorf("http error from strn: %d", resp.StatusCode)
 	}
+	saturnCalls2xxTotalMetric.WithLabelValues(resourceType, isRange).Add(1)
+
 	if respHeader.Get(saturnCacheHitKey) == saturnCacheHit {
 		isCacheHit = true
 	}
