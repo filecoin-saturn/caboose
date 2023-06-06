@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
@@ -34,6 +35,7 @@ const (
 	resourceTypeCar     = "car"
 	resourceTypeBlock   = "block"
 	rangeParam          = "entity-bytes"
+	noRootsKey          = "no roots"
 )
 
 var (
@@ -380,6 +382,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 				saturnTransferId = respHeader.Get(saturnTransferIdKey)
 				goLogger.Errorw("failed to read CAR response body", "url", reqUrl, "saturnReqId", saturnTransferId,
 					"isRange", isRange, "err", err)
+
+				if strings.Contains(err.Error(), noRootsKey) {
+					saturnCallsFailureTotalMetric.WithLabelValues(resourceType, "failed-response-read-no-roots", fmt.Sprintf("%d", code), isRange).Add(1)
+				}
 			}
 		}
 
