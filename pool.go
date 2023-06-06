@@ -53,6 +53,7 @@ func (p *pool) loadPool() ([]string, error) {
 		return nil, err
 	}
 	goLogger.Infow("got backends from orchestrators", "cnt", len(responses), "endpoint", p.config.OrchestratorEndpoint.String())
+	fmt.Println("got backends from orchestrators", responses)
 
 	var ips []string
 
