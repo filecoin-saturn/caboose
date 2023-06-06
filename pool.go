@@ -9,7 +9,6 @@ import (
 	"math/rand"
 	"net/url"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -35,8 +34,8 @@ const (
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
 func (p *pool) loadPool() ([]string, error) {
-	if override := os.Getenv(BackendOverrideKey); len(override) > 0 {
-		return strings.Split(override, ","), nil
+	if p.config.OrchestratorOverride != nil {
+		return p.config.OrchestratorOverride, nil
 	}
 	resp, err := p.config.OrchestratorClient.Get(p.config.OrchestratorEndpoint.String())
 	if err != nil {

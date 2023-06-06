@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
@@ -30,6 +31,8 @@ type Config struct {
 	OrchestratorEndpoint *url.URL
 	// OrchestratorClient is the HTTP client to use when communicating with the Saturn orchestrator.
 	OrchestratorClient *http.Client
+	// OrchestratorOverride replaces calls to the orchestrator with a fixed response.
+	OrchestratorOverride []string
 
 	// LoggingEndpoint is the URL of the logging endpoint where we submit logs pertaining to our Saturn retrieval requests.
 	LoggingEndpoint url.URL
@@ -185,6 +188,9 @@ func NewCaboose(config *Config) (*Caboose, error) {
 	}
 	if config.MirrorFraction == 0 {
 		config.MirrorFraction = DefaultMirrorFraction
+	}
+	if override := os.Getenv(BackendOverrideKey); len(override) > 0 {
+		config.OrchestratorOverride = strings.Split(override, ",")
 	}
 
 	c := Caboose{
