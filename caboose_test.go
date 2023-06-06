@@ -212,20 +212,24 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 	ch := &CabooseHarness{}
 
 	ch.pool = make([]*ep, n)
+
+	resp := make([]caboose.OrchestratorResponse, n)
+
 	purls := make([]string, n)
 	for i := 0; i < len(ch.pool); i++ {
 		ch.pool[i] = &ep{}
 		ch.pool[i].Setup()
 		purls[i] = strings.TrimPrefix(ch.pool[i].server.URL, "https://")
+		resp[i] = caboose.OrchestratorResponse{Ip: purls[i]}
 	}
 	ch.goodOrch = true
 	orch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ch.gol.Lock()
 		defer ch.gol.Unlock()
 		if ch.goodOrch {
-			json.NewEncoder(w).Encode(purls)
+			json.NewEncoder(w).Encode(resp)
 		} else {
-			json.NewEncoder(w).Encode([]string{})
+			json.NewEncoder(w).Encode([]caboose.OrchestratorResponse{})
 		}
 	}))
 

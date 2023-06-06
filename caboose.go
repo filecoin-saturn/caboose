@@ -87,7 +87,7 @@ const DefaultMaxRetries = 3
 const DefaultMirrorFraction = 0.1
 
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
-const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=100"
+const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes?count=100"
 const DefaultOrchestratorCoreEndpoint = "https://orchestrator.strn.pl/nodes?extra=core&count=100"
 const DefaultPoolRefreshInterval = 5 * time.Minute
 

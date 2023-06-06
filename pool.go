@@ -31,6 +31,10 @@ const (
 	SaturnOrchUrlEnvKey = "CORE_ONLY"
 )
 
+type OrchestratorResponse struct {
+	Ip string `json:"ip"`
+}
+
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
 func (p *pool) loadPool() ([]string, error) {
@@ -44,13 +48,20 @@ func (p *pool) loadPool() ([]string, error) {
 	}
 	defer resp.Body.Close()
 
-	responses := make([]string, 0)
+	responses := make([]OrchestratorResponse, 0)
 	if err := json.NewDecoder(resp.Body).Decode(&responses); err != nil {
 		goLogger.Warnw("failed to decode backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint.String())
 		return nil, err
 	}
 	goLogger.Infow("got backends from orchestrators", "cnt", len(responses), "endpoint", p.config.OrchestratorEndpoint.String())
-	return responses, nil
+
+	var ips []string
+
+	for _, r := range responses {
+		ips = append(ips, r.Ip)
+	}
+
+	return ips, nil
 }
 
 type poolRequest struct {
