@@ -34,25 +34,6 @@ const (
 	CabooseJwtIssuer = "caboose-client"
 )
 
-// generateJWT Fetchs a secret from environment variable and generates a JWT
-func generateJWT() (string, error) {
-	jwtKey := []byte(os.Getenv("JWT_SECRET"))
-	if len(jwtKey) == 0 {
-		return "", fmt.Errorf("JWT_SECRET not set in environment variables")
-	}
-
-	// Create the Claims
-	claims := &jwt.MapClaims{
-		"ExpiresAt": time.Now().Add(10 * time.Minute).Unix(), // Token expires after 10 minutes
-		"Issuer": CabooseJwtIssuer,
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	ss, err := token.SignedString(jwtKey)
-
-	return ss, err
-}
-
 // authenticateReq adds authentication to a request when a JWT_SECRET is present as an environment variable.
 func authenticateReq(req *http.Request) (*http.Request, error) {
 
