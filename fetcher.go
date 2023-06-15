@@ -2,11 +2,12 @@ package caboose
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"os"
 	"strconv"
@@ -50,8 +51,8 @@ var (
 func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, rm tieredhashing.ResponseMetrics, e error) {
 	reqUrl := fmt.Sprintf(saturnReqTmpl, c)
 
-	rand.Seed(time.Now().UnixNano())
-	if rand.Intn(sentinelCidPeriod) == 1 {
+	rand, _ := rand.Int(rand.Reader, big.NewInt(sentinelCidPeriod))
+	if rand == big.NewInt(1) {
 		sc, _ := p.th.GetSentinelCid(from)
 		if len(sc) > 0 {
 			sentinelCid, _ := cid.Decode(sc)
