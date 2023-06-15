@@ -165,12 +165,6 @@ func (p *pool) doRefresh() {
 	newEP, err := p.loadPool()
 	if err == nil {
 		p.refreshWithNodes(newEP)
-		// sentinelCids, err := p.getSentinelCids(newEP)
-		// if err != nil {
-		// 	goLogger.Warnw("failed to retrieve sentinel cids", "err", err, "endpoint", p.config.OrchestratorEndpoint.String())
-		// }
-		// p.th.AddSentinelCids(sentinelCids)
-
 	} else {
 		poolRefreshErrorMetric.Add(1)
 	}
