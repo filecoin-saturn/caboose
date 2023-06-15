@@ -43,10 +43,10 @@ type Tier string
 
 type NodeInfo struct {
 	ID          string  `json:"id"`
-    IP          string  `json:"ip"`
-    Distance    float32 `json:"distance"`
-    Weight      int     `json:"weight"`
-    SentinelCid string `json:"sentinelCid"`
+	IP          string  `json:"ip"`
+	Distance    float32 `json:"distance"`
+	Weight      int     `json:"weight"`
+	SentinelCid string  `json:"sentinelCid"`
 }
 
 type NodePerf struct {

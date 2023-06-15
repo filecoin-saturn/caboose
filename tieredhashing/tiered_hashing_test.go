@@ -532,10 +532,10 @@ func genNodeStructs(nodes []string) []NodeInfo {
 
 	for _, node := range nodes {
 		nodeStructs = append(nodeStructs, NodeInfo{
-			IP: node,
-			ID: node,
-			Weight: rand.Intn(100),
-			Distance: rand.Float32(),
+			IP:          node,
+			ID:          node,
+			Weight:      rand.Intn(100),
+			Distance:    rand.Float32(),
 			SentinelCid: node,
 		})
 	}
