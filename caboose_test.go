@@ -220,10 +220,10 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 		ch.pool[i].Setup()
 		ip := strings.TrimPrefix(ch.pool[i].server.URL, "https://")
 		purls[i] = tieredhashing.NodeInfo{
-			IP: ip,
-			ID: "node-id",
-			Weight: rand.Intn(100),
-			Distance: rand.Float32(),
+			IP:          ip,
+			ID:          "node-id",
+			Weight:      rand.Intn(100),
+			Distance:    rand.Float32(),
 			SentinelCid: "sentinel-cid",
 		}
 	}

@@ -62,14 +62,14 @@ func TestPoolRefreshWithLatencyDistribution(t *testing.T) {
 
 func andAndAssertPool(t *testing.T, p *pool, nodes []string, expectedMain, expectedUnknown, expectedTotal, expectedNew int) {
 
-	parsedNodes := make([]tieredhashing.NodeInfo,0)
+	parsedNodes := make([]tieredhashing.NodeInfo, 0)
 
 	for _, n := range nodes {
 		parsedNodes = append(parsedNodes, tieredhashing.NodeInfo{
-			IP: n,
-			ID: n,
-			Weight: rand.Intn(100),
-			Distance: rand.Float32(),
+			IP:          n,
+			ID:          n,
+			Weight:      rand.Intn(100),
+			Distance:    rand.Float32(),
 			SentinelCid: n,
 		})
 	}

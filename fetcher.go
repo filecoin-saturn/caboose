@@ -33,7 +33,7 @@ const (
 	saturnRetryAfterKey = "Retry-After"
 	resourceTypeCar     = "car"
 	resourceTypeBlock   = "block"
-	sentinelCidPeriod = 200
+	sentinelCidPeriod   = 200
 )
 
 var (
@@ -51,12 +51,12 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 	reqUrl := fmt.Sprintf(saturnReqTmpl, c)
 
 	rand.Seed(time.Now().UnixNano())
-	if (rand.Intn(sentinelCidPeriod) == 1) {
+	if rand.Intn(sentinelCidPeriod) == 1 {
 		sc, _ := p.th.GetSentinelCid(from)
 		if len(sc) > 0 {
 			sentinelCid, _ := cid.Decode(sc)
 			sentinelReqUrl := fmt.Sprintf(saturnReqTmpl, sentinelCid)
-			go p.fetchResource(ctx, from, sentinelReqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {return nil})
+			go p.fetchResource(ctx, from, sentinelReqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error { return nil })
 		}
 	}
 

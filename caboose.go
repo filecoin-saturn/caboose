@@ -189,7 +189,7 @@ func NewCaboose(config *Config) (*Caboose, error) {
 		config.MirrorFraction = DefaultMirrorFraction
 	}
 	if override := os.Getenv(BackendOverrideKey); len(override) > 0 {
-		var  overrideNodes []tieredhashing.NodeInfo
+		var overrideNodes []tieredhashing.NodeInfo
 		err := json.Unmarshal([]byte(override), &overrideNodes)
 		if err != nil {
 			goLogger.Warnf("Error parsing BackendOverrideKey:", "err", err)

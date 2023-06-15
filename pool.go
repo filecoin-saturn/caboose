@@ -31,7 +31,7 @@ const (
 	tierMainToUnknown  = "main-to-unknown"
 	tierUnknownToMain  = "unknown-to-main"
 	BackendOverrideKey = "CABOOSE_BACKEND_OVERRIDE"
-	CabooseJwtIssuer = "caboose-client"
+	CabooseJwtIssuer   = "caboose-client"
 )
 
 // authenticateReq adds authentication to a request when a JWT_SECRET is present as an environment variable.
@@ -44,10 +44,9 @@ func authenticateReq(req *http.Request) (*http.Request, error) {
 		return req, nil
 	}
 
-
 	claims := &jwt.MapClaims{
 		"ExpiresAt": time.Now().Add(10 * time.Minute).Unix(), // Token expires after 10 minutes
-		"Issuer": CabooseJwtIssuer,
+		"Issuer":    CabooseJwtIssuer,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -58,7 +57,7 @@ func authenticateReq(req *http.Request) (*http.Request, error) {
 		return nil, err
 	}
 
-	req.Header.Add("Authorization", "Bearer " + ss)
+	req.Header.Add("Authorization", "Bearer "+ss)
 
 	return req, nil
 
@@ -82,7 +81,6 @@ func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
 	}
 
 	req, err = authenticateReq(req)
-
 
 	if err != nil {
 		goLogger.Warnw("failed to authenticate request to orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
