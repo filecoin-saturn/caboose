@@ -1,6 +1,7 @@
 package tieredhashing
 
 import (
+	"fmt"
 	"math"
 	"net/http"
 	"time"
@@ -40,6 +41,14 @@ const (
 
 type Tier string
 
+type NodeInfo struct {
+	ID          string  `json:"id"`
+    IP          string  `json:"ip"`
+    Distance    float32 `json:"distance"`
+    Weight      int     `json:"weight"`
+    SentinelCid string `json:"sentinelCid"`
+}
+
 type NodePerf struct {
 	LatencyDigest  *rolling.PointPolicy
 	NLatencyDigest float64
@@ -55,6 +64,9 @@ type NodePerf struct {
 	connFailures  int
 	networkErrors int
 	responseCodes int
+
+	// Node Info
+	NodeInfo
 }
 
 // locking is left to the caller
@@ -241,7 +253,17 @@ func (t *TieredHashing) GetPerf() map[string]*NodePerf {
 	return t.nodes
 }
 
-func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemoved, removedAndAddedBack int) {
+func (t *TieredHashing) GetSentinelCid(ip string) (string, error) {
+	if node, ok := t.nodes[ip]; ok {
+		return node.SentinelCid, nil
+
+	} else {
+		return "", fmt.Errorf("node with IP: %s is not in Caboose pool ", ip)
+	}
+}
+
+func (t *TieredHashing) AddOrchestratorNodes(nodes []NodeInfo) (added, alreadyRemoved, removedAndAddedBack int) {
+
 	for _, node := range nodes {
 		// TODO Add nodes that are closer than the ones we have even if the pool is full
 		if len(t.nodes) >= t.cfg.MaxPoolSize {
@@ -249,23 +271,25 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 		}
 
 		// do we already have this node ?
-		if _, ok := t.nodes[node]; ok {
+		if _, ok := t.nodes[node.IP]; ok {
 			continue
 		}
 
 		// have we kicked this node out for bad correctness or latency ?
-		if _, ok := t.removedNodesTimeCache.Get(node); ok {
+		if _, ok := t.removedNodesTimeCache.Get(node.IP); ok {
 			alreadyRemoved++
 			continue
 		}
 
 		added++
-		t.nodes[node] = &NodePerf{
+		t.nodes[node.IP] = &NodePerf{
 			LatencyDigest:     rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.LatencyWindowSize))),
 			CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.CorrectnessWindowSize))),
 			Tier:              TierUnknown,
+
+			NodeInfo: node,
 		}
-		t.unknownSet = t.unknownSet.AddNode(node)
+		t.unknownSet = t.unknownSet.AddNode(node.IP)
 	}
 
 	// Avoid Pool starvation -> if we still don't have enough nodes, add the ones we have already removed
@@ -276,23 +300,23 @@ func (t *TieredHashing) AddOrchestratorNodes(nodes []string) (added, alreadyRemo
 		}
 
 		// do we already have this node ?
-		if _, ok := t.nodes[node]; ok {
+		if _, ok := t.nodes[node.IP]; ok {
 			continue
 		}
 
-		if _, ok := t.removedNodesTimeCache.Get(node); !ok {
+		if _, ok := t.removedNodesTimeCache.Get(node.IP); !ok {
 			continue
 		}
 
 		added++
 		removedAndAddedBack++
-		t.nodes[node] = &NodePerf{
+		t.nodes[node.IP] = &NodePerf{
 			LatencyDigest:     rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.LatencyWindowSize))),
 			CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(t.cfg.CorrectnessWindowSize))),
 			Tier:              TierUnknown,
 		}
-		t.unknownSet = t.unknownSet.AddNode(node)
-		t.removedNodesTimeCache.Delete(node)
+		t.unknownSet = t.unknownSet.AddNode(node.IP)
+		t.removedNodesTimeCache.Delete(node.IP)
 	}
 
 	return

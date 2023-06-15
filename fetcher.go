@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
@@ -32,6 +33,7 @@ const (
 	saturnRetryAfterKey = "Retry-After"
 	resourceTypeCar     = "car"
 	resourceTypeBlock   = "block"
+	sentinelCidPeriod = 200
 )
 
 var (
@@ -47,6 +49,16 @@ var (
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
 func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, rm tieredhashing.ResponseMetrics, e error) {
 	reqUrl := fmt.Sprintf(saturnReqTmpl, c)
+
+	rand.Seed(time.Now().UnixNano())
+	if (rand.Intn(sentinelCidPeriod) == 1) {
+		sc, _ := p.th.GetSentinelCid(from)
+		if len(sc) > 0 {
+			sentinelCid, _ := cid.Decode(sc)
+			sentinelReqUrl := fmt.Sprintf(saturnReqTmpl, sentinelCid)
+			go p.fetchResource(ctx, from, sentinelReqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {return nil})
+		}
+	}
 
 	rm, e = p.fetchResource(ctx, from, reqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {
 		block, err := io.ReadAll(io.LimitReader(r, maxBlockSize))

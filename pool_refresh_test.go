@@ -1,9 +1,11 @@
 package caboose
 
 import (
+	"math/rand"
+	"testing"
+
 	"github.com/filecoin-saturn/caboose/tieredhashing"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestPoolRefresh(t *testing.T) {
@@ -59,7 +61,20 @@ func TestPoolRefreshWithLatencyDistribution(t *testing.T) {
 }
 
 func andAndAssertPool(t *testing.T, p *pool, nodes []string, expectedMain, expectedUnknown, expectedTotal, expectedNew int) {
-	p.refreshWithNodes(nodes)
+
+	parsedNodes := make([]tieredhashing.NodeInfo,0)
+
+	for _, n := range nodes {
+		parsedNodes = append(parsedNodes, tieredhashing.NodeInfo{
+			IP: n,
+			ID: n,
+			Weight: rand.Intn(100),
+			Distance: rand.Float32(),
+			SentinelCid: n,
+		})
+	}
+
+	p.refreshWithNodes(parsedNodes)
 	nds := p.th.GetPerf()
 	require.Equal(t, expectedTotal, len(nds))
 	mts := p.th.GetPoolMetrics()

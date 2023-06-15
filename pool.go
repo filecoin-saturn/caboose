@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net/http"
 	"net/url"
 	"os"
 	"sync"
@@ -18,6 +19,8 @@ import (
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/ipfs/boxo/path"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -28,26 +31,97 @@ const (
 	tierMainToUnknown  = "main-to-unknown"
 	tierUnknownToMain  = "unknown-to-main"
 	BackendOverrideKey = "CABOOSE_BACKEND_OVERRIDE"
+	CabooseJwtIssuer = "caboose-client"
 )
+
+// generateJWT Fetchs a secret from environment variable and generates a JWT
+func generateJWT() (string, error) {
+	jwtKey := []byte(os.Getenv("JWT_SECRET"))
+	if len(jwtKey) == 0 {
+		return "", fmt.Errorf("JWT_SECRET not set in environment variables")
+	}
+
+	// Create the Claims
+	claims := &jwt.MapClaims{
+		"ExpiresAt": time.Now().Add(10 * time.Minute).Unix(), // Token expires after 10 minutes
+		"Issuer": CabooseJwtIssuer,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	ss, err := token.SignedString(jwtKey)
+
+	return ss, err
+}
+
+// authenticateReq adds authentication to a request when a JWT_SECRET is present as an environment variable.
+func authenticateReq(req *http.Request) (*http.Request, error) {
+
+	// Check for existense of an auth secret.
+	jwtKey := []byte(os.Getenv("JWT_SECRET"))
+	if len(jwtKey) == 0 {
+		goLogger.Warnw("No JWT SECRET found")
+		return req, nil
+	}
+
+
+	claims := &jwt.MapClaims{
+		"ExpiresAt": time.Now().Add(10 * time.Minute).Unix(), // Token expires after 10 minutes
+		"Issuer": CabooseJwtIssuer,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	ss, err := token.SignedString(jwtKey)
+
+	if err != nil {
+		goLogger.Warnw("failed to generate JWT", "err", err)
+		return nil, err
+	}
+
+	req.Header.Add("Authorization", "Bearer " + ss)
+
+	return req, nil
+
+}
 
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
-func (p *pool) loadPool() ([]string, error) {
+func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
+
 	if p.config.OrchestratorOverride != nil {
 		return p.config.OrchestratorOverride, nil
 	}
-	resp, err := p.config.OrchestratorClient.Get(p.config.OrchestratorEndpoint.String())
+
+	client := p.config.OrchestratorClient
+
+	req, err := http.NewRequest("GET", p.config.OrchestratorEndpoint.String(), nil)
+
 	if err != nil {
-		goLogger.Warnw("failed to get backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint.String())
+		goLogger.Warnw("failed to create request to orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
+		return nil, err
+	}
+
+	req, err = authenticateReq(req)
+
+
+	if err != nil {
+		goLogger.Warnw("failed to authenticate request to orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
+		return nil, err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		goLogger.Warnw("failed to get backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	responses := make([]string, 0)
+	responses := make([]tieredhashing.NodeInfo, 0)
+
 	if err := json.NewDecoder(resp.Body).Decode(&responses); err != nil {
 		goLogger.Warnw("failed to decode backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint.String())
 		return nil, err
 	}
+
 	goLogger.Infow("got backends from orchestrators", "cnt", len(responses), "endpoint", p.config.OrchestratorEndpoint.String())
 	return responses, nil
 }
@@ -110,12 +184,18 @@ func (p *pool) doRefresh() {
 	newEP, err := p.loadPool()
 	if err == nil {
 		p.refreshWithNodes(newEP)
+		// sentinelCids, err := p.getSentinelCids(newEP)
+		// if err != nil {
+		// 	goLogger.Warnw("failed to retrieve sentinel cids", "err", err, "endpoint", p.config.OrchestratorEndpoint.String())
+		// }
+		// p.th.AddSentinelCids(sentinelCids)
+
 	} else {
 		poolRefreshErrorMetric.Add(1)
 	}
 }
 
-func (p *pool) refreshWithNodes(newEP []string) {
+func (p *pool) refreshWithNodes(newEP []tieredhashing.NodeInfo) {
 	p.lk.Lock()
 	defer p.lk.Unlock()
 

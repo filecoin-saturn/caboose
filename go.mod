@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	github.com/asecurityteam/rolling v0.0.0-20230418204413-b4052899307d
+	github.com/golang-jwt/jwt/v5 v5.0.0
 	github.com/google/uuid v1.3.0
 	github.com/ipfs/boxo v0.8.0-rc2.0.20230329082438-360b031ed895
 	github.com/ipfs/go-block-format v0.1.2

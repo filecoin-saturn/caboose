@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -94,6 +95,13 @@ func TestPoolMiroring(t *testing.T) {
 	e.lk.Lock()
 	e.resp = carBytes.Bytes()
 	eURL := strings.TrimPrefix(e.server.URL, "https://")
+	eNodeInfo := tieredhashing.NodeInfo {
+		IP: eURL,
+		ID: eURL,
+		Weight: rand.Intn(100),
+		Distance: rand.Float32(),
+		SentinelCid: "node1",
+	}
 	e.lk.Unlock()
 
 	e2 := ep{}
@@ -101,12 +109,20 @@ func TestPoolMiroring(t *testing.T) {
 	e2.lk.Lock()
 	e2.resp = carBytes.Bytes()
 	e2URL := strings.TrimPrefix(e2.server.URL, "https://")
+	e2NodeInfo := tieredhashing.NodeInfo {
+		IP: e2URL,
+		ID: e2URL,
+		Weight: rand.Intn(100),
+		Distance: rand.Float32(),
+		SentinelCid: "node2",
+
+	}
 	e2.lk.Unlock()
 
 	conf := Config{
 		OrchestratorEndpoint: &url.URL{},
 		OrchestratorClient:   http.DefaultClient,
-		OrchestratorOverride: []string{eURL, e2URL},
+		OrchestratorOverride: []tieredhashing.NodeInfo{eNodeInfo, e2NodeInfo},
 		LoggingEndpoint:      url.URL{},
 		LoggingClient:        http.DefaultClient,
 		LoggingInterval:      time.Hour,

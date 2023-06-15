@@ -2,13 +2,13 @@ package caboose
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
@@ -32,7 +32,7 @@ type Config struct {
 	// OrchestratorClient is the HTTP client to use when communicating with the Saturn orchestrator.
 	OrchestratorClient *http.Client
 	// OrchestratorOverride replaces calls to the orchestrator with a fixed response.
-	OrchestratorOverride []string
+	OrchestratorOverride []tieredhashing.NodeInfo
 
 	// LoggingEndpoint is the URL of the logging endpoint where we submit logs pertaining to our Saturn retrieval requests.
 	LoggingEndpoint url.URL
@@ -87,7 +87,7 @@ const DefaultMaxRetries = 3
 const DefaultMirrorFraction = 0.1
 
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
-const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=200"
+const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes?maxNodes=200"
 const DefaultPoolRefreshInterval = 5 * time.Minute
 
 // we cool off sending requests to Saturn for a cid for a certain duration
@@ -189,7 +189,13 @@ func NewCaboose(config *Config) (*Caboose, error) {
 		config.MirrorFraction = DefaultMirrorFraction
 	}
 	if override := os.Getenv(BackendOverrideKey); len(override) > 0 {
-		config.OrchestratorOverride = strings.Split(override, ",")
+		var  overrideNodes []tieredhashing.NodeInfo
+		err := json.Unmarshal([]byte(override), &overrideNodes)
+		if err != nil {
+			goLogger.Warnf("Error parsing BackendOverrideKey:", "err", err)
+			return nil, err
+		}
+		config.OrchestratorOverride = overrideNodes
 	}
 
 	c := Caboose{
