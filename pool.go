@@ -35,14 +35,7 @@ const (
 )
 
 // authenticateReq adds authentication to a request when a JWT_SECRET is present as an environment variable.
-func authenticateReq(req *http.Request) (*http.Request, error) {
-
-	// Check for existense of an auth secret.
-	jwtKey := []byte(os.Getenv("JWT_SECRET"))
-	if len(jwtKey) == 0 {
-		goLogger.Warnw("No JWT SECRET found")
-		return req, nil
-	}
+func authenticateReq(req *http.Request, key string) (*http.Request, error) {
 
 	claims := &jwt.MapClaims{
 		"ExpiresAt": time.Now().Add(10 * time.Minute).Unix(), // Token expires after 10 minutes
@@ -50,7 +43,7 @@ func authenticateReq(req *http.Request) (*http.Request, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	ss, err := token.SignedString(jwtKey)
+	ss, err := token.SignedString(key)
 
 	if err != nil {
 		goLogger.Warnw("failed to generate JWT", "err", err)
@@ -80,11 +73,12 @@ func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
 		return nil, err
 	}
 
-	req, err = authenticateReq(req)
-
-	if err != nil {
-		goLogger.Warnw("failed to authenticate request to orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
-		return nil, err
+	if len(p.config.OrchestratorJwtSecret) > 0 {
+		req, err = authenticateReq(req, p.config.OrchestratorJwtSecret)
+		if err != nil {
+			goLogger.Warnw("failed to authenticate request to orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
+			return nil, err
+		}
 	}
 
 	resp, err := client.Do(req)

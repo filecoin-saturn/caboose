@@ -23,7 +23,8 @@ import (
 )
 
 const (
-	SaturnEnvKey = "STRN_ENV_TAG"
+	SaturnEnvKey          = "STRN_ENV_TAG"
+	OrchestratorJwtSecret = "JWT_SECRET"
 )
 
 type Config struct {
@@ -33,6 +34,10 @@ type Config struct {
 	OrchestratorClient *http.Client
 	// OrchestratorOverride replaces calls to the orchestrator with a fixed response.
 	OrchestratorOverride []tieredhashing.NodeInfo
+
+	// OrchestratorJwtSecret is an auth secret that allows for Caboose to make authenticated
+	// http requests to the orchestrator.
+	OrchestratorJwtSecret string
 
 	// LoggingEndpoint is the URL of the logging endpoint where we submit logs pertaining to our Saturn retrieval requests.
 	LoggingEndpoint url.URL
@@ -162,6 +167,11 @@ func (epr ErrPartialResponse) Error() string {
 	return "caboose received a partial response"
 }
 
+// ErrInvalidResponse can be returned from a DataCallback to indicate that the data provided for the
+// requested resource was explicitly 'incorrect' - that blocks not in the requested dag, or non-car-conforming
+// data was returned.
+type ErrInvalidResponse error
+
 type Caboose struct {
 	config *Config
 	pool   *pool
@@ -196,6 +206,10 @@ func NewCaboose(config *Config) (*Caboose, error) {
 			return nil, err
 		}
 		config.OrchestratorOverride = overrideNodes
+	}
+
+	if jwtSecret := os.Getenv(OrchestratorJwtSecret); len(jwtSecret) > 0 {
+		config.OrchestratorJwtSecret = jwtSecret
 	}
 
 	c := Caboose{
