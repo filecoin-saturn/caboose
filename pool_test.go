@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
+	"fmt"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +17,7 @@ import (
 	"unsafe"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
 	"github.com/ipld/go-ipld-prime"
@@ -23,6 +26,7 @@ import (
 	"github.com/ipld/go-ipld-prime/storage/memstore"
 	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
 	"github.com/multiformats/go-multicodec"
+	"github.com/stretchr/testify/assert"
 )
 
 type ep struct {
@@ -162,4 +166,103 @@ func TestPoolMiroring(t *testing.T) {
 	if e2.cnt != 1 {
 		t.Fatalf("expected 1 mirrored fetch, got %d", e2.cnt)
 	}
+}
+
+
+func TestLoadPool(t *testing.T) {
+
+    t.Run("returns error if JWT generation fails", func(t *testing.T) {
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+
+		endpoint, _ := url.Parse(server.URL)
+        p := &pool{
+            config: &Config{
+                OrchestratorEndpoint: endpoint,
+				OrchestratorClient: http.DefaultClient,
+                OrchestratorJwtSecret: "", // Empty secret will cause JWT generation to fail
+            },
+        }
+
+        _, err := p.loadPool()
+
+        assert.Error(t, err)
+    })
+
+    t.Run("adds JWT to request if secret is provided", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			assert.NotEmpty(t, authHeader)
+
+			parts := strings.Split(authHeader, " ")
+			assert.Equal(t, 2, len(parts))
+			assert.Equal(t, "Bearer", parts[0])
+
+			tokenString := parts[1]
+			fmt.Println("token fw", tokenString)
+			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+				// Ensure that the JWT method conform to "SigningMethodHMAC"
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+				}
+				return []byte("secret"), nil
+			})
+
+			assert.NoError(t, err)
+			assert.True(t, token.Valid)
+			json.NewEncoder(w).Encode([]tieredhashing.NodeInfo{})
+		}))
+		defer server.Close()
+
+		endpoint, _ := url.Parse(server.URL)
+		fmt.Println("endpont", endpoint)
+        p := &pool{
+            config: &Config{
+                OrchestratorEndpoint: endpoint,
+                OrchestratorClient:   server.Client(),
+                OrchestratorJwtSecret: "secret",
+            },
+        }
+
+        _, err := p.loadPool()
+
+		fmt.Println(err)
+        assert.NoError(t, err)
+    })
+
+
+}
+
+
+func TestAuthenticateReq(t *testing.T) {
+
+	req, _ := http.NewRequest("GET", "http://example.com", nil)
+	testKey := "testKey"
+
+	newReq, err := authenticateReq(req, testKey)
+
+	assert.NoError(t, err, "Error should not occur during authentication")
+
+	assert.NotNil(t, newReq, "Request should be defined")
+
+	authHeader := newReq.Header.Get("Authorization")
+	assert.NotEmpty(t, authHeader, "Authorization header should not be empty")
+
+	parts := strings.Split(authHeader, " ")
+	assert.Equal(t, 2, len(parts), "Authorization header should have 2 parts")
+
+	tokenPart := parts[1]
+	token, err := jwt.Parse(tokenPart, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(testKey), nil
+	})
+	assert.NoError(t, err, "Error should not occur during parsing JWT")
+
+	claims, _ := token.Claims.(jwt.MapClaims)
+
+	expiresAt, ok := claims["ExpiresAt"].(float64)
+	assert.True(t, ok, "ExpiresAt should be a float64")
+	assert.True(t, time.Now().Unix() < int64(expiresAt), "Token should not have expired")
 }
