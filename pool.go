@@ -2,10 +2,12 @@ package caboose
 
 import (
 	"context"
+	cryptoRand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -43,7 +45,7 @@ func authenticateReq(req *http.Request, key string) (*http.Request, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	ss, err := token.SignedString(key)
+	ss, err := token.SignedString([]byte(key))
 
 	if err != nil {
 		goLogger.Warnw("failed to generate JWT", "err", err)
@@ -76,6 +78,8 @@ func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
 	if len(p.config.OrchestratorJwtSecret) > 0 {
 		req, err = authenticateReq(req, p.config.OrchestratorJwtSecret)
 		if err != nil {
+			fmt.Println("Respodsd", err)
+
 			goLogger.Warnw("failed to authenticate request to orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
 			return nil, err
 		}
@@ -83,6 +87,7 @@ func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
+		fmt.Println("Respodsd", err)
 		goLogger.Warnw("failed to get backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
 		return nil, err
 	}
@@ -234,6 +239,18 @@ func (p *pool) refreshPool() {
 	}
 }
 
+func (p *pool) fetchSentinelCid(node string) error {
+	sc, err := p.th.GetSentinelCid(node)
+	if (err != nil) {
+		goLogger.Warnw("failed to fetch sentinel cid ", "err", err)
+		return err
+	}
+	trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	err = p.fetchResourceAndUpdate(trialTimeout, node, sc, 0, p.mirrorValidator)
+	cancel()
+	return err
+}
+
 func (p *pool) checkPool() {
 	for {
 		select {
@@ -251,6 +268,15 @@ func (p *pool) checkPool() {
 			}
 			trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			err := p.fetchResourceAndUpdate(trialTimeout, testNodes[0], msg.path, 0, p.mirrorValidator)
+
+			rand, _ := cryptoRand.Int(cryptoRand.Reader, big.NewInt(sentinelCidPeriod))
+			if rand == big.NewInt(1) {
+				err := p.fetchSentinelCid(testNodes[0])
+				if (err != nil) {
+					goLogger.Warnw("failed to fetch sentinel cid ", "err", err)
+				}
+			}
+
 			cancel()
 			if err != nil {
 				mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
