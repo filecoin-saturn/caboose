@@ -80,6 +80,8 @@ type Config struct {
 	SaturnNodeCoolOff time.Duration
 
 	TieredHashingOpts []tieredhashing.Option
+
+	SentinelCidPeriod int64
 }
 
 const DefaultLoggingInterval = 5 * time.Second
@@ -105,6 +107,8 @@ const DefaultFetchKeyCoolDownDuration = 1 * time.Minute // how long will a sane 
 // we cool off sending requests to a Saturn node if it returns transient errors rather than immediately downvoting it;
 // however, only upto a certain max number of cool-offs.
 const DefaultSaturnNodeCoolOff = 5 * time.Minute
+
+const DefaultSentinelCidPeriod = int64(200)
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available saturn backend")
@@ -230,6 +234,10 @@ func NewCaboose(config *Config) (*Caboose, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if c.config.SentinelCidPeriod == 0 {
+		c.config.SentinelCidPeriod = DefaultSentinelCidPeriod
 	}
 
 	if c.config.PoolRefresh == 0 {

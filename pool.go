@@ -36,6 +36,8 @@ const (
 	CabooseJwtIssuer   = "caboose-client"
 )
 
+var sentinelCidReqTemplate = "/ipfs/%s?format=car&car-scope=block"
+
 // authenticateReq adds authentication to a request when a JWT_SECRET is present as an environment variable.
 func authenticateReq(req *http.Request, key string) (*http.Request, error) {
 
@@ -243,7 +245,7 @@ func (p *pool) fetchSentinelCid(node string) error {
 		return err
 	}
 	trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	reqUrl := fmt.Sprintf(saturnReqTmpl, sc)
+	reqUrl := fmt.Sprintf(sentinelCidReqTemplate, sc)
 	err = p.fetchResourceAndUpdate(trialTimeout, node, reqUrl, 0, p.mirrorValidator)
 	cancel()
 	return err
@@ -265,10 +267,15 @@ func (p *pool) checkPool() {
 				continue
 			}
 			trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+
 			err := p.fetchResourceAndUpdate(trialTimeout, testNodes[0], msg.path, 0, p.mirrorValidator)
 
-			rand, _ := cryptoRand.Int(cryptoRand.Reader, big.NewInt(sentinelCidPeriod))
-			if rand == big.NewInt(1) {
+			rand := big.NewInt(1)
+			if p.config.SentinelCidPeriod > 0 {
+				rand, _ = cryptoRand.Int(cryptoRand.Reader, big.NewInt(p.config.SentinelCidPeriod))
+			}
+
+			if rand.Cmp(big.NewInt(0)) == 0 {
 				err := p.fetchSentinelCid(testNodes[0])
 				if err != nil {
 					goLogger.Warnw("failed to fetch sentinel cid ", "err", err)
@@ -347,6 +354,7 @@ func cidToKey(c cid.Cid) string {
 }
 
 func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk blocks.Block, err error) {
+
 	fetchCalledTotalMetric.WithLabelValues(resourceTypeBlock).Add(1)
 	if recordIfContextErr(resourceTypeBlock, ctx, "fetchBlockWith") {
 		return nil, ctx.Err()
