@@ -244,7 +244,6 @@ func (p *pool) fetchSentinelCid(node string) error {
 	}
 	trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	reqUrl := fmt.Sprintf(saturnReqTmpl, sc)
-	fmt.Println("requel", reqUrl)
 	err = p.fetchResourceAndUpdate(trialTimeout, node, reqUrl, 0, p.mirrorValidator)
 	cancel()
 	return err
