@@ -241,7 +241,7 @@ func (p *pool) refreshPool() {
 
 func (p *pool) fetchSentinelCid(node string) error {
 	sc, err := p.th.GetSentinelCid(node)
-	if (err != nil) {
+	if err != nil {
 		goLogger.Warnw("failed to fetch sentinel cid ", "err", err)
 		return err
 	}
@@ -272,7 +272,7 @@ func (p *pool) checkPool() {
 			rand, _ := cryptoRand.Int(cryptoRand.Reader, big.NewInt(sentinelCidPeriod))
 			if rand == big.NewInt(1) {
 				err := p.fetchSentinelCid(testNodes[0])
-				if (err != nil) {
+				if err != nil {
 					goLogger.Warnw("failed to fetch sentinel cid ", "err", err)
 				}
 			}

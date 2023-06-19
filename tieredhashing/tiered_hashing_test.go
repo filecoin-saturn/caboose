@@ -127,7 +127,7 @@ func TestSentinelCids(t *testing.T) {
 	th.h.AddOrchestratorNodes(genNodeStructs(nodes))
 
 	t.Run("sentinel cids exist for existing nodes", func(t *testing.T) {
-		for _, node := range(nodes) {
+		for _, node := range nodes {
 			_, err := th.h.GetSentinelCid(node)
 			assert.NoError(t, err, "Sentinel Cids should always exist for nodes that are part of the pool")
 		}
@@ -137,19 +137,19 @@ func TestSentinelCids(t *testing.T) {
 	th.addNewNodesAll(t, newNodes)
 	th.h.AddOrchestratorNodes(genNodeStructs(newNodes))
 	t.Run("sentinel cids exist for new nodes", func(t *testing.T) {
-		for _, node := range(newNodes) {
+		for _, node := range newNodes {
 			_, err := th.h.GetSentinelCid(node)
 			assert.NoError(t, err, "Sentinel Cids should always exist for new added nodes")
 
 		}
 	})
 
-	for _, node := range(newNodes) {
+	for _, node := range newNodes {
 		th.h.removeFailedNode(node)
 	}
 
 	t.Run("sentinel cids do not exist for removed nodes", func(t *testing.T) {
-		for _, node := range(newNodes) {
+		for _, node := range newNodes {
 			_, err := th.h.GetSentinelCid(node)
 			assert.Error(t, err, "Sentinel cids do not exist for removed nodes")
 		}

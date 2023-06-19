@@ -168,28 +168,27 @@ func TestPoolMiroring(t *testing.T) {
 	}
 }
 
-
 func TestLoadPool(t *testing.T) {
 
-    t.Run("returns error if JWT generation fails", func(t *testing.T) {
+	t.Run("returns error if JWT generation fails", func(t *testing.T) {
 
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 
 		endpoint, _ := url.Parse(server.URL)
-        p := &pool{
-            config: &Config{
-                OrchestratorEndpoint: endpoint,
-				OrchestratorClient: http.DefaultClient,
-                OrchestratorJwtSecret: "", // Empty secret will cause JWT generation to fail
-            },
-        }
+		p := &pool{
+			config: &Config{
+				OrchestratorEndpoint:  endpoint,
+				OrchestratorClient:    http.DefaultClient,
+				OrchestratorJwtSecret: "", // Empty secret will cause JWT generation to fail
+			},
+		}
 
-        _, err := p.loadPool()
+		_, err := p.loadPool()
 
-        assert.Error(t, err)
-    })
+		assert.Error(t, err)
+	})
 
-    t.Run("adds JWT to request if secret is provided", func(t *testing.T) {
+	t.Run("adds JWT to request if secret is provided", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
 			assert.NotEmpty(t, authHeader)
@@ -215,23 +214,21 @@ func TestLoadPool(t *testing.T) {
 
 		endpoint, _ := url.Parse(server.URL)
 		fmt.Println("endpont", endpoint)
-        p := &pool{
-            config: &Config{
-                OrchestratorEndpoint: endpoint,
-                OrchestratorClient:   server.Client(),
-                OrchestratorJwtSecret: "secret",
-            },
-        }
+		p := &pool{
+			config: &Config{
+				OrchestratorEndpoint:  endpoint,
+				OrchestratorClient:    server.Client(),
+				OrchestratorJwtSecret: "secret",
+			},
+		}
 
-        _, err := p.loadPool()
+		_, err := p.loadPool()
 
 		fmt.Println(err)
-        assert.NoError(t, err)
-    })
-
+		assert.NoError(t, err)
+	})
 
 }
-
 
 func TestAuthenticateReq(t *testing.T) {
 
