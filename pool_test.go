@@ -201,7 +201,6 @@ func TestLoadPool(t *testing.T) {
 			tokenString := parts[1]
 			fmt.Println("token fw", tokenString)
 			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-				// Ensure that the JWT method conform to "SigningMethodHMAC"
 				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 				}
