@@ -78,8 +78,6 @@ func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
 	if len(p.config.OrchestratorJwtSecret) > 0 {
 		req, err = authenticateReq(req, p.config.OrchestratorJwtSecret)
 		if err != nil {
-			fmt.Println("Respodsd", err)
-
 			goLogger.Warnw("failed to authenticate request to orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
 			return nil, err
 		}
@@ -87,7 +85,6 @@ func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Println("Respodsd", err)
 		goLogger.Warnw("failed to get backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
 		return nil, err
 	}
@@ -246,7 +243,9 @@ func (p *pool) fetchSentinelCid(node string) error {
 		return err
 	}
 	trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	err = p.fetchResourceAndUpdate(trialTimeout, node, sc, 0, p.mirrorValidator)
+	reqUrl := fmt.Sprintf(saturnReqTmpl, sc)
+	fmt.Println("requel", reqUrl)
+	err = p.fetchResourceAndUpdate(trialTimeout, node, reqUrl, 0, p.mirrorValidator)
 	cancel()
 	return err
 }

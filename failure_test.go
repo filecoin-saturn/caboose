@@ -3,15 +3,16 @@ package caboose_test
 import (
 	"context"
 	"errors"
-	"github.com/filecoin-saturn/caboose"
-	"github.com/ipfs/go-cid"
-	"github.com/multiformats/go-multicodec"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/filecoin-saturn/caboose"
+	"github.com/ipfs/go-cid"
+	"github.com/multiformats/go-multicodec"
+	"github.com/stretchr/testify/require"
 )
 
 var expRetryAfter = 1 * time.Second

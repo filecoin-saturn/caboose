@@ -71,84 +71,28 @@ func TestPoolMiroring(t *testing.T) {
 		tieredhashing.WithLatencyWindowSize(2),
 		tieredhashing.WithMaxMainTierSize(1),
 	}
+	ph := BuildPoolHarness(t, 2, opts)
 
-	saturnClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		},
-	}
-
-	data := []byte("hello world")
-	ls := cidlink.DefaultLinkSystem()
-	lsm := memstore.Store{}
-	ls.SetReadStorage(&lsm)
-	ls.SetWriteStorage(&lsm)
-	finalCL := ls.MustStore(ipld.LinkContext{}, cidlink.LinkPrototype{Prefix: cid.NewPrefixV1(uint64(multicodec.Raw), uint64(multicodec.Sha2_256))}, basicnode.NewBytes(data))
-	finalC := finalCL.(cidlink.Link).Cid
-	cw, err := car.NewSelectiveWriter(context.TODO(), &ls, finalC, selectorparse.CommonSelector_MatchAllRecursively)
-	if err != nil {
-		t.Fatal(err)
-	}
-	carBytes := bytes.NewBuffer(nil)
-	cw.WriteTo(carBytes)
-
-	e := ep{}
-	e.Setup()
-	e.lk.Lock()
-	e.resp = carBytes.Bytes()
-	eURL := strings.TrimPrefix(e.server.URL, "https://")
-	eNodeInfo := tieredhashing.NodeInfo{
-		IP:          eURL,
-		ID:          eURL,
-		Weight:      rand.Intn(100),
-		Distance:    rand.Float32(),
-		SentinelCid: "node1",
-	}
-	e.lk.Unlock()
-
-	e2 := ep{}
-	e2.Setup()
-	e2.lk.Lock()
-	e2.resp = carBytes.Bytes()
-	e2URL := strings.TrimPrefix(e2.server.URL, "https://")
-	e2NodeInfo := tieredhashing.NodeInfo{
-		IP:          e2URL,
-		ID:          e2URL,
-		Weight:      rand.Intn(100),
-		Distance:    rand.Float32(),
-		SentinelCid: "node2",
-	}
-	e2.lk.Unlock()
-
-	conf := Config{
-		OrchestratorEndpoint: &url.URL{},
-		OrchestratorClient:   http.DefaultClient,
-		OrchestratorOverride: []tieredhashing.NodeInfo{eNodeInfo, e2NodeInfo},
-		LoggingEndpoint:      url.URL{},
-		LoggingClient:        http.DefaultClient,
-		LoggingInterval:      time.Hour,
-
-		SaturnClient:         saturnClient,
-		DoValidation:         false,
-		PoolRefresh:          time.Minute,
-		MaxRetrievalAttempts: 1,
-		TieredHashingOpts:    opts,
-		MirrorFraction:       1.0,
-	}
-
-	p := newPool(&conf)
+	p := ph.p
+	nodes := ph.p.config.OrchestratorOverride
 	p.doRefresh()
 	p.config.OrchestratorOverride = nil
 	p.Start()
 
 	// promote one node to main pool. other will remain in uknown pool.
+	eURL := nodes[0].IP
 	p.th.RecordSuccess(eURL, tieredhashing.ResponseMetrics{Success: true, TTFBMs: 30, SpeedPerMs: 30})
 	p.th.RecordSuccess(eURL, tieredhashing.ResponseMetrics{Success: true, TTFBMs: 30, SpeedPerMs: 30})
 	p.th.UpdateMainTierWithTopN()
 
-	_, err = p.fetchBlockWith(context.Background(), finalC, "")
+	ls := cidlink.DefaultLinkSystem()
+	lsm := memstore.Store{}
+	ls.SetReadStorage(&lsm)
+	ls.SetWriteStorage(&lsm)
+	finalCL := ls.MustStore(ipld.LinkContext{}, cidlink.LinkPrototype{Prefix: cid.NewPrefixV1(uint64(multicodec.Raw), uint64(multicodec.Sha2_256))}, basicnode.NewBytes(testBlock))
+	finalC := finalCL.(cidlink.Link).Cid
+
+	_, err := p.fetchBlockWith(context.Background(), finalC, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,15 +100,12 @@ func TestPoolMiroring(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	p.Close()
 
-	e.lk.Lock()
-	defer e.lk.Unlock()
-	if e.cnt != 1 {
-		t.Fatalf("expected 1 primary fetch, got %d", e.cnt)
-	}
-	e2.lk.Lock()
-	defer e2.lk.Unlock()
-	if e2.cnt != 1 {
-		t.Fatalf("expected 1 mirrored fetch, got %d", e2.cnt)
+	for _, e := range ph.eps {
+		e.lk.Lock()
+		defer e.lk.Unlock()
+		if e.cnt != 1 {
+			t.Fatalf("expected 1 primary fetch, got %d", e.cnt)
+		}
 	}
 }
 
@@ -198,7 +139,6 @@ func TestLoadPool(t *testing.T) {
 			assert.Equal(t, "Bearer", parts[0])
 
 			tokenString := parts[1]
-			fmt.Println("token fw", tokenString)
 			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -213,7 +153,6 @@ func TestLoadPool(t *testing.T) {
 		defer server.Close()
 
 		endpoint, _ := url.Parse(server.URL)
-		fmt.Println("endpont", endpoint)
 		p := &pool{
 			config: &Config{
 				OrchestratorEndpoint:  endpoint,
@@ -221,10 +160,7 @@ func TestLoadPool(t *testing.T) {
 				OrchestratorJwtSecret: "secret",
 			},
 		}
-
 		_, err := p.loadPool()
-
-		fmt.Println(err)
 		assert.NoError(t, err)
 	})
 
@@ -261,4 +197,87 @@ func TestAuthenticateReq(t *testing.T) {
 	expiresAt, ok := claims["ExpiresAt"].(float64)
 	assert.True(t, ok, "ExpiresAt should be a float64")
 	assert.True(t, time.Now().Unix() < int64(expiresAt), "Token should not have expired")
+}
+
+// TODO: fix this test
+// func TestFetchSentinelCid(t *testing.T) {
+
+// 	ph := BuildPoolHarness(t, 10, nil)
+// 	ph.p.th.AddOrchestratorNodes(ph.p.config.OrchestratorOverride)
+// 	for _, node := range(ph.p.config.OrchestratorOverride) {
+// 		err := ph.p.fetchSentinelCid(node.IP)
+// 		if err != nil {
+// 			t.Fatal(err)
+// 		}
+// 	}
+// }
+
+type PoolHarness struct {
+	p   *pool
+	eps []*ep
+}
+
+func BuildPoolHarness(t *testing.T, n int, opts []tieredhashing.Option) *PoolHarness {
+
+	saturnClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
+
+	ls := cidlink.DefaultLinkSystem()
+	lsm := memstore.Store{}
+	ls.SetReadStorage(&lsm)
+	ls.SetWriteStorage(&lsm)
+	finalCL := ls.MustStore(ipld.LinkContext{}, cidlink.LinkPrototype{Prefix: cid.NewPrefixV1(uint64(multicodec.Raw), uint64(multicodec.Sha2_256))}, basicnode.NewBytes(testBlock))
+	finalC := finalCL.(cidlink.Link).Cid
+	cw, err := car.NewSelectiveWriter(context.TODO(), &ls, finalC, selectorparse.CommonSelector_MatchAllRecursively)
+	if err != nil {
+		t.Fatal(err)
+	}
+	carBytes := bytes.NewBuffer(nil)
+	cw.WriteTo(carBytes)
+
+	nodeInfos := make([]tieredhashing.NodeInfo, n)
+	eps := make([]*ep, n)
+
+	for i := 0; i < n; i++ {
+		eps[i] = &ep{}
+		eps[i].Setup()
+		eps[i].lk.Lock()
+		eps[i].resp = carBytes.Bytes()
+		eURL := strings.TrimPrefix(eps[i].server.URL, "https://")
+		nodeInfos[i] = tieredhashing.NodeInfo{
+			IP:          eURL,
+			ID:          eURL,
+			Weight:      rand.Intn(100),
+			Distance:    rand.Float32(),
+			SentinelCid: finalC.String(),
+		}
+		eps[i].lk.Unlock()
+
+	}
+
+	conf := Config{
+		OrchestratorEndpoint: &url.URL{},
+		OrchestratorClient:   http.DefaultClient,
+		OrchestratorOverride: nodeInfos,
+		LoggingEndpoint:      url.URL{},
+		LoggingClient:        http.DefaultClient,
+		LoggingInterval:      time.Hour,
+		SaturnClient:         saturnClient,
+		DoValidation:         false,
+		PoolRefresh:          time.Minute,
+		MaxRetrievalAttempts: 1,
+		TieredHashingOpts:    opts,
+		MirrorFraction:       1.0,
+	}
+
+	ph := &PoolHarness{
+		p:   newPool(&conf),
+		eps: eps,
+	}
+	return ph
 }
