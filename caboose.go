@@ -108,6 +108,8 @@ const DefaultFetchKeyCoolDownDuration = 1 * time.Minute // how long will a sane 
 // however, only upto a certain max number of cool-offs.
 const DefaultSaturnNodeCoolOff = 5 * time.Minute
 
+// This represents, on average, how many requests caboose makes before requesting a sentinel cid.
+// Example: a period of 100 implies Caboose will on average make a sentinel CID request once every 100 requests.
 const DefaultSentinelCidPeriod = int64(200)
 
 var ErrNotImplemented error = errors.New("not implemented")
