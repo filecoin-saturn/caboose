@@ -237,7 +237,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
+	req, err := http.NewRequestWithContext(httpstat.WithHTTPStat(reqCtx, &result), http.MethodGet, reqUrl, nil)
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "build-http-request") {
 			return rm, reqCtx.Err()
@@ -257,9 +257,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	agent := req.Header.Get("User-Agent")
 	req.Header.Set("User-Agent", os.Getenv(SaturnEnvKey)+"/"+agent)
-
-	//trace
-	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
 
 	var resp *http.Response
 	saturnCallsTotalMetric.WithLabelValues(resourceType).Add(1)
