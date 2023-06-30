@@ -68,8 +68,8 @@ type Config struct {
 	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
 	MaxRetrievalAttempts int
 
-	// MaxFetchFailuresBeforeCoolDown is the maximum number of retrieval failures across the pool for a key we will tolerate before we
-	// add the key to the cool down cache.
+	// MaxFetchFailuresBeforeCoolDown is the maximum number of retrieval failures across the pool for a url before we auto-reject subsequent
+	// fetches of that url.
 	MaxFetchFailuresBeforeCoolDown int
 
 	// FetchKeyCoolDownDuration is duration of time a key will stay in the cool down cache
@@ -90,8 +90,11 @@ const DefaultSaturnOrchestratorRequestTimeout = 30 * time.Second
 const DefaultSaturnBlockRequestTimeout = 19 * time.Second
 const DefaultSaturnCarRequestTimeout = 30 * time.Minute
 
-const DefaultMaxRetries = 3
-const DefaultMirrorFraction = 0.1
+// default retries before failure unless overridden by MaxRetrievalAttempts
+const defaultMaxRetries = 3
+
+// default percentage of requests to mirror for tracking how nodes perform unless overridden by MirrorFraction
+const defaultMirrorFraction = 0.01
 
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes?maxNodes=200"
@@ -101,12 +104,12 @@ const DefaultPoolRefreshInterval = 5 * time.Minute
 // if we've seen a certain number of failures for it already in a given duration.
 // NOTE: before getting creative here, make sure you dont break end user flow
 // described in https://github.com/ipni/storetheindex/pull/1344
-const DefaultMaxFetchFailures = 3 * DefaultMaxRetries   // this has to fail more than DefaultMaxRetries done for a single gateway request
-const DefaultFetchKeyCoolDownDuration = 1 * time.Minute // how long will a sane person wait and stare at blank screen with "retry later" error before hitting F5?
+const defaultMaxFetchFailures = 3 * defaultMaxRetries   // this has to fail more than DefaultMaxRetries done for a single gateway request
+const defaultFetchKeyCoolDownDuration = 1 * time.Minute // how long will a sane person wait and stare at blank screen with "retry later" error before hitting F5?
 
 // we cool off sending requests to a Saturn node if it returns transient errors rather than immediately downvoting it;
 // however, only upto a certain max number of cool-offs.
-const DefaultSaturnNodeCoolOff = 5 * time.Minute
+const defaultSaturnNodeCoolOff = 5 * time.Minute
 
 // This represents, on average, how many requests caboose makes before requesting a sentinel cid.
 // Example: a period of 100 implies Caboose will on average make a sentinel CID request once every 100 requests.
@@ -114,7 +117,6 @@ const DefaultSentinelCidPeriod = int64(10)
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available saturn backend")
-var ErrBackendFailed error = errors.New("saturn backend failed")
 var ErrContentProviderNotFound error = errors.New("saturn failed to find content providers")
 var ErrSaturnTimeout error = errors.New("saturn backend timed out")
 
@@ -192,17 +194,17 @@ type DataCallback func(resource string, reader io.Reader) error
 // Every request will result in a remote network request.
 func NewCaboose(config *Config) (*Caboose, error) {
 	if config.FetchKeyCoolDownDuration == 0 {
-		config.FetchKeyCoolDownDuration = DefaultFetchKeyCoolDownDuration
+		config.FetchKeyCoolDownDuration = defaultFetchKeyCoolDownDuration
 	}
 	if config.MaxFetchFailuresBeforeCoolDown == 0 {
-		config.MaxFetchFailuresBeforeCoolDown = DefaultMaxFetchFailures
+		config.MaxFetchFailuresBeforeCoolDown = defaultMaxFetchFailures
 	}
 
 	if config.SaturnNodeCoolOff == 0 {
-		config.SaturnNodeCoolOff = DefaultSaturnNodeCoolOff
+		config.SaturnNodeCoolOff = defaultSaturnNodeCoolOff
 	}
 	if config.MirrorFraction == 0 {
-		config.MirrorFraction = DefaultMirrorFraction
+		config.MirrorFraction = defaultMirrorFraction
 	}
 	if override := os.Getenv(BackendOverrideKey); len(override) > 0 {
 		var overrideNodes []tieredhashing.NodeInfo
@@ -247,7 +249,7 @@ func NewCaboose(config *Config) (*Caboose, error) {
 	}
 
 	if c.config.MaxRetrievalAttempts == 0 {
-		c.config.MaxRetrievalAttempts = DefaultMaxRetries
+		c.config.MaxRetrievalAttempts = defaultMaxRetries
 	}
 
 	// start the pool

@@ -86,6 +86,7 @@ func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
 	}
 
 	resp, err := client.Do(req)
+
 	if err != nil {
 		goLogger.Warnw("failed to get backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
 		return nil, err
@@ -103,7 +104,7 @@ func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
 	return responses, nil
 }
 
-type poolRequest struct {
+type mirroredPoolRequest struct {
 	node string
 	path string
 	// the key for node affinity for the request
@@ -117,7 +118,7 @@ type pool struct {
 	started       chan struct{} // started signals that we've already initialized the pool once with Saturn endpoints.
 	refresh       chan struct{} // refresh is used to signal the need for doing a refresh of the Saturn endpoints pool.
 	done          chan struct{} // done is used to signal that we're shutting down the Saturn endpoints pool and don't need to refresh it anymore.
-	mirrorSamples chan poolRequest
+	mirrorSamples chan mirroredPoolRequest
 
 	fetchKeyLk            sync.RWMutex
 	fetchKeyFailureCache  *cache.Cache // guarded by fetchKeyLk
@@ -142,7 +143,7 @@ func newPool(c *Config) *pool {
 		started:       make(chan struct{}),
 		refresh:       make(chan struct{}, 1),
 		done:          make(chan struct{}, 1),
-		mirrorSamples: make(chan poolRequest, 10),
+		mirrorSamples: make(chan mirroredPoolRequest, 10),
 
 		fetchKeyCoolDownCache: cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 		fetchKeyFailureCache:  cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
@@ -410,7 +411,7 @@ func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk 
 			// mirror successful request
 			if p.config.MirrorFraction > rand.Float64() {
 				select {
-				case p.mirrorSamples <- poolRequest{node: nodes[i], path: fmt.Sprintf("/ipfs/%s?format=car&car-scope=block", c), key: aff}:
+				case p.mirrorSamples <- mirroredPoolRequest{node: nodes[i], path: fmt.Sprintf("/ipfs/%s?format=car&car-scope=block", c), key: aff}:
 				default:
 				}
 			}
@@ -507,7 +508,7 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 		// sample request for mirroring
 		if p.config.MirrorFraction > rand.Float64() {
 			select {
-			case p.mirrorSamples <- poolRequest{node: nodes[i], path: pq[0], key: aff}:
+			case p.mirrorSamples <- mirroredPoolRequest{node: nodes[i], path: pq[0], key: aff}:
 			default:
 			}
 		}
