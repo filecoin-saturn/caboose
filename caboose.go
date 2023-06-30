@@ -110,7 +110,7 @@ const DefaultSaturnNodeCoolOff = 5 * time.Minute
 
 // This represents, on average, how many requests caboose makes before requesting a sentinel cid.
 // Example: a period of 100 implies Caboose will on average make a sentinel CID request once every 100 requests.
-const DefaultSentinelCidPeriod = int64(200)
+const DefaultSentinelCidPeriod = int64(10)
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available saturn backend")
