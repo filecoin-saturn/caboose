@@ -247,7 +247,7 @@ func (p *pool) fetchSentinelCid(node string) error {
 	}
 	trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	reqUrl := fmt.Sprintf(sentinelCidReqTemplate, sc)
-	goLogger.Debugw("Fetching Sentinel CID: ", sc, " from: ", node)
+	goLogger.Debugw("fetching sentinel cid: ", reqUrl, " from: ", node)
 	err = p.fetchResourceAndUpdate(trialTimeout, node, reqUrl, 0, p.mirrorValidator)
 	cancel()
 	return err
