@@ -242,11 +242,12 @@ func (p *pool) refreshPool() {
 func (p *pool) fetchSentinelCid(node string) error {
 	sc, err := p.th.GetSentinelCid(node)
 	if err != nil {
-		goLogger.Warnw("failed to fetch sentinel cid ", "err", err)
+		goLogger.Warnw("failed to find sentinel cid ", "err", err)
 		return err
 	}
 	trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	reqUrl := fmt.Sprintf(sentinelCidReqTemplate, sc)
+	goLogger.Debugw("Fetching Sentinel CID: ", sc, " from: ", node)
 	err = p.fetchResourceAndUpdate(trialTimeout, node, reqUrl, 0, p.mirrorValidator)
 	cancel()
 	return err
