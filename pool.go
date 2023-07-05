@@ -280,6 +280,9 @@ func (p *pool) checkPool() {
 				err := p.fetchSentinelCid(testNodes[0])
 				if err != nil {
 					goLogger.Warnw("failed to fetch sentinel cid ", "err", err)
+					sentinelCidCallsTotalMetric.WithLabelValues("error").Add(1)
+				} else {
+					sentinelCidCallsTotalMetric.WithLabelValues("success").Add(1)
 				}
 			}
 
