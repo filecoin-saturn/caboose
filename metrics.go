@@ -65,7 +65,7 @@ var (
 	fetchResponseCodeMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "fetch_response_code"),
 		Help: "Response codes observed during caboose fetches for a block",
-	}, []string{"resourceType", "code"})
+	}, []string{"resourceType", "code", "range"})
 
 	// success cases
 	fetchSpeedPerPeerSuccessMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -221,19 +221,19 @@ var (
 var (
 	saturnCallsTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_total"),
-	}, []string{"resourceType"})
+	}, []string{"resourceType", "range"})
 
 	saturnCallsSuccessTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_success_total"),
-	}, []string{"resourceType", "cache_status"})
+	}, []string{"resourceType", "cache_status", "range"})
+
+	saturnCalls2xxTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_2xx_total"),
+	}, []string{"resourceType", "range"})
 
 	saturnCallsFailureTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_calls_failure_total"),
-	}, []string{"resourceType", "reason", "code"})
-
-	saturnConnectionFailureTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "saturn_connection_failure_total"),
-	}, []string{"resourceType", "reason"})
+	}, []string{"resourceType", "reason", "code", "range"})
 
 	mirroredTrafficTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "mirrored_traffic_total"),
@@ -291,7 +291,7 @@ func init() {
 
 	CabooseMetrics.MustRegister(saturnCallsTotalMetric)
 	CabooseMetrics.MustRegister(saturnCallsFailureTotalMetric)
-	CabooseMetrics.MustRegister(saturnConnectionFailureTotalMetric)
+	CabooseMetrics.MustRegister(saturnCalls2xxTotalMetric)
 
 	CabooseMetrics.MustRegister(saturnCallsSuccessTotalMetric)
 

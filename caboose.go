@@ -90,7 +90,8 @@ const defaultMaxRetries = 3
 const defaultMirrorFraction = 0.01
 
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
-const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=200"
+const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes?count=100"
+const DefaultOrchestratorCoreEndpoint = "https://orchestrator.strn.pl/nodes?extra=core&count=100"
 const DefaultPoolRefreshInterval = 5 * time.Minute
 
 // we cool off sending requests to Saturn for a cid for a certain duration
