@@ -36,7 +36,7 @@ const (
 	CabooseJwtIssuer   = "caboose-client"
 )
 
-var sentinelCidReqTemplate = "/ipfs/%s?format=car&car-scope=block"
+var sentinelCidReqTemplate = "/ipfs/%s?format=raw"
 
 // authenticateReq adds authentication to a request when a JWT_SECRET is present as an environment variable.
 func authenticateReq(req *http.Request, key string) (*http.Request, error) {
