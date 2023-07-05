@@ -256,7 +256,7 @@ func (t *TieredHashing) GetPerf() map[string]*NodePerf {
 func (t *TieredHashing) GetSentinelCid(ip string) (string, error) {
 	if node, ok := t.nodes[ip]; ok {
 		if len(node.SentinelCid) > 0 {
-		return node.SentinelCid, nil
+			return node.SentinelCid, nil
 		} else {
 			return "", fmt.Errorf("sentinel cid doesn't exist for node: %s ", ip)
 		}
