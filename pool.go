@@ -101,6 +101,7 @@ func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
 	}
 
 	goLogger.Infow("got backends from orchestrators", "cnt", len(responses), "endpoint", p.config.OrchestratorEndpoint.String())
+	goLogger.Infow("got nodes from orchestrator", responses)
 	return responses, nil
 }
 
@@ -240,6 +241,7 @@ func (p *pool) refreshPool() {
 }
 
 func (p *pool) fetchSentinelCid(node string) error {
+	goLogger.Debugw("fetching sentinel cid for: ", node)
 	sc, err := p.th.GetSentinelCid(node)
 	if err != nil {
 		goLogger.Warnw("failed to find sentinel cid ", "err", err)
@@ -270,7 +272,8 @@ func (p *pool) checkPool() {
 			}
 			trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
-			err := p.fetchResourceAndUpdate(trialTimeout, testNodes[0], msg.path, 0, p.mirrorValidator)
+			node := testNodes[0]
+			err := p.fetchResourceAndUpdate(trialTimeout, node, msg.path, 0, p.mirrorValidator)
 
 			rand := big.NewInt(1)
 			if p.config.SentinelCidPeriod > 0 {
@@ -278,7 +281,7 @@ func (p *pool) checkPool() {
 			}
 
 			if rand.Cmp(big.NewInt(0)) == 0 {
-				err := p.fetchSentinelCid(testNodes[0])
+				err := p.fetchSentinelCid(node)
 				if err != nil {
 					goLogger.Warnw("failed to fetch sentinel cid ", "err", err)
 					sentinelCidCallsTotalMetric.WithLabelValues("error").Add(1)
