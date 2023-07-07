@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	SaturnEnvKey          = "STRN_ENV_TAG"
+	SaturnEnvKey = "STRN_ENV_TAG"
 )
 
 type Config struct {

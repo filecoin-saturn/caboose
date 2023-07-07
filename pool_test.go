@@ -129,8 +129,8 @@ func TestLoadPool(t *testing.T) {
 	endpoint, _ := url.Parse(server.URL)
 	p := &pool{
 		config: &Config{
-			OrchestratorEndpoint:  endpoint,
-			OrchestratorClient:    http.DefaultClient,
+			OrchestratorEndpoint: endpoint,
+			OrchestratorClient:   http.DefaultClient,
 		},
 	}
 
