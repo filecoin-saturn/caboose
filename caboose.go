@@ -24,7 +24,6 @@ import (
 
 const (
 	SaturnEnvKey          = "STRN_ENV_TAG"
-	OrchestratorJwtSecret = "JWT_SECRET"
 )
 
 type Config struct {
@@ -34,10 +33,6 @@ type Config struct {
 	OrchestratorClient *http.Client
 	// OrchestratorOverride replaces calls to the orchestrator with a fixed response.
 	OrchestratorOverride []tieredhashing.NodeInfo
-
-	// OrchestratorJwtSecret is an auth secret that allows for Caboose to make authenticated
-	// http requests to the orchestrator.
-	OrchestratorJwtSecret string
 
 	// LoggingEndpoint is the URL of the logging endpoint where we submit logs pertaining to our Saturn retrieval requests.
 	LoggingEndpoint url.URL
@@ -214,10 +209,6 @@ func NewCaboose(config *Config) (*Caboose, error) {
 			return nil, err
 		}
 		config.OrchestratorOverride = overrideNodes
-	}
-
-	if jwtSecret := os.Getenv(OrchestratorJwtSecret); len(jwtSecret) > 0 {
-		config.OrchestratorJwtSecret = jwtSecret
 	}
 
 	c := Caboose{

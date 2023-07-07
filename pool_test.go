@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +16,6 @@ import (
 	"unsafe"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
 	"github.com/ipld/go-ipld-prime"
@@ -112,92 +110,33 @@ func TestPoolMiroring(t *testing.T) {
 
 func TestLoadPool(t *testing.T) {
 
-	t.Run("returns error if JWT generation fails", func(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte("node"))
+		response := [1]tieredhashing.NodeInfo{{
+			IP:          "node",
+			ID:          "node",
+			Weight:      rand.Intn(100),
+			Distance:    rand.Float32(),
+			SentinelCid: cid.String(),
+		}}
 
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		w.Header().Set("Content-Type", "application/json")
 
-		endpoint, _ := url.Parse(server.URL)
-		p := &pool{
-			config: &Config{
-				OrchestratorEndpoint:  endpoint,
-				OrchestratorClient:    http.DefaultClient,
-				OrchestratorJwtSecret: "", // Empty secret will cause JWT generation to fail
-			},
-		}
+		// Encoding the response to JSON
+		json.NewEncoder(w).Encode(response)
+	}))
 
-		_, err := p.loadPool()
+	endpoint, _ := url.Parse(server.URL)
+	p := &pool{
+		config: &Config{
+			OrchestratorEndpoint:  endpoint,
+			OrchestratorClient:    http.DefaultClient,
+		},
+	}
 
-		assert.Error(t, err)
-	})
+	_, err := p.loadPool()
 
-	t.Run("adds JWT to request if secret is provided", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get("Authorization")
-			assert.NotEmpty(t, authHeader)
-
-			parts := strings.Split(authHeader, " ")
-			assert.Equal(t, 2, len(parts))
-			assert.Equal(t, "Bearer", parts[0])
-
-			tokenString := parts[1]
-			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-				}
-				return []byte("secret"), nil
-			})
-
-			assert.NoError(t, err)
-			assert.True(t, token.Valid)
-			json.NewEncoder(w).Encode([]tieredhashing.NodeInfo{})
-		}))
-		defer server.Close()
-
-		endpoint, _ := url.Parse(server.URL)
-		p := &pool{
-			config: &Config{
-				OrchestratorEndpoint:  endpoint,
-				OrchestratorClient:    server.Client(),
-				OrchestratorJwtSecret: "secret",
-			},
-		}
-		_, err := p.loadPool()
-		assert.NoError(t, err)
-	})
-
-}
-
-func TestAuthenticateReq(t *testing.T) {
-
-	req, _ := http.NewRequest("GET", "http://example.com", nil)
-	testKey := "testKey"
-
-	newReq, err := authenticateReq(req, testKey)
-
-	assert.NoError(t, err, "Error should not occur during authentication")
-
-	assert.NotNil(t, newReq, "Request should be defined")
-
-	authHeader := newReq.Header.Get("Authorization")
-	assert.NotEmpty(t, authHeader, "Authorization header should not be empty")
-
-	parts := strings.Split(authHeader, " ")
-	assert.Equal(t, 2, len(parts), "Authorization header should have 2 parts")
-
-	tokenPart := parts[1]
-	token, err := jwt.Parse(tokenPart, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return []byte(testKey), nil
-	})
-	assert.NoError(t, err, "Error should not occur during parsing JWT")
-
-	claims, _ := token.Claims.(jwt.MapClaims)
-
-	expiresAt, ok := claims["ExpiresAt"].(float64)
-	assert.True(t, ok, "ExpiresAt should be a float64")
-	assert.True(t, time.Now().Unix() < int64(expiresAt), "Token should not have expired")
+	assert.NoError(t, err)
 }
 
 func TestFetchSentinelCid(t *testing.T) {

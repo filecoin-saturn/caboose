@@ -21,8 +21,6 @@ import (
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
 
-	"github.com/golang-jwt/jwt/v5"
-
 	"github.com/ipfs/boxo/path"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
@@ -33,32 +31,9 @@ const (
 	tierMainToUnknown  = "main-to-unknown"
 	tierUnknownToMain  = "unknown-to-main"
 	BackendOverrideKey = "CABOOSE_BACKEND_OVERRIDE"
-	CabooseJwtIssuer   = "caboose-client"
 )
 
 var sentinelCidReqTemplate = "/ipfs/%s?format=raw"
-
-// authenticateReq adds authentication to a request when a JWT_SECRET is present as an environment variable.
-func authenticateReq(req *http.Request, key string) (*http.Request, error) {
-
-	claims := &jwt.MapClaims{
-		"ExpiresAt": time.Now().Add(10 * time.Minute).Unix(), // Token expires after 10 minutes
-		"Issuer":    CabooseJwtIssuer,
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	ss, err := token.SignedString([]byte(key))
-
-	if err != nil {
-		goLogger.Warnw("failed to generate JWT", "err", err)
-		return nil, err
-	}
-
-	req.Header.Add("Authorization", "Bearer "+ss)
-
-	return req, nil
-
-}
 
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
@@ -67,7 +42,6 @@ func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
 	if p.config.OrchestratorOverride != nil {
 		return p.config.OrchestratorOverride, nil
 	}
-
 	client := p.config.OrchestratorClient
 
 	req, err := http.NewRequest("GET", p.config.OrchestratorEndpoint.String(), nil)
@@ -76,15 +50,6 @@ func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
 		goLogger.Warnw("failed to create request to orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
 		return nil, err
 	}
-
-	if len(p.config.OrchestratorJwtSecret) > 0 {
-		req, err = authenticateReq(req, p.config.OrchestratorJwtSecret)
-		if err != nil {
-			goLogger.Warnw("failed to authenticate request to orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
-			return nil, err
-		}
-	}
-
 	resp, err := client.Do(req)
 
 	if err != nil {
