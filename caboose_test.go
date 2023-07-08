@@ -1,13 +1,14 @@
-package caboose_test
+package caboose
 
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"encoding/json"
 	"fmt"
-	"github.com/filecoin-saturn/caboose"
-	"github.com/filecoin-saturn/caboose/tieredhashing"
+	"io"
+	"net/http"
+	"testing"
+	"time"
+
 	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
 	"github.com/ipld/go-ipld-prime/linking"
@@ -17,13 +18,6 @@ import (
 	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
 	"github.com/multiformats/go-multicodec"
 	"github.com/stretchr/testify/require"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
-	"strings"
-	"testing"
-	"time"
 )
 
 func TestCidCoolDown(t *testing.T) {
@@ -62,16 +56,14 @@ func TestCidCoolDown(t *testing.T) {
 
 func TestFetchBlock(t *testing.T) {
 	ctx := context.Background()
-	h := BuildCabooseHarness(t, 3, 3, WithTieredHashingOpts(
-		[]tieredhashing.Option{tieredhashing.WithMaxMainTierSize(1), tieredhashing.WithCorrectnessWindowSize(2),
-			tieredhashing.WithLatencyWindowSize(2)}))
+	h := BuildCabooseHarness(t, 3, 3)
 
 	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
 
 	h.fetchAndAssertSuccess(t, ctx, testCid)
 
 	// ensure we have a success recording
-	h.assertPoolSize(t, 0, 3, 3)
+	h.assertPoolSize(t, 0, 3)
 	h.assertCorrectnessCount(t, 1)
 	h.assertLatencyCount(t, 1)
 
@@ -85,46 +77,6 @@ func TestFetchBlock(t *testing.T) {
 	}, http.StatusNotAcceptable)
 
 	h.fetchAndAssertFailure(t, ctx, testCid, "406")
-}
-
-func (h *CabooseHarness) assertLatencyCount(t *testing.T, expected int) {
-	nds := h.c.GetPoolPerf()
-	count := 0
-
-	for _, perf := range nds {
-		count += int(perf.NLatencyDigest)
-	}
-	require.EqualValues(t, expected, count)
-}
-
-func (h *CabooseHarness) assertCorrectnessCount(t *testing.T, expected int) {
-	nds := h.c.GetPoolPerf()
-	count := 0
-
-	for _, perf := range nds {
-		count += int(perf.NCorrectnessDigest)
-	}
-	require.EqualValues(t, expected, count)
-}
-
-func (h *CabooseHarness) assertPoolSize(t *testing.T, mainS, unknownS, totalS int) {
-	nds := h.c.GetPoolPerf()
-	require.Equal(t, totalS, len(nds))
-
-	var eMain int
-	var eUnknown int
-
-	for _, perf := range nds {
-		if perf.Tier == "main" {
-			eMain++
-		}
-		if perf.Tier == "unknown" {
-			eUnknown++
-		}
-	}
-
-	require.EqualValues(t, eMain, mainS)
-	require.EqualValues(t, eUnknown, unknownS)
 }
 
 func TestResource(t *testing.T) {
@@ -171,7 +123,7 @@ func TestResource(t *testing.T) {
 	second := false
 	if err := h.c.Fetch(context.Background(), "/path/to/car1", func(resource string, reader io.Reader) error {
 		if resource == "/path/to/car1" {
-			return caboose.ErrPartialResponse{StillNeed: []string{"/path/to/car2"}}
+			return ErrPartialResponse{StillNeed: []string{"/path/to/car2"}}
 		}
 		if resource == "/path/to/car2" {
 			fmt.Printf("doing second...\n")
@@ -186,80 +138,4 @@ func TestResource(t *testing.T) {
 	if !second {
 		t.Fatal("expected fall-over progress")
 	}
-}
-
-type HarnessOption func(config *caboose.Config)
-
-func WithTieredHashingOpts(opts []tieredhashing.Option) HarnessOption {
-	return func(config *caboose.Config) {
-		config.TieredHashingOpts = opts
-	}
-}
-
-func WithMaxFailuresBeforeCoolDown(max int) func(config *caboose.Config) {
-	return func(config *caboose.Config) {
-		config.MaxFetchFailuresBeforeCoolDown = max
-	}
-}
-
-func WithCidCoolDownDuration(duration time.Duration) func(config *caboose.Config) {
-	return func(config *caboose.Config) {
-		config.FetchKeyCoolDownDuration = duration
-	}
-}
-
-func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOption) *CabooseHarness {
-	ch := &CabooseHarness{}
-
-	ch.pool = make([]*ep, n)
-	purls := make([]string, n)
-	for i := 0; i < len(ch.pool); i++ {
-		ch.pool[i] = &ep{}
-		ch.pool[i].Setup()
-		purls[i] = strings.TrimPrefix(ch.pool[i].server.URL, "https://")
-	}
-	ch.goodOrch = true
-	orch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ch.gol.Lock()
-		defer ch.gol.Unlock()
-		if ch.goodOrch {
-			json.NewEncoder(w).Encode(purls)
-		} else {
-			json.NewEncoder(w).Encode([]string{})
-		}
-	}))
-
-	saturnClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-				ServerName:         "example.com",
-			},
-		},
-	}
-
-	ourl, _ := url.Parse(orch.URL)
-
-	conf := &caboose.Config{
-		OrchestratorEndpoint: ourl,
-		OrchestratorClient:   http.DefaultClient,
-		LoggingEndpoint:      *ourl,
-		LoggingClient:        http.DefaultClient,
-		LoggingInterval:      time.Hour,
-
-		SaturnClient:         saturnClient,
-		DoValidation:         false,
-		PoolRefresh:          time.Millisecond * 50,
-		MaxRetrievalAttempts: maxRetries,
-	}
-
-	for _, opt := range opts {
-		opt(conf)
-	}
-
-	bs, err := caboose.NewCaboose(conf)
-	require.NoError(t, err)
-
-	ch.c = bs
-	return ch
 }

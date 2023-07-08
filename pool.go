@@ -8,15 +8,10 @@ import (
 	"io"
 	"math/rand"
 	"net/url"
-	"os"
 	"sync"
 	"time"
 
-	"github.com/asecurityteam/rolling"
 	"github.com/patrickmn/go-cache"
-	"github.com/prometheus/client_golang/prometheus"
-
-	"github.com/filecoin-saturn/caboose/tieredhashing"
 
 	"github.com/ipfs/boxo/path"
 	blocks "github.com/ipfs/go-block-format"
@@ -24,14 +19,10 @@ import (
 	"github.com/ipld/go-car"
 )
 
-const (
-	tierMainToUnknown  = "main-to-unknown"
-	tierUnknownToMain  = "unknown-to-main"
-	BackendOverrideKey = "CABOOSE_BACKEND_OVERRIDE"
-)
+const blockPathPattern = "/ipfs/%s?format=car&dag-scope=block"
 
-// loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
-// Saturn Orchestrator.
+// loadPool refreshes the set of endpoints in the pool by fetching an updated list of nodes from the
+// Orchestrator.
 func (p *pool) loadPool() ([]string, error) {
 	if p.config.OrchestratorOverride != nil {
 		return p.config.OrchestratorOverride, nil
@@ -54,7 +45,7 @@ func (p *pool) loadPool() ([]string, error) {
 }
 
 type mirroredPoolRequest struct {
-	node string
+	node *Node
 	path string
 	// the key for node affinity for the request
 	key string
@@ -73,22 +64,16 @@ type pool struct {
 	fetchKeyFailureCache  *cache.Cache // guarded by fetchKeyLk
 	fetchKeyCoolDownCache *cache.Cache // guarded by fetchKeyLk
 
-	lk sync.RWMutex
-	th *tieredhashing.TieredHashing
+	ActiveNodes *NodeRing
+	AllNodes    *NodeHeap
 
 	poolInitDone sync.Once
 }
 
-func newPool(c *Config) *pool {
-	noRemove := false
-	if len(os.Getenv(BackendOverrideKey)) > 0 {
-		noRemove = true
-	}
-
-	topts := append(c.TieredHashingOpts, tieredhashing.WithNoRemove(noRemove))
-
+func newPool(c *Config, logger *logger) *pool {
 	p := pool{
 		config:        c,
+		logger:        logger,
 		started:       make(chan struct{}),
 		refresh:       make(chan struct{}, 1),
 		done:          make(chan struct{}, 1),
@@ -96,7 +81,9 @@ func newPool(c *Config) *pool {
 
 		fetchKeyCoolDownCache: cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 		fetchKeyFailureCache:  cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
-		th:                    tieredhashing.New(topts...),
+
+		ActiveNodes: NewNodeRing(),
+		AllNodes:    NewNodeHeap(),
 	}
 
 	return &p
@@ -110,56 +97,16 @@ func (p *pool) Start() {
 func (p *pool) doRefresh() {
 	newEP, err := p.loadPool()
 	if err == nil {
-		p.refreshWithNodes(newEP)
+		for _, n := range newEP {
+			node := NewNode(n)
+			p.AllNodes.AddIfNotPresent(node)
+		}
 	} else {
 		poolRefreshErrorMetric.Add(1)
 	}
 }
 
-func (p *pool) refreshWithNodes(newEP []string) {
-	p.lk.Lock()
-	defer p.lk.Unlock()
-
-	// for tests to pass the -race check when accessing global vars
-	distLk.Lock()
-	defer distLk.Unlock()
-
-	added, alreadyRemoved, back := p.th.AddOrchestratorNodes(newEP)
-	poolNewMembersMetric.Set(float64(added))
-	poolMembersNotAddedBecauseRemovedMetric.Set(float64(alreadyRemoved))
-	poolMembersRemovedAndAddedBackMetric.Set(float64(back))
-
-	// update the tier set
-	mu, um := p.th.UpdateMainTierWithTopN()
-	poolTierChangeMetric.WithLabelValues(tierMainToUnknown).Set(float64(mu))
-	poolTierChangeMetric.WithLabelValues(tierUnknownToMain).Set(float64(um))
-
-	mt := p.th.GetPoolMetrics()
-	poolSizeMetric.WithLabelValues(string(tieredhashing.TierUnknown)).Set(float64(mt.Unknown))
-	poolSizeMetric.WithLabelValues(string(tieredhashing.TierMain)).Set(float64(mt.Main))
-
-	// Update aggregate latency & speed distribution for peers
-	latencyHist := prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_peer_latency_dist"),
-		Help:    "Fetch latency distribution for peers in millis",
-		Buckets: latencyDistMsHistogram,
-	}, []string{"tier", "percentile"})
-
-	percentiles := []float64{25, 50, 75, 90, 95}
-
-	for _, perf := range p.th.GetPerf() {
-		perf := perf
-		if perf.NLatencyDigest <= 0 {
-			continue
-		}
-
-		for _, pt := range percentiles {
-			latencyHist.WithLabelValues(string(perf.Tier), fmt.Sprintf("P%f", pt)).Observe(perf.LatencyDigest.Reduce(rolling.Percentile(pt)))
-		}
-	}
-	peerLatencyDistribution = latencyHist
-}
-
+// refreshPool is a background thread triggering `doRefresh` every `config.PoolRefresh` interval.
 func (p *pool) refreshPool() {
 	t := time.NewTimer(0)
 	started := sync.Once{}
@@ -193,18 +140,15 @@ func (p *pool) checkPool() {
 		select {
 		case msg := <-p.mirrorSamples:
 			// see if it is to a main-tier node - if so find appropriate test node to test against.
-			p.lk.RLock()
-			if p.th.NodeTier(msg.node) != tieredhashing.TierMain {
-				p.lk.RUnlock()
+			if !p.ActiveNodes.Contains(msg.node) {
 				continue
 			}
-			testNodes := p.th.GetNodes(tieredhashing.TierUnknown, msg.key, 1)
-			p.lk.RUnlock()
-			if len(testNodes) == 0 {
+			testNode := p.AllNodes.PeekRandom()
+			if testNode == nil {
 				continue
 			}
 			trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			err := p.fetchResourceAndUpdate(trialTimeout, testNodes[0], msg.path, 0, p.mirrorValidator)
+			err := p.fetchResourceAndUpdate(trialTimeout, testNode, msg.path, 0, p.mirrorValidator)
 			cancel()
 			if err != nil {
 				mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
@@ -278,74 +222,25 @@ func cidToKey(c cid.Cid) string {
 
 func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk blocks.Block, err error) {
 	fetchCalledTotalMetric.WithLabelValues(resourceTypeBlock).Add(1)
-	if recordIfContextErr(resourceTypeBlock, ctx, "fetchBlockWith") {
-		return nil, ctx.Err()
-	}
 	// wait for pool to be initialised
 	<-p.started
 
-	// if the cid is in the cool down cache, we fail the request.
-	p.fetchKeyLk.RLock()
-	if at, ok := p.fetchKeyCoolDownCache.Get(cidToKey(c)); ok {
-		p.fetchKeyLk.RUnlock()
-
-		expireAt := at.(time.Time)
-		return nil, &ErrCoolDown{
-			Cid:        c,
-			retryAfter: time.Until(expireAt),
+	cb := func(resource string, reader io.Reader) error {
+		br, err := car.NewCarReader(reader)
+		if err != nil {
+			return err
 		}
-	}
-	p.fetchKeyLk.RUnlock()
-
-	aff := with
-	if aff == "" {
-		aff = cidToKey(c)
-	}
-
-	p.lk.RLock()
-	nodes := p.th.GetNodes(tieredhashing.TierMain, aff, p.config.MaxRetrievalAttempts)
-	if len(nodes) < p.config.MaxRetrievalAttempts {
-		nodes = append(nodes,
-			p.th.GetNodes(tieredhashing.TierUnknown, aff, p.config.MaxRetrievalAttempts-len(nodes))...,
-		)
-	}
-	p.lk.RUnlock()
-	if len(nodes) == 0 {
-		return nil, ErrNoBackend
-	}
-
-	blockFetchStart := time.Now()
-	for i := 0; i < len(nodes); i++ {
-		if recordIfContextErr(resourceTypeBlock, ctx, "fetchBlockWithLoop") {
-			return nil, ctx.Err()
+		b, err := br.Next()
+		if err != nil {
+			return err
 		}
-
-		blk, err = p.fetchBlockAndUpdate(ctx, nodes[i], c, i)
-		if err != nil && errors.Is(err, context.Canceled) {
-			return nil, err
+		if b.Cid().Equals(c) {
+			blk = b
+			return nil
 		}
-
-		if err == nil {
-			durationMs := time.Since(blockFetchStart).Milliseconds()
-			fetchDurationBlockSuccessMetric.Observe(float64(durationMs))
-
-			// mirror successful request
-			if p.config.MirrorFraction > rand.Float64() {
-				select {
-				case p.mirrorSamples <- mirroredPoolRequest{node: nodes[i], path: fmt.Sprintf("/ipfs/%s?format=car&car-scope=block", c), key: aff}:
-				default:
-				}
-			}
-
-			return
-		}
+		return blocks.ErrWrongHash
 	}
-
-	fetchDurationBlockFailureMetric.Observe(float64(time.Since(blockFetchStart).Milliseconds()))
-
-	p.updateFetchKeyCoolDown(cidToKey(c))
-
-	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
+	err = p.fetchResourceWith(ctx, fmt.Sprintf(blockPathPattern, c), cb, with)
 	return
 }
 
@@ -404,16 +299,10 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 		aff = path
 	}
 
-	p.lk.RLock()
-	nodes := p.th.GetNodes(tieredhashing.TierMain, aff, p.config.MaxRetrievalAttempts)
-	if len(nodes) < p.config.MaxRetrievalAttempts {
-		nodes = append(nodes,
-			p.th.GetNodes(tieredhashing.TierUnknown, aff, p.config.MaxRetrievalAttempts-len(nodes))...,
-		)
-	} else {
-		goLogger.Infow("using all main set nodes for CAR", "path", path, "aff", aff, "numNodes", len(nodes))
+	nodes, err := p.ActiveNodes.GetNodes(aff, p.config.MaxRetrievalAttempts)
+	if err != nil {
+		return err
 	}
-	p.lk.RUnlock()
 	if len(nodes) == 0 {
 		return ErrNoBackend
 	}
@@ -477,69 +366,15 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 	return
 }
 
-func (p *pool) fetchBlockAndUpdate(ctx context.Context, node string, c cid.Cid, attempt int) (blk blocks.Block, err error) {
-	blk, rm, err := p.doFetch(ctx, node, c, attempt)
-	if err != nil && errors.Is(err, context.Canceled) {
-		return nil, err
-	}
-	if err != nil {
-		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", c, "error", err)
-	}
-
-	err = p.commonUpdate(node, rm, err)
-	return
-}
-
-func (p *pool) fetchResourceAndUpdate(ctx context.Context, node string, path string, attempt int, cb DataCallback) (err error) {
-	rm, err := p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
+func (p *pool) fetchResourceAndUpdate(ctx context.Context, node *Node, path string, attempt int, cb DataCallback) (err error) {
+	err = p.fetchResource(ctx, node, path, "application/vnd.ipld.car", attempt, cb)
 
 	if err != nil && errors.Is(err, context.Canceled) {
 		return err
 	}
+
 	if err != nil {
 		goLogger.Debugw("fetch attempt failed", "from", node, "attempt", attempt, "of", path, "error", err)
-	}
-
-	p.commonUpdate(node, rm, err)
-	return
-}
-
-func (p *pool) commonUpdate(node string, rm tieredhashing.ResponseMetrics, err error) (ferr error) {
-	p.lk.Lock()
-	defer p.lk.Unlock()
-
-	ferr = err
-	if err == nil && rm.Success {
-		p.th.RecordSuccess(node, rm)
-
-		if p.th.IsInitDone() {
-			p.poolInitDone.Do(func() {
-				poolEnoughObservationsForMainSetDurationMetric.Set(float64(time.Since(p.th.StartAt).Milliseconds()))
-			})
-		}
-
-		// Saturn fetch worked, we return the block.
-		return
-	}
-
-	fr := p.th.RecordFailure(node, rm)
-	if fr != nil {
-		poolRemovedFailureTotalMetric.WithLabelValues(string(fr.Tier), fr.Reason).Inc()
-		poolRemovedConnFailureTotalMetric.WithLabelValues(string(fr.Tier)).Add(float64(fr.ConnErrors))
-		poolRemovedReadFailureTotalMetric.WithLabelValues(string(fr.Tier)).Add(float64(fr.NetworkErrors))
-		poolRemovedNon2xxTotalMetric.WithLabelValues(string(fr.Tier)).Add(float64(fr.ResponseCodes))
-
-		if fr.MainToUnknownChange != 0 || fr.UnknownToMainChange != 0 {
-			poolTierChangeMetric.WithLabelValues(tierMainToUnknown).Set(float64(fr.MainToUnknownChange))
-			poolTierChangeMetric.WithLabelValues(tierUnknownToMain).Set(float64(fr.UnknownToMainChange))
-		}
-	}
-
-	if p.th.DoRefresh() {
-		select {
-		case p.refresh <- struct{}{}:
-		default:
-		}
 	}
 
 	return

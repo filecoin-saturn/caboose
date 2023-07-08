@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/filecoin-saturn/caboose/tieredhashing"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -25,6 +24,8 @@ import (
 var saturnReqTmpl = "/ipfs/%s?format=raw"
 
 const (
+	UserAgentTag = "STRN_ENV_TAG"
+
 	saturnNodeIdKey     = "Saturn-Node-Id"
 	saturnTransferIdKey = "Saturn-Transfer-Id"
 	saturnCacheHitKey   = "Saturn-Cache-Status"
@@ -45,10 +46,10 @@ var (
 )
 
 // doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
-func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int) (b blocks.Block, rm tieredhashing.ResponseMetrics, e error) {
+func (p *pool) doFetch(ctx context.Context, from *Node, c cid.Cid, attempt int) (b blocks.Block, e error) {
 	reqUrl := fmt.Sprintf(saturnReqTmpl, c)
 
-	rm, e = p.fetchResource(ctx, from, reqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {
+	e = p.fetchResource(ctx, from, reqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {
 		block, err := io.ReadAll(io.LimitReader(r, maxBlockSize))
 		if err != nil {
 			switch {
@@ -85,8 +86,7 @@ func (p *pool) doFetch(ctx context.Context, from string, c cid.Cid, attempt int)
 }
 
 // TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
-func (p *pool) fetchResource(ctx context.Context, from string, resource string, mime string, attempt int, cb DataCallback) (rm tieredhashing.ResponseMetrics, err error) {
-	rm = tieredhashing.ResponseMetrics{}
+func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, mime string, attempt int, cb DataCallback) (err error) {
 	resourceType := resourceTypeCar
 	if mime == "application/vnd.ipld.raw" {
 		resourceType = resourceTypeBlock
@@ -94,10 +94,10 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	// if the context is already cancelled, there's nothing we can do here.
 	if ce := ctx.Err(); ce != nil {
 		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("%t", errors.Is(ce, context.Canceled)), "fetchResource-init").Add(1)
-		return rm, ce
+		return ce
 	}
 
-	ctx, span := spanTrace(ctx, "Pool.FetchResource", trace.WithAttributes(attribute.String("from", from), attribute.String("of", resource), attribute.String("mime", mime)))
+	ctx, span := spanTrace(ctx, "Pool.FetchResource", trace.WithAttributes(attribute.String("from", from.URL), attribute.String("of", resource), attribute.String("mime", mime)))
 	defer span.End()
 
 	requestId := uuid.NewString()
@@ -111,7 +111,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	proto := "unknown"
 	respReq := &http.Request{}
 	received := 0
-	reqUrl := fmt.Sprintf("https://%s%s", from, resource)
+	reqUrl := fmt.Sprintf("https://%s%s", from.URL, resource)
 	var respHeader http.Header
 	saturnNodeId := ""
 	saturnTransferId := ""
@@ -219,7 +219,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 					Referrer:       respReq.Referer(),
 					UserAgent:      respReq.UserAgent(),
 					NodeId:         saturnNodeId,
-					NodeIpAddress:  from,
+					NodeIpAddress:  from.URL,
 					IfNetworkError: networkError,
 				}
 			}
@@ -230,9 +230,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	// which is the amount of time without any NEW data from the server, but
 	// that can be added later. We need both because a slow trickle of data
 	// could take a large amount of time.
-	requestTimeout := DefaultSaturnCarRequestTimeout
+	requestTimeout := DefaultCarRequestTimeout
 	if isBlockRequest {
-		requestTimeout = DefaultSaturnBlockRequestTimeout
+		requestTimeout = DefaultBlockRequestTimeout
 	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
@@ -240,9 +240,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "build-http-request") {
-			return rm, reqCtx.Err()
+			return reqCtx.Err()
 		}
-		return rm, err
+		return err
 	}
 
 	req.Header.Add("Accept", mime)
@@ -256,7 +256,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	agent := req.Header.Get("User-Agent")
-	req.Header.Set("User-Agent", os.Getenv(SaturnEnvKey)+"/"+agent)
+	req.Header.Set("User-Agent", os.Getenv(UserAgentTag)+"/"+agent)
 
 	//trace
 	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
@@ -265,11 +265,11 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	saturnCallsTotalMetric.WithLabelValues(resourceType).Add(1)
 	startReq := time.Now()
 
-	resp, err = p.config.SaturnClient.Do(req)
+	resp, err = p.config.Client.Do(req)
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
 			if errors.Is(err, context.Canceled) {
-				return rm, reqCtx.Err()
+				return reqCtx.Err()
 			}
 		}
 
@@ -279,8 +279,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			saturnConnectionFailureTotalMetric.WithLabelValues(resourceType, "non-timeout").Add(1)
 		}
 		networkError = err.Error()
-		rm.ConnFailure = true
-		return rm, fmt.Errorf("http request failed: %w", err)
+		return fmt.Errorf("http request failed: %w", err)
 	}
 
 	respHeader = resp.Header
@@ -289,7 +288,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	defer resp.Body.Close()
 
 	code = resp.StatusCode
-	rm.ResponseCode = code
 	proto = resp.Proto
 	respReq = resp.Request
 
@@ -299,7 +297,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			if subReqTiming, err := servertiming.ParseHeader(th); err == nil {
 				for _, m := range subReqTiming.Metrics {
 					m.Extra["attempt"] = fmt.Sprintf("%d", attempt)
-					m.Extra["subreq"] = subReqID(from, resource)
+					m.Extra["subreq"] = subReqID(from.URL, resource)
 					timing.Add(m)
 				}
 			}
@@ -320,23 +318,23 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			}
 
 			if retryAfter == 0 {
-				retryAfter = p.config.SaturnNodeCoolOff
+				retryAfter = p.config.CoolOff
 			}
 
-			return rm, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, &ErrSaturnTooManyRequests{retryAfter: retryAfter, Node: from})
+			return fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, &ErrTooManyRequests{retryAfter: retryAfter, Node: from.URL})
 		}
 
 		// empty body so it can be re-used.
 		if resp.StatusCode == http.StatusGatewayTimeout {
-			return rm, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrSaturnTimeout)
+			return fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrTimeout)
 		}
 
 		// This should only be 502, but L1s were not translating 404 from Lassie, so we have to support both for now.
 		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadGateway {
-			return rm, fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrContentProviderNotFound)
+			return fmt.Errorf("http error from strn: %d, err=%w", resp.StatusCode, ErrContentProviderNotFound)
 		}
 
-		return rm, fmt.Errorf("http error from strn: %d", resp.StatusCode)
+		return fmt.Errorf("http error from strn: %d", resp.StatusCode)
 	}
 	if respHeader.Get(saturnCacheHitKey) == saturnCacheHit {
 		isCacheHit = true
@@ -351,7 +349,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "read-http-response") {
 			if errors.Is(err, context.Canceled) {
-				return rm, reqCtx.Err()
+				return reqCtx.Err()
 			}
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -362,8 +360,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 
 		networkError = err.Error()
-		rm.NetworkError = true
-		return rm, err
+		return err
 	}
 
 	fb = wrapped.firstByte
@@ -385,12 +382,11 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "start_transfer").
 		Observe(float64(result.StartTransfer.Milliseconds()))
 
-	rm.TTFBMs = float64(wrapped.firstByte.Sub(start).Milliseconds())
-	rm.Success = true
-	rm.SpeedPerMs = float64(received) / float64(response_success_end.Sub(start).Milliseconds())
 	saturnCallsSuccessTotalMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit)).Add(1)
 
-	return rm, nil
+	from.RecordSuccess(float64(wrapped.firstByte.Sub(start).Milliseconds()), float64(received)/float64(response_success_end.Sub(start).Milliseconds()))
+
+	return nil
 }
 
 func recordIfContextErr(resourceType string, ctx context.Context, requestState string) bool {

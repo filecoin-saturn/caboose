@@ -1,15 +1,10 @@
 package caboose
 
 import (
-	"sync"
-
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
-	// needed to sync over these global vars in tests
-	distLk sync.Mutex
-
 	peerLatencyDistribution prometheus.Collector // guarded by pool.lock
 )
 
