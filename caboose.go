@@ -2,16 +2,12 @@ package caboose
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
-
-	"github.com/filecoin-saturn/caboose/tieredhashing"
 
 	ipfsblockstore "github.com/ipfs/boxo/blockstore"
 	ipath "github.com/ipfs/boxo/coreiface/path"
@@ -23,44 +19,44 @@ import (
 )
 
 const (
-	SaturnEnvKey = "STRN_ENV_TAG"
+	BackendOverrideKey = "CABOOSE_BACKEND_OVERRIDE"
 )
 
 type Config struct {
-	// OrchestratorEndpoint is the URL of the Saturn orchestrator.
+	// OrchestratorEndpoint is the URL for fetching upstream nodes.
 	OrchestratorEndpoint *url.URL
-	// OrchestratorClient is the HTTP client to use when communicating with the Saturn orchestrator.
+	// OrchestratorClient is the HTTP client to use when communicating with the orchestrator.
 	OrchestratorClient *http.Client
 	// OrchestratorOverride replaces calls to the orchestrator with a fixed response.
 	OrchestratorOverride []string
 
-	// LoggingEndpoint is the URL of the logging endpoint where we submit logs pertaining to our Saturn retrieval requests.
+	// LoggingEndpoint is the URL of the logging endpoint where we submit logs pertaining to retrieval requests.
 	LoggingEndpoint url.URL
 	// LoggingClient is the HTTP client to use when communicating with the logging endpoint.
 	LoggingClient *http.Client
 	// LoggingInterval is the interval at which we submit logs to the logging endpoint.
 	LoggingInterval time.Duration
 
-	// SaturnClient is the HTTP client to use when retrieving content from the Saturn network.
-	SaturnClient *http.Client
+	// Client is the HTTP client to use when retrieving content from upstream nodes.
+	Client       *http.Client
 	ExtraHeaders *http.Header
 
-	// DoValidation is used to determine if we should validate the blocks recieved from the Saturn network.
+	// DoValidation is used to determine if we should validate the blocks recieved from the upstream.
 	DoValidation bool
 
 	// If set, AffinityKey is used instead of the block CID as the key on the
-	// Saturn node pool to determine which Saturn node to retrieve the block from.
+	// pool to determine which upstream to retrieve the request from.
 	// NOTE: If gateway.ContentPathKey is present in request context,
 	// it will be used as AffinityKey automatically.
 	AffinityKey string
 
-	// PoolRefresh is the interval at which we refresh the pool of Saturn nodes.
+	// PoolRefresh is the interval at which we refresh the pool of upstreams from the orchestrator.
 	PoolRefresh time.Duration
 
 	// MirrorFraction is what fraction of requests will be mirrored to another random node in order to track metrics / determine the current best nodes.
 	MirrorFraction float64
 
-	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from the Saturn network before failing.
+	// MaxRetrievalAttempts determines the number of times we will attempt to retrieve a block from upstreams before failing.
 	MaxRetrievalAttempts int
 
 	// MaxFetchFailuresBeforeCoolDown is the maximum number of retrieval failures across the pool for a url before we auto-reject subsequent
@@ -71,17 +67,15 @@ type Config struct {
 	// before we start making retrieval attempts for it.
 	FetchKeyCoolDownDuration time.Duration
 
-	// SaturnNodeCoolOff is the cool off duration for a saturn node once we determine that we shouldn't be sending requests to it for a while.
-	SaturnNodeCoolOff time.Duration
-
-	TieredHashingOpts []tieredhashing.Option
+	// CoolOff is the cool off duration for a node once we determine that we shouldn't be sending requests to it for a while.
+	CoolOff time.Duration
 }
 
 const DefaultLoggingInterval = 5 * time.Second
-const DefaultSaturnOrchestratorRequestTimeout = 30 * time.Second
+const DefaultOrchestratorRequestTimeout = 30 * time.Second
 
-const DefaultSaturnBlockRequestTimeout = 19 * time.Second
-const DefaultSaturnCarRequestTimeout = 30 * time.Minute
+const DefaultBlockRequestTimeout = 19 * time.Second
+const DefaultCarRequestTimeout = 30 * time.Minute
 
 // default retries before failure unless overridden by MaxRetrievalAttempts
 const defaultMaxRetries = 3
@@ -93,81 +87,16 @@ const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=200"
 const DefaultPoolRefreshInterval = 5 * time.Minute
 
-// we cool off sending requests to Saturn for a cid for a certain duration
+// we cool off sending requests for a cid for a certain duration
 // if we've seen a certain number of failures for it already in a given duration.
 // NOTE: before getting creative here, make sure you dont break end user flow
 // described in https://github.com/ipni/storetheindex/pull/1344
 const defaultMaxFetchFailures = 3 * defaultMaxRetries   // this has to fail more than DefaultMaxRetries done for a single gateway request
 const defaultFetchKeyCoolDownDuration = 1 * time.Minute // how long will a sane person wait and stare at blank screen with "retry later" error before hitting F5?
 
-// we cool off sending requests to a Saturn node if it returns transient errors rather than immediately downvoting it;
+// we cool off sending requests to a node if it returns transient errors rather than immediately downvoting it;
 // however, only upto a certain max number of cool-offs.
-const defaultSaturnNodeCoolOff = 5 * time.Minute
-
-var ErrNotImplemented error = errors.New("not implemented")
-var ErrNoBackend error = errors.New("no available saturn backend")
-var ErrContentProviderNotFound error = errors.New("saturn failed to find content providers")
-var ErrSaturnTimeout error = errors.New("saturn backend timed out")
-
-type ErrSaturnTooManyRequests struct {
-	Node       string
-	retryAfter time.Duration
-}
-
-func (e *ErrSaturnTooManyRequests) Error() string {
-	return fmt.Sprintf("saturn node %s returned Too Many Requests error, please retry after %s", e.Node, humanRetry(e.retryAfter))
-}
-
-func (e *ErrSaturnTooManyRequests) RetryAfter() time.Duration {
-	return e.retryAfter
-}
-
-type ErrCoolDown struct {
-	Cid        cid.Cid
-	Path       string
-	retryAfter time.Duration
-}
-
-func (e *ErrCoolDown) Error() string {
-	switch true {
-	case e.Cid != cid.Undef && e.Path != "":
-		return fmt.Sprintf("multiple saturn retrieval failures seen for CID %q and Path %q, please retry after %s", e.Cid, e.Path, humanRetry(e.retryAfter))
-	case e.Path != "":
-		return fmt.Sprintf("multiple saturn retrieval failures seen for Path %q, please retry after %s", e.Path, humanRetry(e.retryAfter))
-	case e.Cid != cid.Undef:
-		return fmt.Sprintf("multiple saturn retrieval failures seen for CID %q, please retry after %s", e.Cid, humanRetry(e.retryAfter))
-	default:
-		return fmt.Sprintf("multiple saturn retrieval failures for unknown CID/Path (BUG), please retry after %s", humanRetry(e.retryAfter))
-	}
-}
-
-func (e *ErrCoolDown) RetryAfter() time.Duration {
-	return e.retryAfter
-}
-
-func humanRetry(d time.Duration) string {
-	return d.Truncate(time.Second).String()
-}
-
-// ErrPartialResponse can be returned from a DataCallback to indicate that some of the requested resource
-// was successfully fetched, and that instead of retrying the full resource, that there are
-// one or more more specific resources that should be fetched (via StillNeed) to complete the request.
-type ErrPartialResponse struct {
-	error
-	StillNeed []string
-}
-
-func (epr ErrPartialResponse) Error() string {
-	if epr.error != nil {
-		return fmt.Sprintf("partial response: %s", epr.error.Error())
-	}
-	return "caboose received a partial response"
-}
-
-// ErrInvalidResponse can be returned from a DataCallback to indicate that the data provided for the
-// requested resource was explicitly 'incorrect' - that blocks not in the requested dag, or non-car-conforming
-// data was returned.
-type ErrInvalidResponse error
+const defaultNodeCoolOff = 5 * time.Minute
 
 type Caboose struct {
 	config *Config
@@ -189,8 +118,8 @@ func NewCaboose(config *Config) (*Caboose, error) {
 		config.MaxFetchFailuresBeforeCoolDown = defaultMaxFetchFailures
 	}
 
-	if config.SaturnNodeCoolOff == 0 {
-		config.SaturnNodeCoolOff = defaultSaturnNodeCoolOff
+	if config.CoolOff == 0 {
+		config.CoolOff = defaultNodeCoolOff
 	}
 	if config.MirrorFraction == 0 {
 		config.MirrorFraction = defaultMirrorFraction
@@ -199,16 +128,16 @@ func NewCaboose(config *Config) (*Caboose, error) {
 		config.OrchestratorOverride = strings.Split(override, ",")
 	}
 
+	logger := newLogger(config)
 	c := Caboose{
 		config: config,
-		pool:   newPool(config),
-		logger: newLogger(config),
+		pool:   newPool(config, logger),
+		logger: logger,
 	}
-	c.pool.logger = c.logger
 
-	if c.config.SaturnClient == nil {
-		c.config.SaturnClient = &http.Client{
-			Timeout: DefaultSaturnCarRequestTimeout,
+	if c.config.Client == nil {
+		c.config.Client = &http.Client{
+			Timeout: DefaultCarRequestTimeout,
 		}
 	}
 	if c.config.OrchestratorEndpoint == nil {
@@ -238,7 +167,9 @@ var _ ipfsblockstore.Blockstore = (*Caboose)(nil)
 
 func (c *Caboose) Close() {
 	c.pool.Close()
-	c.logger.Close()
+	if c.logger != nil {
+		c.logger.Close()
+	}
 }
 
 // Fetch allows fetching car archives by a path of the form `/ipfs/<cid>[/path/to/file]`
@@ -258,11 +189,6 @@ func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
 		return false, err
 	}
 	return blk != nil, nil
-}
-
-// for testing only
-func (c *Caboose) GetPoolPerf() map[string]*tieredhashing.NodePerf {
-	return c.pool.th.GetPerf()
 }
 
 func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {

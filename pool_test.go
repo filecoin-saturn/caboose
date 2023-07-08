@@ -13,7 +13,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/filecoin-saturn/caboose/tieredhashing"
 	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
 	"github.com/ipld/go-ipld-prime"
@@ -61,11 +60,6 @@ func TestPoolMiroring(t *testing.T) {
 	if unsafe.Sizeof(unsafe.Pointer(nil)) <= 4 {
 		t.Skip("skipping for 32bit architectures because too slow")
 	}
-	opts := []tieredhashing.Option{
-		tieredhashing.WithCorrectnessWindowSize(2),
-		tieredhashing.WithLatencyWindowSize(2),
-		tieredhashing.WithMaxMainTierSize(1),
-	}
 
 	saturnClient := &http.Client{
 		Transport: &http.Transport{
@@ -111,23 +105,17 @@ func TestPoolMiroring(t *testing.T) {
 		LoggingClient:        http.DefaultClient,
 		LoggingInterval:      time.Hour,
 
-		SaturnClient:         saturnClient,
+		Client:               saturnClient,
 		DoValidation:         false,
 		PoolRefresh:          time.Minute,
 		MaxRetrievalAttempts: 1,
-		TieredHashingOpts:    opts,
 		MirrorFraction:       1.0,
 	}
 
-	p := newPool(&conf)
+	p := newPool(&conf, nil)
 	p.doRefresh()
 	p.config.OrchestratorOverride = nil
 	p.Start()
-
-	// promote one node to main pool. other will remain in uknown pool.
-	p.th.RecordSuccess(eURL, tieredhashing.ResponseMetrics{Success: true, TTFBMs: 30, SpeedPerMs: 30})
-	p.th.RecordSuccess(eURL, tieredhashing.ResponseMetrics{Success: true, TTFBMs: 30, SpeedPerMs: 30})
-	p.th.UpdateMainTierWithTopN()
 
 	_, err = p.fetchBlockWith(context.Background(), finalC, "")
 	if err != nil {

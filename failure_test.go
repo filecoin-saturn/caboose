@@ -1,17 +1,15 @@
-package caboose_test
+package caboose
 
 import (
 	"context"
 	"errors"
-	"github.com/filecoin-saturn/caboose"
+	"net/http"
+	"testing"
+	"time"
+
 	"github.com/ipfs/go-cid"
 	"github.com/multiformats/go-multicodec"
 	"github.com/stretchr/testify/require"
-	"net/http"
-	"net/http/httptest"
-	"sync"
-	"testing"
-	"time"
 )
 
 var expRetryAfter = 1 * time.Second
@@ -28,7 +26,7 @@ func TestHttp429(t *testing.T) {
 	_, err := ch.c.Get(ctx, testCid)
 	require.Error(t, err)
 
-	var ferr *caboose.ErrSaturnTooManyRequests
+	var ferr *ErrTooManyRequests
 	ok := errors.As(err, &ferr)
 	require.True(t, ok)
 	require.EqualValues(t, expRetryAfter, ferr.RetryAfter())
@@ -82,125 +80,4 @@ func TestCabooseFailures(t *testing.T) {
 	ch.runFetchesForRandCids(50)
 	_, err = ch.c.Get(context.Background(), testCid)
 	require.NoError(t, err)
-}
-
-type CabooseHarness struct {
-	c    *caboose.Caboose
-	pool []*ep
-
-	gol      sync.Mutex
-	goodOrch bool
-}
-
-func (ch *CabooseHarness) runFetchesForRandCids(n int) {
-	for i := 0; i < n; i++ {
-		randCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte{uint8(i)})
-		_, _ = ch.c.Get(context.Background(), randCid)
-	}
-}
-
-func (ch *CabooseHarness) fetchAndAssertCoolDownError(t *testing.T, ctx context.Context, cid cid.Cid) {
-	_, err := ch.c.Get(ctx, cid)
-	require.Error(t, err)
-
-	var coolDownErr *caboose.ErrCoolDown
-	ok := errors.As(err, &coolDownErr)
-	require.True(t, ok)
-	require.EqualValues(t, cid, coolDownErr.Cid)
-	require.NotZero(t, coolDownErr.RetryAfter())
-}
-
-func (ch *CabooseHarness) fetchAndAssertFailure(t *testing.T, ctx context.Context, testCid cid.Cid, contains string) {
-	_, err := ch.c.Get(ctx, testCid)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), contains)
-}
-
-func (ch *CabooseHarness) fetchAndAssertSuccess(t *testing.T, ctx context.Context, c cid.Cid) {
-	blk, err := ch.c.Get(ctx, c)
-	require.NoError(t, err)
-	require.NotEmpty(t, blk)
-}
-func (ch *CabooseHarness) failNodesWithCode(t *testing.T, selectorF func(ep *ep) bool, code int) {
-	for _, n := range ch.pool {
-		if selectorF(n) {
-			n.valid = false
-			n.httpCode = code
-		}
-	}
-}
-
-func (ch *CabooseHarness) recoverNodes(t *testing.T, selectorF func(ep *ep) bool) {
-	for _, n := range ch.pool {
-		if selectorF(n) {
-			n.valid = true
-		}
-	}
-}
-
-func (ch *CabooseHarness) failNodesAndAssertFetch(t *testing.T, selectorF func(ep *ep) bool, nAlive int, cid cid.Cid) {
-	ch.failNodes(t, selectorF)
-	require.EqualValues(t, nAlive, ch.nNodesAlive())
-	ch.fetchAndAssertSuccess(t, context.Background(), cid)
-}
-
-func (ch *CabooseHarness) failNodes(t *testing.T, selectorF func(ep *ep) bool) {
-	for _, n := range ch.pool {
-		if selectorF(n) {
-			n.valid = false
-		}
-	}
-}
-
-func (ch *CabooseHarness) nNodesAlive() int {
-	cnt := 0
-	for _, n := range ch.pool {
-		if n.valid {
-			cnt++
-		}
-	}
-	return cnt
-}
-
-func (ch *CabooseHarness) stopOrchestrator() {
-	ch.gol.Lock()
-	ch.goodOrch = false
-	ch.gol.Unlock()
-}
-
-func (ch *CabooseHarness) startOrchestrator() {
-	ch.gol.Lock()
-	ch.goodOrch = true
-	ch.gol.Unlock()
-}
-
-type ep struct {
-	server   *httptest.Server
-	valid    bool
-	cnt      int
-	httpCode int
-	resp     []byte
-}
-
-var testBlock = []byte("hello World")
-
-func (e *ep) Setup() {
-	e.valid = true
-	e.resp = testBlock
-	e.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(time.Millisecond * 20)
-		e.cnt++
-		if e.valid {
-			w.Write(e.resp)
-		} else {
-			if e.httpCode == http.StatusTooManyRequests {
-				w.Header().Set("Retry-After", "1")
-			}
-			if e.httpCode == 0 {
-				e.httpCode = 500
-			}
-			w.WriteHeader(e.httpCode)
-			w.Write([]byte("error"))
-		}
-	}))
 }
