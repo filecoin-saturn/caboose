@@ -66,7 +66,6 @@ func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
 	}
 
 	goLogger.Infow("got backends from orchestrators", "cnt", len(responses), "endpoint", p.config.OrchestratorEndpoint.String())
-	goLogger.Infow("got nodes from orchestrator", "resp", responses)
 	return responses, nil
 }
 
