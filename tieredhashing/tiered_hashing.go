@@ -42,11 +42,11 @@ const (
 type Tier string
 
 type NodeInfo struct {
-	ID          string  `json:"id"`
-	IP          string  `json:"ip"`
-	Distance    float32 `json:"distance"`
-	Weight      int     `json:"weight"`
-	SentinelCid string  `json:"sentinelCid"`
+	ID            string  `json:"id"`
+	IP            string  `json:"ip"`
+	Distance      float32 `json:"distance"`
+	Weight        int     `json:"weight"`
+	ComplianceCid string  `json:"complianceCid"`
 }
 
 type NodePerf struct {
@@ -253,12 +253,12 @@ func (t *TieredHashing) GetPerf() map[string]*NodePerf {
 	return t.nodes
 }
 
-func (t *TieredHashing) GetSentinelCid(ip string) (string, error) {
+func (t *TieredHashing) GetComplianceCid(ip string) (string, error) {
 	if node, ok := t.nodes[ip]; ok {
-		if len(node.SentinelCid) > 0 {
-			return node.SentinelCid, nil
+		if len(node.ComplianceCid) > 0 {
+			return node.ComplianceCid, nil
 		} else {
-			return "", fmt.Errorf("sentinel cid doesn't exist for node: %s ", ip)
+			return "", fmt.Errorf("compliance cid doesn't exist for node: %s ", ip)
 		}
 
 	} else {

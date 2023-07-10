@@ -66,11 +66,11 @@ func andAndAssertPool(t *testing.T, p *pool, nodes []string, expectedMain, expec
 
 	for _, n := range nodes {
 		parsedNodes = append(parsedNodes, tieredhashing.NodeInfo{
-			IP:          n,
-			ID:          n,
-			Weight:      rand.Intn(100),
-			Distance:    rand.Float32(),
-			SentinelCid: n,
+			IP:            n,
+			ID:            n,
+			Weight:        rand.Intn(100),
+			Distance:      rand.Float32(),
+			ComplianceCid: n,
 		})
 	}
 

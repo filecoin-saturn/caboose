@@ -119,27 +119,27 @@ func TestMoveBestUnknownToMain(t *testing.T) {
 	th.h.nodes[nodes[0]].Tier = TierUnknown
 }
 
-func TestSentinelCids(t *testing.T) {
+func TestComplianceCids(t *testing.T) {
 
 	th := NewTieredHashingHarness()
 
 	nodes := th.genAndAddAll(t, 10)
 	th.h.AddOrchestratorNodes(genNodeStructs(nodes))
 
-	t.Run("sentinel cids exist for existing nodes", func(t *testing.T) {
+	t.Run("compliance cids exist for existing nodes", func(t *testing.T) {
 		for _, node := range nodes {
-			_, err := th.h.GetSentinelCid(node)
-			assert.NoError(t, err, "Sentinel Cids should always exist for nodes that are part of the pool")
+			_, err := th.h.GetComplianceCid(node)
+			assert.NoError(t, err, "Compliance Cids should always exist for nodes that are part of the pool")
 		}
 	})
 
 	newNodes := []string{"new-node1", "new-node2"}
 	th.addNewNodesAll(t, newNodes)
 	th.h.AddOrchestratorNodes(genNodeStructs(newNodes))
-	t.Run("sentinel cids exist for new nodes", func(t *testing.T) {
+	t.Run("compliance cids exist for new nodes", func(t *testing.T) {
 		for _, node := range newNodes {
-			_, err := th.h.GetSentinelCid(node)
-			assert.NoError(t, err, "Sentinel Cids should always exist for new added nodes")
+			_, err := th.h.GetComplianceCid(node)
+			assert.NoError(t, err, "Compliance Cids should always exist for new added nodes")
 
 		}
 	})
@@ -148,10 +148,10 @@ func TestSentinelCids(t *testing.T) {
 		th.h.removeFailedNode(node)
 	}
 
-	t.Run("sentinel cids do not exist for removed nodes", func(t *testing.T) {
+	t.Run("compliance cids do not exist for removed nodes", func(t *testing.T) {
 		for _, node := range newNodes {
-			_, err := th.h.GetSentinelCid(node)
-			assert.Error(t, err, "Sentinel cids do not exist for removed nodes")
+			_, err := th.h.GetComplianceCid(node)
+			assert.Error(t, err, "Compliance cids do not exist for removed nodes")
 		}
 	})
 }
@@ -573,11 +573,11 @@ func genNodeStructs(nodes []string) []NodeInfo {
 	for _, node := range nodes {
 		cid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte(node))
 		nodeStructs = append(nodeStructs, NodeInfo{
-			IP:          node,
-			ID:          node,
-			Weight:      rand.Intn(100),
-			Distance:    rand.Float32(),
-			SentinelCid: cid.String(),
+			IP:            node,
+			ID:            node,
+			Weight:        rand.Intn(100),
+			Distance:      rand.Float32(),
+			ComplianceCid: cid.String(),
 		})
 	}
 	return nodeStructs

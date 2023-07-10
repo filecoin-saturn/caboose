@@ -72,7 +72,7 @@ func TestPoolMiroring(t *testing.T) {
 	ph := BuildPoolHarness(t, 2, opts)
 
 	p := ph.p
-	p.config.SentinelCidPeriod = 0
+	p.config.ComplianceCidPeriod = 0
 	nodes := ph.p.config.OrchestratorOverride
 	p.doRefresh()
 	p.config.OrchestratorOverride = nil
@@ -113,11 +113,11 @@ func TestLoadPool(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte("node"))
 		response := [1]tieredhashing.NodeInfo{{
-			IP:          "node",
-			ID:          "node",
-			Weight:      rand.Intn(100),
-			Distance:    rand.Float32(),
-			SentinelCid: cid.String(),
+			IP:            "node",
+			ID:            "node",
+			Weight:        rand.Intn(100),
+			Distance:      rand.Float32(),
+			ComplianceCid: cid.String(),
 		}}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -139,7 +139,7 @@ func TestLoadPool(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestFetchSentinelCid(t *testing.T) {
+func TestFetchComplianceCid(t *testing.T) {
 	if unsafe.Sizeof(unsafe.Pointer(nil)) <= 4 {
 		t.Skip("skipping for 32bit architectures because too slow")
 	}
@@ -151,7 +151,7 @@ func TestFetchSentinelCid(t *testing.T) {
 	ph := BuildPoolHarness(t, 2, opts)
 
 	p := ph.p
-	p.config.SentinelCidPeriod = 1
+	p.config.ComplianceCidPeriod = 1
 	nodes := ph.p.config.OrchestratorOverride
 	p.doRefresh()
 	p.config.OrchestratorOverride = nil
@@ -225,11 +225,11 @@ func BuildPoolHarness(t *testing.T, n int, opts []tieredhashing.Option) *PoolHar
 		eps[i].resp = carBytes.Bytes()
 		eURL := strings.TrimPrefix(eps[i].server.URL, "https://")
 		nodeInfos[i] = tieredhashing.NodeInfo{
-			IP:          eURL,
-			ID:          eURL,
-			Weight:      rand.Intn(100),
-			Distance:    rand.Float32(),
-			SentinelCid: finalC.String(),
+			IP:            eURL,
+			ID:            eURL,
+			Weight:        rand.Intn(100),
+			Distance:      rand.Float32(),
+			ComplianceCid: finalC.String(),
 		}
 		eps[i].lk.Unlock()
 

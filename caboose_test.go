@@ -221,11 +221,11 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 		ip := strings.TrimPrefix(ch.pool[i].server.URL, "https://")
 		cid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte(ip))
 		purls[i] = tieredhashing.NodeInfo{
-			IP:          ip,
-			ID:          "node-id",
-			Weight:      rand.Intn(100),
-			Distance:    rand.Float32(),
-			SentinelCid: cid.String(),
+			IP:            ip,
+			ID:            "node-id",
+			Weight:        rand.Intn(100),
+			Distance:      rand.Float32(),
+			ComplianceCid: cid.String(),
 		}
 	}
 	ch.goodOrch = true

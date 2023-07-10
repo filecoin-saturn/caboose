@@ -33,7 +33,7 @@ const (
 	BackendOverrideKey = "CABOOSE_BACKEND_OVERRIDE"
 )
 
-var sentinelCidReqTemplate = "/ipfs/%s?format=raw"
+var complianceCidReqTemplate = "/ipfs/%s?format=raw"
 
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
@@ -205,15 +205,15 @@ func (p *pool) refreshPool() {
 	}
 }
 
-func (p *pool) fetchSentinelCid(node string) error {
-	sc, err := p.th.GetSentinelCid(node)
+func (p *pool) fetchComplianceCid(node string) error {
+	sc, err := p.th.GetComplianceCid(node)
 	if err != nil {
-		goLogger.Warnw("failed to find sentinel cid ", "err", err)
+		goLogger.Warnw("failed to find compliance cid ", "err", err)
 		return err
 	}
 	trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	reqUrl := fmt.Sprintf(sentinelCidReqTemplate, sc)
-	goLogger.Debugw("fetching sentinel cid", "cid", reqUrl, "from", node)
+	reqUrl := fmt.Sprintf(complianceCidReqTemplate, sc)
+	goLogger.Debugw("fetching compliance cid", "cid", reqUrl, "from", node)
 	err = p.fetchResourceAndUpdate(trialTimeout, node, reqUrl, 0, p.mirrorValidator)
 	cancel()
 	return err
@@ -240,17 +240,17 @@ func (p *pool) checkPool() {
 			err := p.fetchResourceAndUpdate(trialTimeout, node, msg.path, 0, p.mirrorValidator)
 
 			rand := big.NewInt(1)
-			if p.config.SentinelCidPeriod > 0 {
-				rand, _ = cryptoRand.Int(cryptoRand.Reader, big.NewInt(p.config.SentinelCidPeriod))
+			if p.config.ComplianceCidPeriod > 0 {
+				rand, _ = cryptoRand.Int(cryptoRand.Reader, big.NewInt(p.config.ComplianceCidPeriod))
 			}
 
 			if rand.Cmp(big.NewInt(0)) == 0 {
-				err := p.fetchSentinelCid(node)
+				err := p.fetchComplianceCid(node)
 				if err != nil {
-					goLogger.Warnw("failed to fetch sentinel cid ", "err", err)
-					sentinelCidCallsTotalMetric.WithLabelValues("error").Add(1)
+					goLogger.Warnw("failed to fetch compliance cid ", "err", err)
+					complianceCidCallsTotalMetric.WithLabelValues("error").Add(1)
 				} else {
-					sentinelCidCallsTotalMetric.WithLabelValues("success").Add(1)
+					complianceCidCallsTotalMetric.WithLabelValues("success").Add(1)
 				}
 			}
 

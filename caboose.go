@@ -76,7 +76,7 @@ type Config struct {
 
 	TieredHashingOpts []tieredhashing.Option
 
-	SentinelCidPeriod int64
+	ComplianceCidPeriod int64
 }
 
 const DefaultLoggingInterval = 5 * time.Second
@@ -106,9 +106,9 @@ const defaultFetchKeyCoolDownDuration = 1 * time.Minute // how long will a sane 
 // however, only upto a certain max number of cool-offs.
 const defaultSaturnNodeCoolOff = 5 * time.Minute
 
-// This represents, on average, how many requests caboose makes before requesting a sentinel cid.
-// Example: a period of 100 implies Caboose will on average make a sentinel CID request once every 100 requests.
-const DefaultSentinelCidPeriod = int64(5)
+// This represents, on average, how many requests caboose makes before requesting a compliance cid.
+// Example: a period of 100 implies Caboose will on average make a compliance CID request once every 100 requests.
+const DefaultComplianceCidPeriod = int64(5)
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available saturn backend")
@@ -231,8 +231,8 @@ func NewCaboose(config *Config) (*Caboose, error) {
 		}
 	}
 
-	if c.config.SentinelCidPeriod == 0 {
-		c.config.SentinelCidPeriod = DefaultSentinelCidPeriod
+	if c.config.ComplianceCidPeriod == 0 {
+		c.config.ComplianceCidPeriod = DefaultComplianceCidPeriod
 	}
 
 	if c.config.PoolRefresh == 0 {
