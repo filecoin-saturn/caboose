@@ -108,7 +108,7 @@ const defaultSaturnNodeCoolOff = 5 * time.Minute
 
 // This represents, on average, how many requests caboose makes before requesting a compliance cid.
 // Example: a period of 100 implies Caboose will on average make a compliance CID request once every 100 requests.
-const DefaultComplianceCidPeriod = int64(5)
+const DefaultComplianceCidPeriod = int64(100)
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available saturn backend")
