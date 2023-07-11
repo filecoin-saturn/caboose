@@ -6,6 +6,15 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math/rand"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/filecoin-saturn/caboose"
 	"github.com/filecoin-saturn/caboose/tieredhashing"
 	"github.com/ipfs/go-cid"
@@ -17,13 +26,6 @@ import (
 	selectorparse "github.com/ipld/go-ipld-prime/traversal/selector/parse"
 	"github.com/multiformats/go-multicodec"
 	"github.com/stretchr/testify/require"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
-	"strings"
-	"testing"
-	"time"
 )
 
 func TestCidCoolDown(t *testing.T) {
@@ -212,11 +214,19 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 	ch := &CabooseHarness{}
 
 	ch.pool = make([]*ep, n)
-	purls := make([]string, n)
+	purls := make([]tieredhashing.NodeInfo, n)
 	for i := 0; i < len(ch.pool); i++ {
 		ch.pool[i] = &ep{}
 		ch.pool[i].Setup()
-		purls[i] = strings.TrimPrefix(ch.pool[i].server.URL, "https://")
+		ip := strings.TrimPrefix(ch.pool[i].server.URL, "https://")
+		cid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte(ip))
+		purls[i] = tieredhashing.NodeInfo{
+			IP:            ip,
+			ID:            "node-id",
+			Weight:        rand.Intn(100),
+			Distance:      rand.Float32(),
+			ComplianceCid: cid.String(),
+		}
 	}
 	ch.goodOrch = true
 	orch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

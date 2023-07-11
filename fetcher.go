@@ -32,6 +32,7 @@ const (
 	saturnRetryAfterKey = "Retry-After"
 	resourceTypeCar     = "car"
 	resourceTypeBlock   = "block"
+	complianceCidPeriod = 200
 )
 
 var (

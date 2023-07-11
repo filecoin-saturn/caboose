@@ -2,13 +2,13 @@ package caboose
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
@@ -32,7 +32,7 @@ type Config struct {
 	// OrchestratorClient is the HTTP client to use when communicating with the Saturn orchestrator.
 	OrchestratorClient *http.Client
 	// OrchestratorOverride replaces calls to the orchestrator with a fixed response.
-	OrchestratorOverride []string
+	OrchestratorOverride []tieredhashing.NodeInfo
 
 	// LoggingEndpoint is the URL of the logging endpoint where we submit logs pertaining to our Saturn retrieval requests.
 	LoggingEndpoint url.URL
@@ -75,6 +75,8 @@ type Config struct {
 	SaturnNodeCoolOff time.Duration
 
 	TieredHashingOpts []tieredhashing.Option
+
+	ComplianceCidPeriod int64
 }
 
 const DefaultLoggingInterval = 5 * time.Second
@@ -90,7 +92,7 @@ const defaultMaxRetries = 3
 const defaultMirrorFraction = 0.01
 
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
-const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=200"
+const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes?maxNodes=200"
 const DefaultPoolRefreshInterval = 5 * time.Minute
 
 // we cool off sending requests to Saturn for a cid for a certain duration
@@ -103,6 +105,10 @@ const defaultFetchKeyCoolDownDuration = 1 * time.Minute // how long will a sane 
 // we cool off sending requests to a Saturn node if it returns transient errors rather than immediately downvoting it;
 // however, only upto a certain max number of cool-offs.
 const defaultSaturnNodeCoolOff = 5 * time.Minute
+
+// This represents, on average, how many requests caboose makes before requesting a compliance cid.
+// Example: a period of 100 implies Caboose will on average make a compliance CID request once every 100 requests.
+const DefaultComplianceCidPeriod = int64(100)
 
 var ErrNotImplemented error = errors.New("not implemented")
 var ErrNoBackend error = errors.New("no available saturn backend")
@@ -196,7 +202,13 @@ func NewCaboose(config *Config) (*Caboose, error) {
 		config.MirrorFraction = defaultMirrorFraction
 	}
 	if override := os.Getenv(BackendOverrideKey); len(override) > 0 {
-		config.OrchestratorOverride = strings.Split(override, ",")
+		var overrideNodes []tieredhashing.NodeInfo
+		err := json.Unmarshal([]byte(override), &overrideNodes)
+		if err != nil {
+			goLogger.Warnf("Error parsing BackendOverrideKey:", "err", err)
+			return nil, err
+		}
+		config.OrchestratorOverride = overrideNodes
 	}
 
 	c := Caboose{
@@ -217,6 +229,10 @@ func NewCaboose(config *Config) (*Caboose, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if c.config.ComplianceCidPeriod == 0 {
+		c.config.ComplianceCidPeriod = DefaultComplianceCidPeriod
 	}
 
 	if c.config.PoolRefresh == 0 {

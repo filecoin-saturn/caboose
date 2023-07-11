@@ -2,11 +2,15 @@ package tieredhashing
 
 import (
 	"fmt"
+	"math/rand"
 	"net/http"
 	"sort"
 	"testing"
 
 	"github.com/asecurityteam/rolling"
+	"github.com/ipfs/go-cid"
+	"github.com/multiformats/go-multicodec"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/stretchr/testify/require"
 )
@@ -113,6 +117,43 @@ func TestMoveBestUnknownToMain(t *testing.T) {
 
 	th.h.nodes[nodes[1]].Tier = TierMain
 	th.h.nodes[nodes[0]].Tier = TierUnknown
+}
+
+func TestComplianceCids(t *testing.T) {
+
+	th := NewTieredHashingHarness()
+
+	nodes := th.genAndAddAll(t, 10)
+	th.h.AddOrchestratorNodes(genNodeStructs(nodes))
+
+	t.Run("compliance cids exist for existing nodes", func(t *testing.T) {
+		for _, node := range nodes {
+			_, err := th.h.GetComplianceCid(node)
+			assert.NoError(t, err, "Compliance Cids should always exist for nodes that are part of the pool")
+		}
+	})
+
+	newNodes := []string{"new-node1", "new-node2"}
+	th.addNewNodesAll(t, newNodes)
+	th.h.AddOrchestratorNodes(genNodeStructs(newNodes))
+	t.Run("compliance cids exist for new nodes", func(t *testing.T) {
+		for _, node := range newNodes {
+			_, err := th.h.GetComplianceCid(node)
+			assert.NoError(t, err, "Compliance Cids should always exist for new added nodes")
+
+		}
+	})
+
+	for _, node := range newNodes {
+		th.h.removeFailedNode(node)
+	}
+
+	t.Run("compliance cids do not exist for removed nodes", func(t *testing.T) {
+		for _, node := range newNodes {
+			_, err := th.h.GetComplianceCid(node)
+			assert.Error(t, err, "Compliance cids do not exist for removed nodes")
+		}
+	})
 }
 
 func TestNodeNotRemovedWithVar(t *testing.T) {
@@ -467,13 +508,13 @@ func TestAddOrchestratorNodesMax(t *testing.T) {
 
 	// empty -> 10 get added
 	nodes := th.genNodes(t, 30)
-	a, _, _ := th.h.AddOrchestratorNodes(nodes)
+	a, _, _ := th.h.AddOrchestratorNodes(genNodeStructs(nodes))
 	require.EqualValues(t, 10, a)
 	th.assertSize(t, 0, 10)
 
 	// nothing gets added as we are full
 	nodes2 := th.genNodes(t, 30)
-	a, _, _ = th.h.AddOrchestratorNodes(append(nodes, nodes2...))
+	a, _, _ = th.h.AddOrchestratorNodes(append(genNodeStructs(nodes), genNodeStructs(nodes2)...))
 	require.EqualValues(t, 0, a)
 	th.assertSize(t, 0, 10)
 
@@ -484,7 +525,7 @@ func TestAddOrchestratorNodesMax(t *testing.T) {
 	th.assertSize(t, 0, 8)
 
 	// 2 get added now
-	a, _, _ = th.h.AddOrchestratorNodes(append(nodes, nodes2...))
+	a, _, _ = th.h.AddOrchestratorNodes(append(genNodeStructs(nodes), genNodeStructs(nodes2)...))
 	require.EqualValues(t, 2, a)
 	th.assertSize(t, 0, 10)
 
@@ -492,7 +533,7 @@ func TestAddOrchestratorNodesMax(t *testing.T) {
 	th.assertSize(t, 0, 9)
 
 	// removed node does not get added back as we are already full without it
-	a, ar, back := th.h.AddOrchestratorNodes(append(nodes, "newnode"))
+	a, ar, back := th.h.AddOrchestratorNodes(append(genNodeStructs(nodes), genNodeStructs([]string{"newNode"})...))
 	require.EqualValues(t, 1, a)
 	require.EqualValues(t, 3, ar)
 	th.assertSize(t, 0, 10)
@@ -526,6 +567,22 @@ func (th *TieredHashingHarness) genNodes(t *testing.T, n int) []string {
 	return nodes
 }
 
+func genNodeStructs(nodes []string) []NodeInfo {
+	var nodeStructs []NodeInfo
+
+	for _, node := range nodes {
+		cid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte(node))
+		nodeStructs = append(nodeStructs, NodeInfo{
+			IP:            node,
+			ID:            node,
+			Weight:        rand.Intn(100),
+			Distance:      rand.Float32(),
+			ComplianceCid: cid.String(),
+		})
+	}
+	return nodeStructs
+}
+
 func (th *TieredHashingHarness) addNewNodesAll(t *testing.T, nodes []string) {
 	var old []string
 
@@ -533,13 +590,13 @@ func (th *TieredHashingHarness) addNewNodesAll(t *testing.T, nodes []string) {
 		old = append(old, key)
 	}
 
-	added, already, _ := th.h.AddOrchestratorNodes(append(nodes, old...))
+	added, already, _ := th.h.AddOrchestratorNodes(append(genNodeStructs(nodes), genNodeStructs(old)...))
 	require.Zero(t, already)
 	require.EqualValues(t, len(nodes), added)
 }
 
 func (th *TieredHashingHarness) addAndAssert(t *testing.T, nodes []string, added, already, ab int, main, unknown int) {
-	a, ar, addedBack := th.h.AddOrchestratorNodes(nodes)
+	a, ar, addedBack := th.h.AddOrchestratorNodes(genNodeStructs(nodes))
 	require.EqualValues(t, added, a)
 
 	require.EqualValues(t, already, ar)

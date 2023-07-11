@@ -2,11 +2,14 @@ package caboose
 
 import (
 	"context"
+	cryptoRand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"math/rand"
+	"net/http"
 	"net/url"
 	"os"
 	"sync"
@@ -30,25 +33,38 @@ const (
 	BackendOverrideKey = "CABOOSE_BACKEND_OVERRIDE"
 )
 
+var complianceCidReqTemplate = "/ipfs/%s?format=raw"
+
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
-func (p *pool) loadPool() ([]string, error) {
+func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
+
 	if p.config.OrchestratorOverride != nil {
 		return p.config.OrchestratorOverride, nil
 	}
+	client := p.config.OrchestratorClient
 
-	resp, err := p.config.OrchestratorClient.Get(p.config.OrchestratorEndpoint.String())
+	req, err := http.NewRequest("GET", p.config.OrchestratorEndpoint.String(), nil)
+
 	if err != nil {
-		goLogger.Warnw("failed to get backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint.String())
+		goLogger.Warnw("failed to create request to orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
+		return nil, err
+	}
+	resp, err := client.Do(req)
+
+	if err != nil {
+		goLogger.Warnw("failed to get backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	responses := make([]string, 0)
+	responses := make([]tieredhashing.NodeInfo, 0)
+
 	if err := json.NewDecoder(resp.Body).Decode(&responses); err != nil {
 		goLogger.Warnw("failed to decode backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint.String())
 		return nil, err
 	}
+
 	goLogger.Infow("got backends from orchestrators", "cnt", len(responses), "endpoint", p.config.OrchestratorEndpoint.String())
 	return responses, nil
 }
@@ -116,7 +132,7 @@ func (p *pool) doRefresh() {
 	}
 }
 
-func (p *pool) refreshWithNodes(newEP []string) {
+func (p *pool) refreshWithNodes(newEP []tieredhashing.NodeInfo) {
 	p.lk.Lock()
 	defer p.lk.Unlock()
 
@@ -188,6 +204,20 @@ func (p *pool) refreshPool() {
 	}
 }
 
+func (p *pool) fetchComplianceCid(node string) error {
+	sc, err := p.th.GetComplianceCid(node)
+	if err != nil {
+		goLogger.Warnw("failed to find compliance cid ", "err", err)
+		return err
+	}
+	trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	reqUrl := fmt.Sprintf(complianceCidReqTemplate, sc)
+	goLogger.Debugw("fetching compliance cid", "cid", reqUrl, "from", node)
+	err = p.fetchResourceAndUpdate(trialTimeout, node, reqUrl, 0, p.mirrorValidator)
+	cancel()
+	return err
+}
+
 func (p *pool) checkPool() {
 	for {
 		select {
@@ -204,7 +234,25 @@ func (p *pool) checkPool() {
 				continue
 			}
 			trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			err := p.fetchResourceAndUpdate(trialTimeout, testNodes[0], msg.path, 0, p.mirrorValidator)
+
+			node := testNodes[0]
+			err := p.fetchResourceAndUpdate(trialTimeout, node, msg.path, 0, p.mirrorValidator)
+
+			rand := big.NewInt(1)
+			if p.config.ComplianceCidPeriod > 0 {
+				rand, _ = cryptoRand.Int(cryptoRand.Reader, big.NewInt(p.config.ComplianceCidPeriod))
+			}
+
+			if rand.Cmp(big.NewInt(0)) == 0 {
+				err := p.fetchComplianceCid(node)
+				if err != nil {
+					goLogger.Warnw("failed to fetch compliance cid ", "err", err)
+					complianceCidCallsTotalMetric.WithLabelValues("error").Add(1)
+				} else {
+					complianceCidCallsTotalMetric.WithLabelValues("success").Add(1)
+				}
+			}
+
 			cancel()
 			if err != nil {
 				mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
@@ -277,6 +325,7 @@ func cidToKey(c cid.Cid) string {
 }
 
 func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk blocks.Block, err error) {
+
 	fetchCalledTotalMetric.WithLabelValues(resourceTypeBlock).Add(1)
 	if recordIfContextErr(resourceTypeBlock, ctx, "fetchBlockWith") {
 		return nil, ctx.Err()
