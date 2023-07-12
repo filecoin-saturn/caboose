@@ -210,3 +210,36 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 	ch.c = bs
 	return ch
 }
+
+type ep struct {
+	server   *httptest.Server
+	valid    bool
+	cnt      int
+	httpCode int
+	resp     []byte
+	lk       sync.Mutex
+}
+
+var testBlock = []byte("hello World")
+
+func (e *ep) Setup() {
+	e.valid = true
+	e.resp = testBlock
+	e.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		e.lk.Lock()
+		defer e.lk.Unlock()
+		e.cnt++
+		if e.valid {
+			w.Write(e.resp)
+		} else {
+			if e.httpCode == http.StatusTooManyRequests {
+				w.Header().Set("Retry-After", "1")
+			}
+			if e.httpCode == 0 {
+				e.httpCode = 500
+			}
+			w.WriteHeader(e.httpCode)
+			w.Write([]byte("error"))
+		}
+	}))
+}

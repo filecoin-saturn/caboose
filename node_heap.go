@@ -49,6 +49,17 @@ func (nh *NodeHeap) PeekRandom() *Node {
 	return nil
 }
 
+func (nh *NodeHeap) TopN(n int) map[float64]*Node {
+	m := make(map[float64]*Node, n)
+	nh.lk.RLock()
+	defer nh.lk.RUnlock()
+	for i := 0; i < n && i < len(nh.Nodes); i++ {
+		node := nh.Nodes[i]
+		m[node.Priority()] = node
+	}
+	return m
+}
+
 /* below functions implement the heap interface */
 var _ heap.Interface = (*NodeHeap)(nil)
 

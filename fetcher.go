@@ -15,13 +15,9 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/google/uuid"
-	blocks "github.com/ipfs/go-block-format"
-	"github.com/ipfs/go-cid"
 	servertiming "github.com/mitchellh/go-server-timing"
 	"github.com/tcnksm/go-httpstat"
 )
-
-var saturnReqTmpl = "/ipfs/%s?format=raw"
 
 const (
 	UserAgentTag = "STRN_ENV_TAG"
@@ -44,46 +40,6 @@ var (
 	carSizesStr = []string{"256.0 Kib", "512.0 Kib", "1.0 Mib", "2.0 Mib",
 		"4.0 Mib", "8.0 Mib", "16.0 Mib", "32.0 Mib", "64.0 Mib", "128.0 Mib", "256.0 Mib", "512.0 Mib", "1.0 Gib", "2.0 Gib", "4.0 Gib", "8.0 Gib"}
 )
-
-// doFetch attempts to fetch a block from a given Saturn endpoint. It sends the retrieval logs to the logging endpoint upon a successful or failed attempt.
-func (p *pool) doFetch(ctx context.Context, from *Node, c cid.Cid, attempt int) (b blocks.Block, e error) {
-	reqUrl := fmt.Sprintf(saturnReqTmpl, c)
-
-	e = p.fetchResource(ctx, from, reqUrl, "application/vnd.ipld.raw", attempt, func(rsrc string, r io.Reader) error {
-		block, err := io.ReadAll(io.LimitReader(r, maxBlockSize))
-		if err != nil {
-			switch {
-			case err == io.EOF && len(block) >= maxBlockSize:
-				// we don't expect to see this error any time soon, but if IPFS
-				// ecosystem ever starts allowing bigger blocks, this message will save
-				// multiple people collective man-months in debugging ;-)
-				return fmt.Errorf("strn responded with a block bigger than maxBlockSize=%d", maxBlockSize-1)
-			case err == io.EOF:
-				// This is fine :-)
-				// Zero-length block may be valid (example: bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku)
-				// We accept this as non-error and let it go over CID validation later.
-			default:
-				return fmt.Errorf("unable to read strn response body: %w", err)
-			}
-		}
-
-		if p.config.DoValidation {
-			nc, err := c.Prefix().Sum(block)
-			if err != nil {
-				return blocks.ErrWrongHash
-			}
-			if !nc.Equals(c) {
-				return blocks.ErrWrongHash
-			}
-		}
-		b, e = blocks.NewBlockWithCid(block, c)
-		if e != nil {
-			return e
-		}
-		return nil
-	})
-	return
-}
 
 // TODO Refactor to use a metrics collector that separates the collection of metrics from the actual fetching
 func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, mime string, attempt int, cb DataCallback) (err error) {

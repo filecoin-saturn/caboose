@@ -32,6 +32,11 @@ func (nr *NodeRing) updateRing() error {
 	return nil
 }
 
+func (nr *NodeRing) MaybeSubstituteOrAdd(candidate *Node, activationThreshold uint64) error {
+
+	return nil
+}
+
 func (nr *NodeRing) Add(n *Node) error {
 	nr.lk.Lock()
 	defer nr.lk.Unlock()

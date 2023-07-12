@@ -50,10 +50,6 @@ var (
 	// buckets to record duration in milliseconds to fetch a CAR,
 	// histogram buckets will be [50ms,.., 30 minutes] -> total 40 buckets +1 prometheus Inf bucket
 	durationMsPerCarHistogram = prometheus.ExponentialBucketsRange(50, 1800000, 40)
-
-	// buckets to measure latency between a caboose peer a Saturn L1,
-	// [50ms, 100ms, 150ms, ...,  2000 ms]
-	latencyDistMsHistogram = prometheus.LinearBuckets(50, 50, 40)
 )
 
 var (

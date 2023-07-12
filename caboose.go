@@ -83,7 +83,6 @@ const defaultMaxRetries = 3
 // default percentage of requests to mirror for tracking how nodes perform unless overridden by MirrorFraction
 const defaultMirrorFraction = 0.01
 
-const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=200"
 const DefaultPoolRefreshInterval = 5 * time.Minute
 

@@ -66,8 +66,6 @@ type pool struct {
 
 	ActiveNodes *NodeRing
 	AllNodes    *NodeHeap
-
-	poolInitDone sync.Once
 }
 
 func newPool(c *Config, logger *logger) *pool {
@@ -103,6 +101,9 @@ func (p *pool) doRefresh() {
 		}
 	} else {
 		poolRefreshErrorMetric.Add(1)
+	}
+	if err := updateActiveNodes(p.ActiveNodes, p.AllNodes); err != nil {
+		goLogger.Warnw("failed to update active nodes", "error", err)
 	}
 }
 
@@ -214,10 +215,6 @@ func (p *pool) Close() {
 	default:
 		return
 	}
-}
-
-func cidToKey(c cid.Cid) string {
-	return c.Hash().B58String()
 }
 
 func (p *pool) fetchBlockWith(ctx context.Context, c cid.Cid, with string) (blk blocks.Block, err error) {
