@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/google/uuid"
@@ -261,6 +263,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	//trace
 	req = req.WithContext(httpstat.WithHTTPStat(req.Context(), &result))
+	otel.GetTextMapPropagator().Inject(req.Context(), propagation.HeaderCarrier(req.Header))
 
 	var resp *http.Response
 	saturnCallsTotalMetric.WithLabelValues(resourceType).Add(1)
