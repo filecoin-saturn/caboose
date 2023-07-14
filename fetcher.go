@@ -146,10 +146,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			if cacheHit == saturnCacheHit {
 				isCacheHit = true
 			}
-
-			for k, v := range respHeader {
-				received = received + len(k) + len(v)
-			}
 		}
 
 		durationSecs := time.Since(start).Seconds()
