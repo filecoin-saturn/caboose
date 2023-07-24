@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
+	"github.com/willscott/go-requestcontext"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -102,6 +103,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	requestId := uuid.NewString()
 	goLogger.Debugw("doing fetch", "from", from, "of", resource, "mime", mime, "requestId", requestId)
+	traceId := requestcontext.IDFromContext(ctx)
 
 	start := time.Now()
 	response_success_end := time.Now()
@@ -242,6 +244,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	req.Header.Add("Accept", mime)
+	if traceId != "" {
+		req.Header.Add("X-Trace-Id", traceId)
+	}
 
 	if p.config.ExtraHeaders != nil {
 		for k, vs := range *p.config.ExtraHeaders {
