@@ -31,7 +31,7 @@ const (
 	tierMainToUnknown          = "main-to-unknown"
 	tierUnknownToMain          = "unknown-to-main"
 	BackendOverrideKey         = "CABOOSE_BACKEND_OVERRIDE"
-	defaultMirroredConcurrency = 5
+	defaultMirroredConcurrency = 10
 )
 
 var complianceCidReqTemplate = "/ipfs/%s?format=raw"
