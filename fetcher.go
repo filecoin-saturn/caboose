@@ -2,6 +2,8 @@ package caboose
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -103,7 +105,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	requestId := uuid.NewString()
 	goLogger.Debugw("doing fetch", "from", from, "of", resource, "mime", mime, "requestId", requestId)
-	traceId := requestcontext.IDFromContext(ctx)
+	traceID := requestcontext.IDFromContext(ctx)
 
 	start := time.Now()
 	response_success_end := time.Now()
@@ -244,8 +246,11 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	}
 
 	req.Header.Add("Accept", mime)
-	if traceId != "" {
-		req.Header.Add("X-Trace-Id", traceId)
+
+	traceIDExpectedLength := 32
+	if len(traceID) == traceIDExpectedLength {
+		traceparent := createTraceparentFromTraceID(traceID)
+		req.Header.Add("traceparent", traceparent)
 	}
 
 	if p.config.ExtraHeaders != nil {
@@ -468,4 +473,19 @@ func getCacheStatus(isCacheHit bool) string {
 
 func subReqID(host, rsrc string) string {
 	return fmt.Sprintf("%x", crc32.ChecksumIEEE([]byte(host+rsrc)))
+}
+
+func createTraceparentFromTraceID(traceID string) string {
+	version := "00"
+	parentSpanID := generateRandomHex(8)
+	traceFlags := "01"
+
+	traceparent := fmt.Sprintf("%s-%s-%s-%s", version, traceID, parentSpanID, traceFlags)
+	return traceparent
+}
+
+func generateRandomHex(byteLength int) string {
+	bytes := make([]byte, byteLength)
+	rand.Read(bytes)
+	return hex.EncodeToString(bytes)
 }
