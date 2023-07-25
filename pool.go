@@ -28,9 +28,10 @@ import (
 )
 
 const (
-	tierMainToUnknown  = "main-to-unknown"
-	tierUnknownToMain  = "unknown-to-main"
-	BackendOverrideKey = "CABOOSE_BACKEND_OVERRIDE"
+	tierMainToUnknown          = "main-to-unknown"
+	tierUnknownToMain          = "unknown-to-main"
+	BackendOverrideKey         = "CABOOSE_BACKEND_OVERRIDE"
+	defaultMirroredConcurrency = 5
 )
 
 var complianceCidReqTemplate = "/ipfs/%s?format=raw"
@@ -219,46 +220,54 @@ func (p *pool) fetchComplianceCid(node string) error {
 }
 
 func (p *pool) checkPool() {
+	sem := make(chan struct{}, defaultMirroredConcurrency)
+
 	for {
 		select {
 		case msg := <-p.mirrorSamples:
-			// see if it is to a main-tier node - if so find appropriate test node to test against.
-			p.lk.RLock()
-			if p.th.NodeTier(msg.node) != tieredhashing.TierMain {
-				p.lk.RUnlock()
-				continue
-			}
-			testNodes := p.th.GetNodes(tieredhashing.TierUnknown, msg.key, 1)
-			p.lk.RUnlock()
-			if len(testNodes) == 0 {
-				continue
-			}
-			trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			sem <- struct{}{}
+			go func(msg mirroredPoolRequest) {
+				defer func() { <-sem }()
 
-			node := testNodes[0]
-			err := p.fetchResourceAndUpdate(trialTimeout, node, msg.path, 0, p.mirrorValidator)
-
-			rand := big.NewInt(1)
-			if p.config.ComplianceCidPeriod > 0 {
-				rand, _ = cryptoRand.Int(cryptoRand.Reader, big.NewInt(p.config.ComplianceCidPeriod))
-			}
-
-			if rand.Cmp(big.NewInt(0)) == 0 {
-				err := p.fetchComplianceCid(node)
-				if err != nil {
-					goLogger.Warnw("failed to fetch compliance cid ", "err", err)
-					complianceCidCallsTotalMetric.WithLabelValues("error").Add(1)
-				} else {
-					complianceCidCallsTotalMetric.WithLabelValues("success").Add(1)
+				// see if it is to a main-tier node - if so find appropriate test node to test against.
+				p.lk.RLock()
+				if p.th.NodeTier(msg.node) != tieredhashing.TierMain {
+					p.lk.RUnlock()
+					return
 				}
-			}
+				testNodes := p.th.GetNodes(tieredhashing.TierUnknown, msg.key, 1)
+				p.lk.RUnlock()
+				if len(testNodes) == 0 {
+					return
+				}
+				trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 
-			cancel()
-			if err != nil {
-				mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
-			} else {
-				mirroredTrafficTotalMetric.WithLabelValues("no-error").Inc()
-			}
+				node := testNodes[0]
+				err := p.fetchResourceAndUpdate(trialTimeout, node, msg.path, 0, p.mirrorValidator)
+
+				rand := big.NewInt(1)
+				if p.config.ComplianceCidPeriod > 0 {
+					rand, _ = cryptoRand.Int(cryptoRand.Reader, big.NewInt(p.config.ComplianceCidPeriod))
+				}
+
+				if rand.Cmp(big.NewInt(0)) == 0 {
+					err := p.fetchComplianceCid(node)
+					if err != nil {
+						goLogger.Warnw("failed to fetch compliance cid ", "err", err)
+						complianceCidCallsTotalMetric.WithLabelValues("error").Add(1)
+					} else {
+						complianceCidCallsTotalMetric.WithLabelValues("success").Add(1)
+					}
+				}
+
+				cancel()
+				if err != nil {
+					mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
+				} else {
+					mirroredTrafficTotalMetric.WithLabelValues("no-error").Inc()
+				}
+			}(msg)
+
 		case <-p.done:
 			return
 		}
