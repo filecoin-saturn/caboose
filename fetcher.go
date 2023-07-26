@@ -363,8 +363,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		rm.NetworkError = true
 		return rm, err
 	}
-	// drain body so it can be re-used.
-	_, _ = io.Copy(io.Discard, resp.Body)
+	// We don't drain the response as that causes the go-routine to block everytime which leaks go-routines.
 	fb = wrapped.firstByte
 	response_success_end = time.Now()
 
