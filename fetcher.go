@@ -346,10 +346,8 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	wrapped := TrackingReader{resp.Body, time.Time{}, 0}
 	err = cb(resource, &wrapped)
 	received = wrapped.len
-	// drain body so it can be re-used.
-	_, _ = io.Copy(io.Discard, resp.Body)
-
 	if err != nil {
+		resp.Body.Close()
 		if recordIfContextErr(resourceType, reqCtx, "read-http-response") {
 			if errors.Is(err, context.Canceled) {
 				return rm, reqCtx.Err()
@@ -366,7 +364,8 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		rm.NetworkError = true
 		return rm, err
 	}
-
+	// drain body so it can be re-used.
+	_, _ = io.Copy(io.Discard, resp.Body)
 	fb = wrapped.firstByte
 	response_success_end = time.Now()
 
