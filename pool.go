@@ -34,7 +34,7 @@ const (
 	defaultMirroredConcurrency = 10
 )
 
-var complianceCidReqTemplate = "/ipfs/%s?format=raw"
+var complianceCidReqTemplate = "/ipfs/%s?format=car&dag-scope=entity"
 
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
