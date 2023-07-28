@@ -66,7 +66,8 @@ func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
 		return nil, err
 	}
 
-	goLogger.Infow("got backends from orchestrators", "cnt", len(responses), "endpoint", p.config.OrchestratorEndpoint.String())
+	goLogger.Debugw("got backends from orchestrator", "backends", responses, "endpoint", p.config.OrchestratorEndpoint.String())
+	goLogger.Infow("got backends from orchestrator", "cnt", len(responses), "endpoint", p.config.OrchestratorEndpoint.String())
 	return responses, nil
 }
 
@@ -251,13 +252,8 @@ func (p *pool) checkPool() {
 				}
 
 				if rand.Cmp(big.NewInt(0)) == 0 {
-					err := p.fetchComplianceCid(node)
-					if err != nil {
-						goLogger.Warnw("failed to fetch compliance cid ", "err", err)
-						complianceCidCallsTotalMetric.WithLabelValues("error").Add(1)
-					} else {
-						complianceCidCallsTotalMetric.WithLabelValues("success").Add(1)
-					}
+					_ = p.fetchComplianceCid(node)
+					complianceCidCallsTotalMetric.WithLabelValues("success").Add(1)
 				}
 
 				cancel()
