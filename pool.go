@@ -34,7 +34,7 @@ const (
 	defaultMirroredConcurrency = 10
 )
 
-var complianceCidReqTemplate = "/ipfs/%s?format=raw"
+var complianceCidReqTemplate = "/ipfs/%s?format=car&dag-scope=entity"
 
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
@@ -214,7 +214,9 @@ func (p *pool) fetchComplianceCid(node string) error {
 	trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	reqUrl := fmt.Sprintf(complianceCidReqTemplate, sc)
 	goLogger.Debugw("fetching compliance cid", "cid", reqUrl, "from", node)
-	err = p.fetchResourceAndUpdate(trialTimeout, node, reqUrl, 0, p.mirrorValidator)
+	err = p.fetchResourceAndUpdate(trialTimeout, node, reqUrl, 0, func(_ string, _ io.Reader) error {
+		return nil
+	})
 	cancel()
 	return err
 }
