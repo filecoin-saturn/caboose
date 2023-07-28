@@ -214,9 +214,7 @@ func (p *pool) fetchComplianceCid(node string) error {
 	trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	reqUrl := fmt.Sprintf(complianceCidReqTemplate, sc)
 	goLogger.Debugw("fetching compliance cid", "cid", reqUrl, "from", node)
-	err = p.fetchResourceAndUpdate(trialTimeout, node, reqUrl, 0, func(_ string, _ io.Reader) error {
-		return nil
-	})
+	err = p.fetchResourceAndUpdate(trialTimeout, node, reqUrl, 0, p.mirrorValidator)
 	cancel()
 	return err
 }
