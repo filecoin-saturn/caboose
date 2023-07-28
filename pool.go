@@ -252,13 +252,8 @@ func (p *pool) checkPool() {
 				}
 
 				if rand.Cmp(big.NewInt(0)) == 0 {
-					err := p.fetchComplianceCid(node)
-					if err != nil {
-						goLogger.Warnw("failed to fetch compliance cid ", "err", err)
-						complianceCidCallsTotalMetric.WithLabelValues("error").Add(1)
-					} else {
-						complianceCidCallsTotalMetric.WithLabelValues("success").Add(1)
-					}
+					_ = p.fetchComplianceCid(node)
+					complianceCidCallsTotalMetric.WithLabelValues("success").Add(1)
 				}
 
 				cancel()
