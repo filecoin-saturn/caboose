@@ -49,13 +49,13 @@ func (nh *NodeHeap) PeekRandom() *Node {
 	return nil
 }
 
-func (nh *NodeHeap) TopN(n int) map[float64]*Node {
-	m := make(map[float64]*Node, n)
+func (nh *NodeHeap) TopN(n int) []*Node {
+	m := make([]*Node, 0, n)
 	nh.lk.RLock()
 	defer nh.lk.RUnlock()
 	for i := 0; i < n && i < len(nh.Nodes); i++ {
 		node := nh.Nodes[i]
-		m[node.Priority()] = node
+		m = append(m, node)
 	}
 	return m
 }

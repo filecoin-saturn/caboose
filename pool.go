@@ -148,6 +148,10 @@ func (p *pool) checkPool() {
 			if testNode == nil {
 				continue
 			}
+			if p.ActiveNodes.Contains(testNode) {
+				continue
+			}
+
 			trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			err := p.fetchResourceAndUpdate(trialTimeout, testNode, msg.path, 0, p.mirrorValidator)
 			cancel()

@@ -63,7 +63,7 @@ func TestFetchBlock(t *testing.T) {
 	h.fetchAndAssertSuccess(t, ctx, testCid)
 
 	// ensure we have a success recording
-	h.assertPoolSize(t, 0, 3)
+	h.assertPoolSize(t, 3, 3)
 	h.assertCorrectnessCount(t, 1)
 	h.assertLatencyCount(t, 1)
 
@@ -94,6 +94,7 @@ func TestResource(t *testing.T) {
 	// make our carv1
 	car.TraverseV1(context.Background(), &ls, rt, selectorparse.CommonSelector_MatchPoint, buf)
 	h.pool[0].resp = buf.Bytes()
+	h.pool[0].carWrap = false
 
 	// ask for it.
 	if err := h.c.Fetch(context.Background(), "/path/to/car", func(resource string, reader io.Reader) error {
@@ -126,7 +127,6 @@ func TestResource(t *testing.T) {
 			return ErrPartialResponse{StillNeed: []string{"/path/to/car2"}}
 		}
 		if resource == "/path/to/car2" {
-			fmt.Printf("doing second...\n")
 			second = true
 			return nil
 		}

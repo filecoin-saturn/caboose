@@ -340,7 +340,7 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 
 	saturnCallsSuccessTotalMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit)).Add(1)
 
-	from.RecordSuccess(float64(wrapped.firstByte.Sub(start).Milliseconds()), float64(received)/float64(response_success_end.Sub(start).Milliseconds()))
+	from.RecordSuccess(start, float64(wrapped.firstByte.Sub(start).Milliseconds()), float64(received)/float64(response_success_end.Sub(start).Milliseconds()))
 
 	return nil
 }

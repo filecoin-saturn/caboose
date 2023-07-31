@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/ipfs/go-cid"
+	"github.com/ipld/go-car"
+	"github.com/ipld/go-car/util"
 	"github.com/multiformats/go-multicodec"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +42,7 @@ func (ch *CabooseHarness) fetchAndAssertCoolDownError(t *testing.T, ctx context.
 	var coolDownErr *ErrCoolDown
 	ok := errors.As(err, &coolDownErr)
 	require.True(t, ok)
-	require.EqualValues(t, cid, coolDownErr.Cid)
+	require.Contains(t, coolDownErr.Path, cid.String())
 	require.NotZero(t, coolDownErr.RetryAfter())
 }
 
@@ -55,6 +57,7 @@ func (ch *CabooseHarness) fetchAndAssertSuccess(t *testing.T, ctx context.Contex
 	require.NoError(t, err)
 	require.NotEmpty(t, blk)
 }
+
 func (ch *CabooseHarness) failNodesWithCode(t *testing.T, selectorF func(ep *ep) bool, code int) {
 	for _, n := range ch.pool {
 		if selectorF(n) {
@@ -217,6 +220,7 @@ type ep struct {
 	cnt      int
 	httpCode int
 	resp     []byte
+	carWrap  bool
 	lk       sync.Mutex
 }
 
@@ -224,13 +228,24 @@ var testBlock = []byte("hello World")
 
 func (e *ep) Setup() {
 	e.valid = true
+	e.carWrap = true
 	e.resp = testBlock
 	e.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.lk.Lock()
 		defer e.lk.Unlock()
 		e.cnt++
 		if e.valid {
-			w.Write(e.resp)
+			if e.carWrap {
+				c, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(e.resp)
+
+				car.WriteHeader(&car.CarHeader{
+					Roots:   []cid.Cid{c},
+					Version: 1,
+				}, w)
+				util.LdWrite(w, c.Bytes(), e.resp)
+			} else {
+				w.Write(e.resp)
+			}
 		} else {
 			if e.httpCode == http.StatusTooManyRequests {
 				w.Header().Set("Retry-After", "1")

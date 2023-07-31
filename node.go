@@ -116,5 +116,18 @@ func (n *Node) Priority() float64 {
 	if latency == 0 {
 		latency = defaultLatencyMS
 	}
-	return n.PredictedReliability / n.PredictedLatency * n.PredictedThroughput
+
+	return n.PredictedReliability / latency * n.PredictedThroughput
+}
+
+func (n *Node) Rate() float64 {
+	n.lk.RLock()
+	defer n.lk.RUnlock()
+
+	len := n.Samples.Len()
+	if len == 0 {
+		return 0
+	}
+	last := n.Samples.Peek()
+	return float64(len) / float64(time.Since(last.Start))
 }

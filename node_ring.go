@@ -3,7 +3,7 @@ package caboose
 import (
 	"sync"
 
-	"github.com/serialx/hashring"
+	"github.com/willscott/hashring"
 )
 
 // NodeRing represents a set of nodes organized for stable hashing.
@@ -32,9 +32,37 @@ func (nr *NodeRing) updateRing() error {
 	return nil
 }
 
-func (nr *NodeRing) MaybeSubstituteOrAdd(candidate *Node, activationThreshold uint64) error {
+func (nr *NodeRing) MaybeSubstituteOrAdd(candidate *Node, activationThreshold int64) (bool, error) {
+	nr.lk.Lock()
+	defer nr.lk.Unlock()
 
-	return nil
+	_, ok := nr.ring.GetNode(candidate.URL)
+	if !ok {
+		// ring is empty. in this case we always want to add.
+		nr.nodes[candidate.URL] = candidate
+		return true, nr.updateRing()
+	}
+
+	// how much space is being claimed?
+	overlapEstimate := nr.ring.ConsiderUpdateWeightedNode(candidate.URL, 1)
+
+	var neighbor *Node
+	delta := float64(0)
+
+	for n, v := range overlapEstimate {
+		neighbor = nr.nodes[n]
+		neighborVolume := neighbor.Rate()
+
+		// how much worse is candidate?
+		diff := candidate.Priority() - neighbor.Priority()
+		delta += diff * neighborVolume * float64(v)
+	}
+
+	if delta > float64(activationThreshold) {
+		nr.nodes[candidate.URL] = candidate
+		return true, nr.updateRing()
+	}
+	return false, nil
 }
 
 func (nr *NodeRing) Add(n *Node) error {
@@ -67,6 +95,9 @@ func (nr *NodeRing) GetNodes(key string, number int) ([]*Node, error) {
 	nr.lk.RLock()
 	defer nr.lk.RUnlock()
 
+	if number > nr.ring.Size() {
+		number = nr.ring.Size()
+	}
 	keys, ok := nr.ring.GetNodes(key, number)
 	if !ok {
 		return nil, ErrNoBackend
@@ -78,4 +109,10 @@ func (nr *NodeRing) GetNodes(key string, number int) ([]*Node, error) {
 		}
 	}
 	return nodes, nil
+}
+
+func (nr *NodeRing) Len() int {
+	nr.lk.RLock()
+	defer nr.lk.RUnlock()
+	return nr.ring.Size()
 }
