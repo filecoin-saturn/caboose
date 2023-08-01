@@ -40,7 +40,7 @@ const (
 )
 
 var (
-	goLogger = golog.Logger("caboose-pool")
+	goLogger = golog.Logger("caboose-tiered-hashing")
 )
 
 type Tier string
@@ -454,6 +454,9 @@ func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) (float64, bo
 	// should satisfy a certain minimum percentage
 	pct := totalSuccess / perf.NCorrectnessDigest * 100
 
+	// This function returns true when a node is eligible for the correctness policy and should be retained.
+	// If this function returns false, it means that the node is not eligible for the correctness policy and should be removed.
+	// So we return true here only if the difference between the average pool correctness and the node correctness is less than the acceptable threshold.
 	return pct, (t.AverageCorrectnessPct - pct) < t.cfg.CorrectnessThreshold
 }
 
