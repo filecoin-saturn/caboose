@@ -232,22 +232,15 @@ func (p *pool) checkPool() {
 			go func(msg mirroredPoolRequest) {
 				defer func() { <-sem }()
 
-				// see if it is to a main-tier node - if so find appropriate test node to test against.
 				p.lk.RLock()
-				if p.th.NodeTier(msg.node) != tieredhashing.TierMain {
-					p.lk.RUnlock()
-					return
-				}
 				testNodes := p.th.GetNodes(tieredhashing.TierUnknown, msg.key, 1)
 				p.lk.RUnlock()
 				if len(testNodes) == 0 {
 					return
 				}
-				trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-
 				node := testNodes[0]
-				err := p.fetchResourceAndUpdate(trialTimeout, node, msg.path, 0, p.mirrorValidator)
 
+				// Send compliance cid
 				rand := big.NewInt(1)
 				if p.config.ComplianceCidPeriod > 0 {
 					rand, _ = cryptoRand.Int(cryptoRand.Reader, big.NewInt(p.config.ComplianceCidPeriod))
@@ -257,6 +250,17 @@ func (p *pool) checkPool() {
 					_ = p.fetchComplianceCid(node)
 					complianceCidCallsTotalMetric.WithLabelValues("success").Add(1)
 				}
+
+				// see if it is to a main-tier node - if so find appropriate test node to test against.
+				// --- Mirroring
+				p.lk.RLock()
+				if p.th.NodeTier(msg.node) != tieredhashing.TierMain {
+					p.lk.RUnlock()
+					return
+				}
+				p.lk.RUnlock()
+				trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				err := p.fetchResourceAndUpdate(trialTimeout, node, msg.path, 0, p.mirrorValidator)
 
 				cancel()
 				if err != nil {
