@@ -86,6 +86,7 @@ type TieredHashing struct {
 
 	OverAllCorrectnessDigest  *rolling.PointPolicy
 	NOverAllCorrectnessDigest float64
+	AverageCorrectnessPct     float64
 }
 
 func New(opts ...Option) *TieredHashing {
@@ -356,6 +357,22 @@ func (t *TieredHashing) MoveBestUnknownToMain() int {
 	return 1
 }
 
+func (t *TieredHashing) UpdateAverageCorrectnessPct() {
+	averageSuccess := t.OverAllCorrectnessDigest.Reduce(func(w rolling.Window) float64 {
+		var result float64
+		for _, bucket := range w {
+			for _, p := range bucket {
+				if p == 1 {
+					result++
+				}
+			}
+		}
+		return result
+	})
+	avePct := averageSuccess / t.NOverAllCorrectnessDigest * 100
+	t.AverageCorrectnessPct = avePct
+}
+
 func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
 	// sort all nodes by P95 and pick the top N as main tier nodes
 	nodes := t.nodesSortedLatency()
@@ -423,23 +440,10 @@ func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) (float64, bo
 		return result
 	})
 
-	averageSuccess := t.OverAllCorrectnessDigest.Reduce(func(w rolling.Window) float64 {
-		var result float64
-		for _, bucket := range w {
-			for _, p := range bucket {
-				if p == 1 {
-					result++
-				}
-			}
-		}
-		return result
-	})
-	avePct := averageSuccess / t.NOverAllCorrectnessDigest * 100
-
 	// should satisfy a certain minimum percentage
 	pct := totalSuccess / perf.NCorrectnessDigest * 100
 
-	return pct, (avePct - pct) < t.cfg.CorrectnessThreshold
+	return pct, (t.AverageCorrectnessPct - pct) < t.cfg.CorrectnessThreshold
 }
 
 func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
