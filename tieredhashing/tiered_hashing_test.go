@@ -172,7 +172,7 @@ func TestNodeNotRemovedWithVar(t *testing.T) {
 func TestNodeEvictionWithWindowing(t *testing.T) {
 	window := 4
 
-	th := NewTieredHashingHarness(WithCorrectnessWindowSize(window), WithFailureDebounce(0), WithCorrectnessPct(80))
+	th := NewTieredHashingHarness(WithCorrectnessWindowSize(window), WithFailureDebounce(0), WithCorrectnessThreshold(80))
 	// main node
 	unknownNode := th.genAndAddAll(t, 1)[0]
 	th.assertSize(t, 0, 1)
