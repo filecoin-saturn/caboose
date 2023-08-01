@@ -40,7 +40,7 @@ const (
 	removalDuration = 3 * time.Hour
 )
 
-var goLogger = golog.Logger("caboose/tieredhashing")
+var goLogger = golog.Logger("caboose-tier")
 
 type Tier string
 
@@ -358,6 +358,7 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 	// sort all nodes by P95 and pick the top N as main tier nodes
 	nodes := t.nodesSortedLatency()
 	if len(nodes) == 0 {
+		goLogger.Infow("UpdateMainTierWithTopN: returning with zero nodes", "nodes", len(nodes))
 		return
 	}
 	goLogger.Infow("UpdateMainTierWithTopN", "nodes", len(nodes))
