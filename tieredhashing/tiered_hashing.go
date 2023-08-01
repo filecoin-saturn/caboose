@@ -362,6 +362,12 @@ func (t *TieredHashing) MoveBestUnknownToMain() int {
 }
 
 func (t *TieredHashing) UpdateAverageCorrectnessPct() {
+	if t.NOverAllCorrectnessDigest < float64(t.cfg.CorrectnessWindowSize) {
+		t.AverageCorrectnessPct = 0
+		return
+	}
+	t.NOverAllCorrectnessDigest = float64(t.cfg.CorrectnessWindowSize)
+
 	averageSuccess := t.OverAllCorrectnessDigest.Reduce(func(w rolling.Window) float64 {
 		var result float64
 		for _, bucket := range w {
