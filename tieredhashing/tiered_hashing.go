@@ -439,7 +439,7 @@ func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) (float64, bo
 	// should satisfy a certain minimum percentage
 	pct := totalSuccess / perf.NCorrectnessDigest * 100
 
-	return pct, (avePct - pct) > t.cfg.CorrectnessThreshold
+	return pct, (avePct - pct) < t.cfg.CorrectnessThreshold
 }
 
 func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
