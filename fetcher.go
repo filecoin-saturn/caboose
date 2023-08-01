@@ -342,6 +342,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	err = cb(resource, &wrapped)
 	received = wrapped.len
 	if err != nil {
+		goLogger.Errorf("error reading response body: %s", err.Error())
 		if recordIfContextErr(resourceType, reqCtx, "read-http-response") {
 			if errors.Is(err, context.Canceled) {
 				return rm, reqCtx.Err()
