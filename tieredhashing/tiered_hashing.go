@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"time"
 
+	golog "github.com/ipfs/go-log/v2"
+
 	"github.com/asecurityteam/rolling"
-
 	"github.com/patrickmn/go-cache"
-
 	"github.com/serialx/hashring"
 )
 
@@ -36,7 +36,11 @@ const (
 
 	// helps shield nodes against bursty failures
 	failureDebounce = 2 * time.Second
-	removalDuration = 3 * time.Hour
+	removalDuration = 6 * time.Hour
+)
+
+var (
+	goLogger = golog.Logger("caboose-pool")
 )
 
 type Tier string
@@ -376,6 +380,7 @@ func (t *TieredHashing) UpdateAverageCorrectnessPct() {
 func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
 	// sort all nodes by P95 and pick the top N as main tier nodes
 	nodes := t.nodesSortedLatency()
+	goLogger.Infow("UpdateMainTierWithTopN: number of nodes with enough latency observations", "n", len(nodes))
 	if len(nodes) == 0 {
 		return
 	}
