@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
+	"github.com/willscott/go-requestcontext"
 
 	ipfsblockstore "github.com/ipfs/boxo/blockstore"
 	ipath "github.com/ipfs/boxo/coreiface/path"
@@ -259,6 +260,16 @@ func (c *Caboose) Close() {
 
 // Fetch allows fetching car archives by a path of the form `/ipfs/<cid>[/path/to/file]`
 func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error {
+	traceID := requestcontext.IDFromContext(ctx)
+	tid, err := trace.TraceIDFromHex(traceID)
+	if err == nil {
+		sc := trace.NewSpanContext(trace.SpanContextConfig{
+			TraceID: tid,
+			Remote:  true,
+		})
+		ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
+	}
+
 	ctx, span := spanTrace(ctx, "Fetch", trace.WithAttributes(attribute.String("path", path)))
 	defer span.End()
 
