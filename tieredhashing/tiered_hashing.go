@@ -40,7 +40,7 @@ const (
 	removalDuration = 3 * time.Hour
 )
 
-var goLogger = golog.Logger("caboose-tier")
+var goLogger = golog.Logger("caboosetier")
 
 type Tier string
 
