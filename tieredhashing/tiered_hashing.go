@@ -27,7 +27,7 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 50
+	latencyWindowSize     = 100
 	correctnessWindowSize = 1000
 
 	// ------------------ CORRECTNESS -------------------
