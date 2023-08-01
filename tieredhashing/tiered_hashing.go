@@ -2,6 +2,7 @@ package tieredhashing
 
 import (
 	"fmt"
+	golog "github.com/ipfs/go-log/v2"
 	"math"
 	"net/http"
 	"time"
@@ -16,7 +17,7 @@ import (
 // TODO Make env vars for tuning
 const (
 	maxPoolSize                 = 50
-	maxMainTierSize             = 25
+	maxMainTierSize             = 10
 	PLatency                    = 90
 	PMaxLatencyWithoutWindowing = 100
 
@@ -38,6 +39,8 @@ const (
 	failureDebounce = 2 * time.Second
 	removalDuration = 3 * time.Hour
 )
+
+var goLogger = golog.Logger("caboose/tieredhashing")
 
 type Tier string
 
@@ -357,6 +360,7 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 	if len(nodes) == 0 {
 		return
 	}
+	goLogger.Infow("UpdateMainTierWithTopN", "nodes", len(nodes))
 
 	// bulk update initially so we don't end up dosing the nodes
 	if !t.initDone {

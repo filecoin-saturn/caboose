@@ -148,6 +148,7 @@ func (p *pool) refreshWithNodes(newEP []tieredhashing.NodeInfo) {
 	poolMembersRemovedAndAddedBackMetric.Set(float64(back))
 
 	// update the tier set
+	goLogger.Infow("calling UpdateMainTierWithTopN")
 	mu, um := p.th.UpdateMainTierWithTopN()
 	poolTierChangeMetric.WithLabelValues(tierMainToUnknown).Set(float64(mu))
 	poolTierChangeMetric.WithLabelValues(tierUnknownToMain).Set(float64(um))
