@@ -170,6 +170,28 @@ func TestNodeNotRemovedWithVar(t *testing.T) {
 	th.assertSize(t, 0, 1)
 }
 
+func TestUpdateAverageCorrectnessPct(t *testing.T) {
+	window := 2
+
+	th := NewTieredHashingHarness(WithCorrectnessWindowSize(window), WithFailureDebounce(0), WithCorrectnessThreshold(30))
+	node := th.genAndAddAll(t, 1)[0]
+
+	th.h.UpdateAverageCorrectnessPct()
+	require.Zero(t, th.h.AverageCorrectnessPct)
+
+	th.h.RecordSuccess(node, ResponseMetrics{Success: true})
+	th.h.UpdateAverageCorrectnessPct()
+	require.Zero(t, th.h.AverageCorrectnessPct)
+
+	th.h.RecordSuccess(node, ResponseMetrics{Success: true})
+	th.h.UpdateAverageCorrectnessPct()
+	require.EqualValues(t, 100, th.h.AverageCorrectnessPct)
+
+	th.h.RecordFailure(node, ResponseMetrics{NetworkError: true})
+	th.h.UpdateAverageCorrectnessPct()
+	require.EqualValues(t, 50, th.h.AverageCorrectnessPct)
+}
+
 func TestNodeEvictionWithWindowing(t *testing.T) {
 	window := 4
 
