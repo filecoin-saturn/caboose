@@ -259,11 +259,12 @@ func (p *pool) checkPool() {
 					return
 				}
 				p.lk.RUnlock()
-				trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				trialTimeout, cancel := context.WithTimeout(context.Background(), DefaultSaturnMirrorRequestTimeout)
 				err := p.fetchResourceAndUpdate(trialTimeout, node, msg.path, 0, p.mirrorValidator)
 
 				cancel()
 				if err != nil {
+					goLogger.Warnw("mirrored request failed", "err", err.Error())
 					mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
 				} else {
 					mirroredTrafficTotalMetric.WithLabelValues("no-error").Inc()

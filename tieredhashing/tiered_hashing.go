@@ -381,6 +381,7 @@ func (t *TieredHashing) UpdateAverageCorrectnessPct() {
 	})
 	avePct := averageSuccess / t.NOverAllCorrectnessDigest * 100
 	t.AverageCorrectnessPct = avePct
+	goLogger.Infow("UpdateAverageCorrectnessPct", "AverageCorrectnessPct", t.AverageCorrectnessPct)
 }
 
 func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
@@ -428,6 +429,18 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 		}
 	}
 
+	// if we don't have enough nodes for the main pool, compromise on number of observations required and fill it up
+	if t.mainSet.Size() < t.cfg.MaxMainTierSize {
+		for {
+			cnt := t.MoveBestUnknownToMain()
+			unknownToMain = unknownToMain + cnt
+
+			if cnt == 0 || t.mainSet.Size() == t.cfg.MaxMainTierSize {
+				break
+			}
+		}
+	}
+
 	return
 }
 
@@ -453,6 +466,9 @@ func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) (float64, bo
 
 	// should satisfy a certain minimum percentage
 	pct := totalSuccess / perf.NCorrectnessDigest * 100
+
+	goLogger.Infow("isCorrectnessPolicyEligible", "pct", pct, "avg", t.AverageCorrectnessPct, "threshold", t.cfg.CorrectnessThreshold,
+		"node", perf.IP)
 
 	// This function returns true when a node is eligible for the correctness policy and should be retained.
 	// If this function returns false, it means that the node is not eligible for the correctness policy and should be removed.
