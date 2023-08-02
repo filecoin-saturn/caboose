@@ -84,13 +84,13 @@ const DefaultSaturnOrchestratorRequestTimeout = 30 * time.Second
 
 const DefaultSaturnBlockRequestTimeout = 19 * time.Second
 const DefaultSaturnCarRequestTimeout = 30 * time.Minute
-const DefaultSaturnMirrorRequestTimeout = DefaultSaturnCarRequestTimeout / 3
+const DefaultSaturnMirrorRequestTimeout = 2 * time.Minute
 
 // default retries before failure unless overridden by MaxRetrievalAttempts
 const defaultMaxRetries = 3
 
 // default percentage of requests to mirror for tracking how nodes perform unless overridden by MirrorFraction
-const defaultMirrorFraction = 0.03
+const defaultMirrorFraction = 0.02
 
 const maxBlockSize = 4194305 // 4 Mib + 1 byte
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes?maxNodes=200"
