@@ -27,7 +27,7 @@ const (
 	reasonCorrectness = "correctness"
 
 	// use rolling windows for latency and correctness calculations
-	latencyWindowSize     = 100
+	latencyWindowSize     = 50
 	correctnessWindowSize = 1000
 
 	// ------------------ CORRECTNESS -------------------
@@ -381,6 +381,7 @@ func (t *TieredHashing) UpdateAverageCorrectnessPct() {
 	})
 	avePct := averageSuccess / t.NOverAllCorrectnessDigest * 100
 	t.AverageCorrectnessPct = avePct
+	goLogger.Infow("UpdateAverageCorrectnessPct", "AverageCorrectnessPct", t.AverageCorrectnessPct)
 }
 
 func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
@@ -428,6 +429,8 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 		}
 	}
 
+	// fill main tier till it's full
+
 	return
 }
 
@@ -454,6 +457,9 @@ func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) (float64, bo
 	// should satisfy a certain minimum percentage
 	pct := totalSuccess / perf.NCorrectnessDigest * 100
 
+	goLogger.Infow("isCorrectnessPolicyEligible: node correctness", "node", perf.NodeInfo.IP,
+		"pct", pct, "average", t.AverageCorrectnessPct, "threshold", t.cfg.CorrectnessThreshold)
+
 	// This function returns true when a node is eligible for the correctness policy and should be retained.
 	// If this function returns false, it means that the node is not eligible for the correctness policy and should be removed.
 	// So we return true here only if the difference between the average pool correctness and the node correctness is less than the acceptable threshold.
@@ -468,11 +474,15 @@ func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
 	t.removedNodesTimeCache.Set(node, struct{}{}, cache.DefaultExpiration)
 
 	if perf.Tier == TierMain {
+		goLogger.Infow("removeFailedNode: main tier node removed", "node", node)
 		// if we've removed a main set node we should replace it
 		mc, uc = t.UpdateMainTierWithTopN()
 		// if we weren't able to fill the main set, pick the best from the unknown set
 		if t.mainSet.Size() < t.cfg.MaxMainTierSize {
-			uc = uc + t.MoveBestUnknownToMain()
+			goLogger.Infow("removeFailedNode: main tier node removed, but main tier is not full, moving best unknown node to main tier", "node", node)
+			cnt := t.MoveBestUnknownToMain()
+			goLogger.Infow("removeFailedNode: main tier node removed, but main tier is not full, moved best unknown node to main tier", "node", node, "cnt", cnt)
+			uc = uc + cnt
 		}
 	}
 	return
