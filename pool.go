@@ -264,6 +264,7 @@ func (p *pool) checkPool() {
 
 				cancel()
 				if err != nil {
+					goLogger.Warnw("mirrored request failed", "err", err.Error())
 					mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
 				} else {
 					mirroredTrafficTotalMetric.WithLabelValues("no-error").Inc()

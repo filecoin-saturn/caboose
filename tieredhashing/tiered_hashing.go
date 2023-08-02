@@ -428,6 +428,18 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 		}
 	}
 
+	// if we don't have enough nodes for the main pool, compromise on number of observations required and fill it up
+	if t.mainSet.Size() < t.cfg.MaxMainTierSize {
+		for {
+			cnt := t.MoveBestUnknownToMain()
+			unknownToMain = unknownToMain + cnt
+
+			if cnt == 0 || t.mainSet.Size() == t.cfg.MaxMainTierSize {
+				break
+			}
+		}
+	}
+
 	return
 }
 
