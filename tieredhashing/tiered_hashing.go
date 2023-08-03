@@ -35,8 +35,9 @@ const (
 	correctnessThreshold = float64(25)
 
 	// helps shield nodes against bursty failures
-	failureDebounce = 2 * time.Second
-	removalDuration = 6 * time.Hour
+	failureDebounce  = 2 * time.Second
+	removalDuration  = 6 * time.Hour
+	avrageCalcPeriod = 30 * time.Second
 )
 
 var (
@@ -91,6 +92,8 @@ type TieredHashing struct {
 	OverAllCorrectnessDigest  *rolling.PointPolicy
 	NOverAllCorrectnessDigest float64
 	AverageCorrectnessPct     float64
+
+	LastAverageCalcAt time.Time
 }
 
 func New(opts ...Option) *TieredHashing {
@@ -117,6 +120,7 @@ func New(opts ...Option) *TieredHashing {
 		StartAt: time.Now(),
 
 		OverAllCorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(cfg.CorrectnessWindowSize))),
+		LastAverageCalcAt:        time.Now(),
 	}
 }
 
@@ -344,6 +348,7 @@ func (t *TieredHashing) MoveBestUnknownToMain() int {
 		pc := perf
 		if pc.Tier == TierUnknown {
 			latency := pc.LatencyDigest.Reduce(rolling.Percentile(PMaxLatencyWithoutWindowing))
+			goLogger.Infow("MoveBestUnknownToMain: latency", "latency", latency, "node", n)
 			if latency != 0 && latency < min {
 				min = latency
 				node = n
@@ -432,7 +437,9 @@ func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain i
 	// if we don't have enough nodes for the main pool, compromise on number of observations required and fill it up
 	if t.mainSet.Size() < t.cfg.MaxMainTierSize {
 		for {
+			goLogger.Infow("UpdateMainTierWithTopN: moving unknown to main", "mainSetSize", t.mainSet.Size(), "maxMainTierSize", t.cfg.MaxMainTierSize)
 			cnt := t.MoveBestUnknownToMain()
+			goLogger.Infow("UpdateMainTierWithTopN: moved unknown to main", "cnt", cnt)
 			unknownToMain = unknownToMain + cnt
 
 			if cnt == 0 || t.mainSet.Size() == t.cfg.MaxMainTierSize {
@@ -470,10 +477,15 @@ func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) (float64, bo
 	goLogger.Infow("isCorrectnessPolicyEligible", "pct", pct, "avg", t.AverageCorrectnessPct, "threshold", t.cfg.CorrectnessThreshold,
 		"node", perf.IP)
 
+	eligible := ((t.AverageCorrectnessPct - pct) < t.cfg.CorrectnessThreshold)
+	if !eligible {
+		goLogger.Infow("isCorrectnessPolicyEligible: not eligible", "pct", pct, "avg", t.AverageCorrectnessPct)
+	}
+
 	// This function returns true when a node is eligible for the correctness policy and should be retained.
 	// If this function returns false, it means that the node is not eligible for the correctness policy and should be removed.
 	// So we return true here only if the difference between the average pool correctness and the node correctness is less than the acceptable threshold.
-	return pct, (t.AverageCorrectnessPct - pct) < t.cfg.CorrectnessThreshold
+	return pct, eligible
 }
 
 func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
@@ -511,5 +523,10 @@ func (t *TieredHashing) recordCorrectness(perf *NodePerf, success bool) {
 
 	if t.NOverAllCorrectnessDigest > float64(t.cfg.CorrectnessWindowSize) {
 		t.NOverAllCorrectnessDigest = float64(t.cfg.CorrectnessWindowSize)
+	}
+
+	if time.Since(t.LastAverageCalcAt) > avrageCalcPeriod {
+		t.UpdateAverageCorrectnessPct()
+		t.LastAverageCalcAt = time.Now()
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
@@ -342,6 +343,11 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	err = cb(resource, &wrapped)
 	received = wrapped.len
 	if err != nil {
+		goLogger.Errorw("failed to read response", "err", err.Error())
+		if strings.Contains(err.Error(), "empty car") {
+			emptyCarErrorTotalMetric.WithLabelValues(resourceType).Inc()
+		}
+
 		if recordIfContextErr(resourceType, reqCtx, "read-http-response") {
 			if errors.Is(err, context.Canceled) {
 				return rm, reqCtx.Err()
