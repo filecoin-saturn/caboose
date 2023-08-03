@@ -242,6 +242,10 @@ var (
 	complianceCidCallsTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "compliance_cids_total"),
 	}, []string{"error_status"})
+
+	emptyCarErrorTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "empty_car_error_total"),
+	}, []string{"resourceType"})
 )
 
 var CabooseMetrics = prometheus.NewRegistry()
@@ -301,4 +305,6 @@ func init() {
 	CabooseMetrics.MustRegister(saturnCallsSuccessTotalMetric)
 
 	CabooseMetrics.MustRegister(mirroredTrafficTotalMetric)
+
+	CabooseMetrics.MustRegister(emptyCarErrorTotalMetric)
 }
