@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -265,6 +266,11 @@ func (p *pool) checkPool() {
 				cancel()
 				if err != nil {
 					goLogger.Warnw("mirrored request failed", "err", err.Error())
+
+					if strings.Contains(err.Error(), "empty car") {
+						mirroredTrafficTotalMetric.WithLabelValues("error-empty-car").Inc()
+					}
+
 					mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
 				} else {
 					mirroredTrafficTotalMetric.WithLabelValues("no-error").Inc()
