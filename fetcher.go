@@ -7,12 +7,14 @@ import (
 	"hash/crc32"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -112,7 +114,12 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	proto := "unknown"
 	respReq := &http.Request{}
 	received := 0
-	reqUrl := fmt.Sprintf("https://%s%s", from, resource)
+	reqUrl := ""
+	if strings.Contains(from, "://") {
+		reqUrl = fmt.Sprintf("%s%s", from, resource)
+	} else {
+		reqUrl = fmt.Sprintf("https://%s%s", from, resource)
+	}
 	var respHeader http.Header
 	saturnNodeId := ""
 	saturnTransferId := ""
@@ -234,7 +241,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 
 	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
+	clientTrace := otelhttptrace.NewClientTrace(reqCtx)
+	subReqCtx := httptrace.WithClientTrace(reqCtx, clientTrace)
+	req, err := http.NewRequestWithContext(subReqCtx, http.MethodGet, reqUrl, nil)
 	if err != nil {
 		if recordIfContextErr(resourceType, reqCtx, "build-http-request") {
 			return rm, reqCtx.Err()
