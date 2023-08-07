@@ -10,6 +10,7 @@ import (
 	"net/http/httptrace"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/filecoin-saturn/caboose/tieredhashing"
@@ -113,7 +114,12 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	proto := "unknown"
 	respReq := &http.Request{}
 	received := 0
-	reqUrl := fmt.Sprintf("https://%s%s", from, resource)
+	reqUrl := ""
+	if strings.Contains(from, "://") {
+		reqUrl = fmt.Sprintf("%s%s", from, resource)
+	} else {
+		reqUrl = fmt.Sprintf("https://%s%s", from, resource)
+	}
 	var respHeader http.Header
 	saturnNodeId := ""
 	saturnTransferId := ""
@@ -244,6 +250,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		}
 		return rm, err
 	}
+
+	t := trace.SpanFromContext(subReqCtx)
+	fmt.Printf("fetch req span: %+v\n", t)
 
 	req.Header.Add("Accept", mime)
 
