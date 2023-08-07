@@ -80,7 +80,8 @@ func TestRecordFailure(t *testing.T) {
 	require.Nil(t, th.h.RecordFailure(unknownNode, ResponseMetrics{NetworkError: true}))
 	require.EqualValues(t, 1, th.h.nodes[unknownNode].networkErrors)
 
-	// node is evicted as we have enough observations
+	// node is evicted as we have enough observations and it's correctness is below threshold acceptance
+	th.h.AverageCorrectnessPct = 80
 	rm := th.h.RecordFailure(unknownNode, ResponseMetrics{NetworkError: true})
 	require.NotNil(t, rm)
 	require.EqualValues(t, TierUnknown, rm.Tier)
@@ -169,10 +170,32 @@ func TestNodeNotRemovedWithVar(t *testing.T) {
 	th.assertSize(t, 0, 1)
 }
 
+func TestUpdateAverageCorrectnessPct(t *testing.T) {
+	window := 2
+
+	th := NewTieredHashingHarness(WithCorrectnessWindowSize(window), WithFailureDebounce(0), WithCorrectnessThreshold(30))
+	node := th.genAndAddAll(t, 1)[0]
+
+	th.h.UpdateAverageCorrectnessPct()
+	require.Zero(t, th.h.AverageCorrectnessPct)
+
+	th.h.RecordSuccess(node, ResponseMetrics{Success: true})
+	th.h.UpdateAverageCorrectnessPct()
+	require.Zero(t, th.h.AverageCorrectnessPct)
+
+	th.h.RecordSuccess(node, ResponseMetrics{Success: true})
+	th.h.UpdateAverageCorrectnessPct()
+	require.EqualValues(t, 100, th.h.AverageCorrectnessPct)
+
+	th.h.RecordFailure(node, ResponseMetrics{NetworkError: true})
+	th.h.UpdateAverageCorrectnessPct()
+	require.EqualValues(t, 50, th.h.AverageCorrectnessPct)
+}
+
 func TestNodeEvictionWithWindowing(t *testing.T) {
 	window := 4
 
-	th := NewTieredHashingHarness(WithCorrectnessWindowSize(window), WithFailureDebounce(0), WithCorrectnessPct(80))
+	th := NewTieredHashingHarness(WithCorrectnessWindowSize(window), WithFailureDebounce(0), WithCorrectnessThreshold(30))
 	// main node
 	unknownNode := th.genAndAddAll(t, 1)[0]
 	th.assertSize(t, 0, 1)
@@ -186,9 +209,12 @@ func TestNodeEvictionWithWindowing(t *testing.T) {
 	th.h.RecordSuccess(unknownNode, ResponseMetrics{})
 	th.h.RecordSuccess(unknownNode, ResponseMetrics{})
 	th.h.RecordSuccess(unknownNode, ResponseMetrics{})
+	rm := th.h.RecordFailure(unknownNode, ResponseMetrics{NetworkError: true})
+	require.Nil(t, rm)
 
 	// evicted as pct < 80 because of windowing
-	rm := th.h.RecordFailure(unknownNode, ResponseMetrics{NetworkError: true})
+	th.h.AverageCorrectnessPct = 100
+	rm = th.h.RecordFailure(unknownNode, ResponseMetrics{NetworkError: true})
 	require.NotNil(t, rm)
 	require.EqualValues(t, TierMain, rm.Tier)
 	require.EqualValues(t, unknownNode, rm.Node)
@@ -392,10 +418,11 @@ func TestIsCorrectnessPolicyEligible(t *testing.T) {
 	window := 10
 
 	tcs := map[string]struct {
-		perf    *NodePerf
-		correct bool
-		pct     float64
-		initF   func(perf *NodePerf)
+		perf                  *NodePerf
+		correct               bool
+		pct                   float64
+		initF                 func(perf *NodePerf)
+		averageCorrectnessPct float64
 	}{
 		"no observations": {
 			perf:    &NodePerf{},
@@ -429,8 +456,29 @@ func TestIsCorrectnessPolicyEligible(t *testing.T) {
 			perf: &NodePerf{
 				CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(window))),
 			},
-			correct: false,
-			pct:     20,
+			correct:               false,
+			pct:                   20,
+			averageCorrectnessPct: 45,
+		},
+		"some success and success as above threshold": {
+			initF: func(perf *NodePerf) {
+				perf.CorrectnessDigest.Append(1)
+				perf.NCorrectnessDigest++
+				perf.CorrectnessDigest.Append(1)
+				perf.NCorrectnessDigest++
+
+				for i := 0; i < int(window)-2; i++ {
+					perf.CorrectnessDigest.Append(0)
+					perf.NCorrectnessDigest++
+				}
+
+			},
+			perf: &NodePerf{
+				CorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(window))),
+			},
+			correct:               true,
+			pct:                   20,
+			averageCorrectnessPct: 40,
 		},
 		"some success but not enough observations": {
 			initF: func(perf *NodePerf) {
@@ -475,6 +523,7 @@ func TestIsCorrectnessPolicyEligible(t *testing.T) {
 			if tc.initF != nil {
 				tc.initF(tc.perf)
 			}
+			th.h.AverageCorrectnessPct = tc.averageCorrectnessPct
 
 			perf := tc.perf
 			pct, ok := th.h.isCorrectnessPolicyEligible(perf)

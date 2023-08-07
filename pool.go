@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,12 +29,13 @@ import (
 )
 
 const (
-	tierMainToUnknown  = "main-to-unknown"
-	tierUnknownToMain  = "unknown-to-main"
-	BackendOverrideKey = "CABOOSE_BACKEND_OVERRIDE"
+	tierMainToUnknown          = "main-to-unknown"
+	tierUnknownToMain          = "unknown-to-main"
+	BackendOverrideKey         = "CABOOSE_BACKEND_OVERRIDE"
+	defaultMirroredConcurrency = 10
 )
 
-var complianceCidReqTemplate = "/ipfs/%s?format=raw"
+var complianceCidReqTemplate = "/ipfs/%s?format=car&dag-scope=entity"
 
 // loadPool refreshes the set of Saturn endpoints in the pool by fetching an updated list of responsive Saturn nodes from the
 // Saturn Orchestrator.
@@ -65,7 +67,8 @@ func (p *pool) loadPool() ([]tieredhashing.NodeInfo, error) {
 		return nil, err
 	}
 
-	goLogger.Infow("got backends from orchestrators", "cnt", len(responses), "endpoint", p.config.OrchestratorEndpoint.String())
+	goLogger.Debugw("got backends from orchestrator", "backends", responses, "endpoint", p.config.OrchestratorEndpoint.String())
+	goLogger.Infow("got backends from orchestrator", "cnt", len(responses), "endpoint", p.config.OrchestratorEndpoint.String())
 	return responses, nil
 }
 
@@ -145,6 +148,8 @@ func (p *pool) refreshWithNodes(newEP []tieredhashing.NodeInfo) {
 	poolMembersNotAddedBecauseRemovedMetric.Set(float64(alreadyRemoved))
 	poolMembersRemovedAndAddedBackMetric.Set(float64(back))
 
+	p.th.UpdateAverageCorrectnessPct()
+
 	// update the tier set
 	mu, um := p.th.UpdateMainTierWithTopN()
 	poolTierChangeMetric.WithLabelValues(tierMainToUnknown).Set(float64(mu))
@@ -219,46 +224,59 @@ func (p *pool) fetchComplianceCid(node string) error {
 }
 
 func (p *pool) checkPool() {
+	sem := make(chan struct{}, defaultMirroredConcurrency)
+
 	for {
 		select {
 		case msg := <-p.mirrorSamples:
-			// see if it is to a main-tier node - if so find appropriate test node to test against.
-			p.lk.RLock()
-			if p.th.NodeTier(msg.node) != tieredhashing.TierMain {
+			sem <- struct{}{}
+			go func(msg mirroredPoolRequest) {
+				defer func() { <-sem }()
+
+				p.lk.RLock()
+				testNodes := p.th.GetNodes(tieredhashing.TierUnknown, msg.key, 1)
 				p.lk.RUnlock()
-				continue
-			}
-			testNodes := p.th.GetNodes(tieredhashing.TierUnknown, msg.key, 1)
-			p.lk.RUnlock()
-			if len(testNodes) == 0 {
-				continue
-			}
-			trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				if len(testNodes) == 0 {
+					return
+				}
+				node := testNodes[0]
 
-			node := testNodes[0]
-			err := p.fetchResourceAndUpdate(trialTimeout, node, msg.path, 0, p.mirrorValidator)
+				// Send compliance cid
+				rand := big.NewInt(1)
+				if p.config.ComplianceCidPeriod > 0 {
+					rand, _ = cryptoRand.Int(cryptoRand.Reader, big.NewInt(p.config.ComplianceCidPeriod))
+				}
 
-			rand := big.NewInt(1)
-			if p.config.ComplianceCidPeriod > 0 {
-				rand, _ = cryptoRand.Int(cryptoRand.Reader, big.NewInt(p.config.ComplianceCidPeriod))
-			}
-
-			if rand.Cmp(big.NewInt(0)) == 0 {
-				err := p.fetchComplianceCid(node)
-				if err != nil {
-					goLogger.Warnw("failed to fetch compliance cid ", "err", err)
-					complianceCidCallsTotalMetric.WithLabelValues("error").Add(1)
-				} else {
+				if rand.Cmp(big.NewInt(0)) == 0 {
+					_ = p.fetchComplianceCid(node)
 					complianceCidCallsTotalMetric.WithLabelValues("success").Add(1)
 				}
-			}
 
-			cancel()
-			if err != nil {
-				mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
-			} else {
-				mirroredTrafficTotalMetric.WithLabelValues("no-error").Inc()
-			}
+				// see if it is to a main-tier node - if so find appropriate test node to test against.
+				// --- Mirroring
+				p.lk.RLock()
+				if p.th.NodeTier(msg.node) != tieredhashing.TierMain {
+					p.lk.RUnlock()
+					return
+				}
+				p.lk.RUnlock()
+				trialTimeout, cancel := context.WithTimeout(context.Background(), DefaultSaturnMirrorRequestTimeout)
+				err := p.fetchResourceAndUpdate(trialTimeout, node, msg.path, 0, p.mirrorValidator)
+
+				cancel()
+				if err != nil {
+					goLogger.Warnw("mirrored request failed", "err", err.Error())
+
+					if strings.Contains(err.Error(), "empty car") {
+						mirroredTrafficTotalMetric.WithLabelValues("error-empty-car").Inc()
+					}
+
+					mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
+				} else {
+					mirroredTrafficTotalMetric.WithLabelValues("no-error").Inc()
+				}
+			}(msg)
+
 		case <-p.done:
 			return
 		}
@@ -288,7 +306,7 @@ func (p *pool) mirrorValidator(resource string, reader io.Reader) error {
 		return err
 	}
 
-	br, err := car.NewCarReader(reader)
+	br, err := car.NewCarReaderWithOptions(reader, car.WithErrorOnEmptyRoots(false))
 	if err != nil {
 		return err
 	}
