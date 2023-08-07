@@ -251,9 +251,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		return rm, err
 	}
 
-	t := trace.SpanFromContext(subReqCtx)
-	fmt.Printf("fetch req span: %+v\n", t)
-
 	req.Header.Add("Accept", mime)
 
 	if p.config.ExtraHeaders != nil {

@@ -275,7 +275,6 @@ func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error
 			SpanID:  span.SpanContext().SpanID(),
 			Remote:  true,
 		})
-		fmt.Printf("sc: %+v\n", sc)
 		ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 	}
 
