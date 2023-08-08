@@ -355,11 +355,12 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	received = wrapped.len
 	if err != nil {
 
-		var target *ErrInvalidResponse
+		var target = ErrInvalidResponse{}
 		if errors.As(err, &target) {
 			verificationError = err.Error()
 			goLogger.Errorw("failed to read response; verification error", "err", err.Error())
 		} else {
+			networkError = err.Error()
 			goLogger.Errorw("failed to read response; no verification error", "err", err.Error())
 		}
 
@@ -379,7 +380,6 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-%s", getCacheStatus(isCacheHit)), fmt.Sprintf("%d", code)).Add(1)
 		}
 
-		networkError = err.Error()
 		rm.NetworkError = true
 		return rm, err
 	}
