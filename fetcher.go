@@ -355,8 +355,8 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	received = wrapped.len
 	if err != nil {
 
-		_, ok := err.(ErrInvalidResponse)
-		if ok {
+		var target *ErrInvalidResponse
+		if errors.As(err, &target) {
 			verificationError = err.Error()
 			goLogger.Errorw("failed to read response; verification error", "err", err.Error())
 		} else {
