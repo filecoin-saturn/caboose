@@ -125,6 +125,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	saturnTransferId := ""
 	isCacheHit := false
 	networkError := ""
+	verificationError := ""
 
 	isBlockRequest := false
 	if mime == "application/vnd.ipld.raw" {
@@ -219,12 +220,13 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 					HTTPProtocol:       proto,
 					TTFBMS:             int(ttfbMs),
 					// my address
-					Range:          "",
-					Referrer:       respReq.Referer(),
-					UserAgent:      respReq.UserAgent(),
-					NodeId:         saturnNodeId,
-					NodeIpAddress:  from,
-					IfNetworkError: networkError,
+					Range:             "",
+					Referrer:          respReq.Referer(),
+					UserAgent:         respReq.UserAgent(),
+					NodeId:            saturnNodeId,
+					NodeIpAddress:     from,
+					IfNetworkError:    networkError,
+					VerificationError: verificationError,
 				}
 			}
 		}
@@ -352,7 +354,15 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	err = cb(resource, &wrapped)
 	received = wrapped.len
 	if err != nil {
-		goLogger.Errorw("failed to read response", "err", err.Error())
+
+		var target *ErrInvalidResponse
+		if errors.As(err, &target) {
+			verificationError = err.Error()
+			goLogger.Errorw("failed to read response; verification error", "err", err.Error())
+		} else {
+			goLogger.Errorw("failed to read response; no verification error", "err", err.Error())
+		}
+
 		if strings.Contains(err.Error(), "empty car") {
 			emptyCarErrorTotalMetric.WithLabelValues(resourceType).Inc()
 		}
