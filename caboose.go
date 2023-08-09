@@ -16,6 +16,8 @@ import (
 	"github.com/ipfs/go-cid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/filecoin-saturn/caboose/internal/state"
 )
 
 const (
@@ -69,6 +71,9 @@ type Config struct {
 
 	// CoolOff is the cool off duration for a node once we determine that we shouldn't be sending requests to it for a while.
 	CoolOff time.Duration
+
+	// Harness is an internal test harness that is set during testing.
+	Harness *state.State
 }
 
 const DefaultLoggingInterval = 5 * time.Second
@@ -153,6 +158,12 @@ func NewCaboose(config *Config) (*Caboose, error) {
 
 	if c.config.MaxRetrievalAttempts == 0 {
 		c.config.MaxRetrievalAttempts = defaultMaxRetries
+	}
+
+	// Set during testing to leak internal state to the harness.
+	if c.config.Harness != nil {
+		c.config.Harness.ActiveNodes = c.pool.ActiveNodes
+		c.config.Harness.AllNodes = c.pool.AllNodes
 	}
 
 	// start the pool

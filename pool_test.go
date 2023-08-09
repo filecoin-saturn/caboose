@@ -1,4 +1,4 @@
-package caboose
+package caboose_test
 
 import (
 	"bytes"
@@ -11,6 +11,8 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/filecoin-saturn/caboose"
+	"github.com/filecoin-saturn/caboose/internal/util"
 	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
 	"github.com/ipld/go-ipld-prime"
@@ -48,23 +50,17 @@ func TestPoolMirroring(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := ep{}
+	e := util.Endpoint{}
 	e.Setup()
-	e.lk.Lock()
-	e.carWrap = false
-	e.resp = carBytes.Bytes()
-	eURL := strings.TrimPrefix(e.server.URL, "https://")
-	e.lk.Unlock()
+	e.SetResp(carBytes.Bytes(), false)
+	eURL := strings.TrimPrefix(e.Server.URL, "https://")
 
-	e2 := ep{}
+	e2 := util.Endpoint{}
 	e2.Setup()
-	e2.lk.Lock()
-	e2.carWrap = false
-	e2.resp = carBytes.Bytes()
-	e2URL := strings.TrimPrefix(e2.server.URL, "https://")
-	e2.lk.Unlock()
+	e2.SetResp(carBytes.Bytes(), false)
+	e2URL := strings.TrimPrefix(e2.Server.URL, "https://")
 
-	conf := Config{
+	conf := caboose.Config{
 		OrchestratorEndpoint: &url.URL{},
 		OrchestratorClient:   http.DefaultClient,
 		OrchestratorOverride: []string{eURL, e2URL},
@@ -79,16 +75,16 @@ func TestPoolMirroring(t *testing.T) {
 		MirrorFraction:       1.0,
 	}
 
-	p := newPool(&conf, nil)
-	p.doRefresh()
-	p.config.OrchestratorOverride = nil
-	p.Start()
+	c, err := caboose.NewCaboose(&conf)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// we don't know if any individual request is going to deterministically trigger a mirror request.
 	// Make 10 requests, and expect some fraction trigger a mirror.
 
 	for i := 0; i < 10; i++ {
-		_, err = p.fetchBlockWith(context.Background(), finalC, "")
+		_, err = c.Get(context.Background(), finalC)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,13 +92,11 @@ func TestPoolMirroring(t *testing.T) {
 	}
 
 	time.Sleep(100 * time.Millisecond)
-	p.Close()
+	c.Close()
 
-	e.lk.Lock()
-	defer e.lk.Unlock()
-	e2.lk.Lock()
-	defer e2.lk.Unlock()
-	if e.cnt+e2.cnt < 10 {
-		t.Fatalf("expected at least 10 fetches, got %d", e.cnt+e2.cnt)
+	ec := e.Count()
+	e2c := e2.Count()
+	if ec+e2c < 10 {
+		t.Fatalf("expected at least 10 fetches, got %d", ec+e2c)
 	}
 }
