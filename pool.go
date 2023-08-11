@@ -32,7 +32,7 @@ const (
 	tierMainToUnknown          = "main-to-unknown"
 	tierUnknownToMain          = "unknown-to-main"
 	BackendOverrideKey         = "CABOOSE_BACKEND_OVERRIDE"
-	defaultMirroredConcurrency = 10
+	defaultMirroredConcurrency = 5
 )
 
 var complianceCidReqTemplate = "/ipfs/%s?format=car&dag-scope=entity"
