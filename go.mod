@@ -1,6 +1,6 @@
 module github.com/filecoin-saturn/caboose
 
-go 1.19
+go 1.20
 
 require (
 	github.com/asecurityteam/rolling v0.0.0-20230418204413-b4052899307d
