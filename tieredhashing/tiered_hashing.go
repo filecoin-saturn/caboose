@@ -35,9 +35,8 @@ const (
 	minAcceptableCorrectnessPct = float64(70)
 
 	// helps shield nodes against bursty failures
-	failureDebounce  = 2 * time.Second
-	removalDuration  = 6 * time.Hour
-	avrageCalcPeriod = 30 * time.Second
+	failureDebounce = 2 * time.Second
+	removalDuration = 6 * time.Hour
 )
 
 var (
@@ -88,8 +87,6 @@ type TieredHashing struct {
 
 	StartAt  time.Time
 	initDone bool
-
-	LastAverageCalcAt time.Time
 }
 
 func New(opts ...Option) *TieredHashing {
@@ -114,8 +111,6 @@ func New(opts ...Option) *TieredHashing {
 		cfg:                   *cfg,
 
 		StartAt: time.Now(),
-
-		LastAverageCalcAt: time.Now(),
 	}
 }
 
@@ -476,8 +471,5 @@ func (t *TieredHashing) recordCorrectness(perf *NodePerf, success bool) {
 
 	if perf.NCorrectnessDigest > float64(t.cfg.CorrectnessWindowSize) {
 		perf.NCorrectnessDigest = float64(t.cfg.CorrectnessWindowSize)
-	}
-	if time.Since(t.LastAverageCalcAt) > avrageCalcPeriod {
-		t.LastAverageCalcAt = time.Now()
 	}
 }
