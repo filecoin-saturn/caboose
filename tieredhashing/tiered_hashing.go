@@ -31,8 +31,8 @@ const (
 	correctnessWindowSize = 1000
 
 	// ------------------ CORRECTNESS -------------------
-	// we will evict a node if it's correctness difference relative to other nodes is greater than this threshold
-	correctnessThreshold = float64(25)
+	// minimum correctness pct expected from a node over a rolling window over a certain number of observations
+	minAcceptableCorrectnessPct = float64(70)
 
 	// helps shield nodes against bursty failures
 	failureDebounce  = 2 * time.Second
@@ -89,10 +89,6 @@ type TieredHashing struct {
 	StartAt  time.Time
 	initDone bool
 
-	OverAllCorrectnessDigest  *rolling.PointPolicy
-	NOverAllCorrectnessDigest float64
-	AverageCorrectnessPct     float64
-
 	LastAverageCalcAt time.Time
 }
 
@@ -102,7 +98,7 @@ func New(opts ...Option) *TieredHashing {
 		FailureDebounce:       failureDebounce,
 		LatencyWindowSize:     latencyWindowSize,
 		CorrectnessWindowSize: correctnessWindowSize,
-		CorrectnessThreshold:  correctnessThreshold,
+		CorrectnessPct:        minAcceptableCorrectnessPct,
 		MaxMainTierSize:       maxMainTierSize,
 		NoRemove:              false,
 	}
@@ -119,8 +115,7 @@ func New(opts ...Option) *TieredHashing {
 
 		StartAt: time.Now(),
 
-		OverAllCorrectnessDigest: rolling.NewPointPolicy(rolling.NewWindow(int(cfg.CorrectnessWindowSize))),
-		LastAverageCalcAt:        time.Now(),
+		LastAverageCalcAt: time.Now(),
 	}
 }
 
@@ -366,29 +361,6 @@ func (t *TieredHashing) MoveBestUnknownToMain() int {
 	return 1
 }
 
-func (t *TieredHashing) UpdateAverageCorrectnessPct() {
-	if t.NOverAllCorrectnessDigest < float64(t.cfg.CorrectnessWindowSize) {
-		t.AverageCorrectnessPct = 0
-		return
-	}
-	t.NOverAllCorrectnessDigest = float64(t.cfg.CorrectnessWindowSize)
-
-	averageSuccess := t.OverAllCorrectnessDigest.Reduce(func(w rolling.Window) float64 {
-		var result float64
-		for _, bucket := range w {
-			for _, p := range bucket {
-				if p == 1 {
-					result++
-				}
-			}
-		}
-		return result
-	})
-	avePct := averageSuccess / t.NOverAllCorrectnessDigest * 100
-	t.AverageCorrectnessPct = avePct
-	goLogger.Infow("UpdateAverageCorrectnessPct", "AverageCorrectnessPct", t.AverageCorrectnessPct)
-}
-
 func (t *TieredHashing) UpdateMainTierWithTopN() (mainToUnknown, unknownToMain int) {
 	// sort all nodes by P95 and pick the top N as main tier nodes
 	nodes := t.nodesSortedLatency()
@@ -473,19 +445,7 @@ func (t *TieredHashing) isCorrectnessPolicyEligible(perf *NodePerf) (float64, bo
 
 	// should satisfy a certain minimum percentage
 	pct := totalSuccess / perf.NCorrectnessDigest * 100
-
-	goLogger.Infow("isCorrectnessPolicyEligible", "pct", pct, "avg", t.AverageCorrectnessPct, "threshold", t.cfg.CorrectnessThreshold,
-		"node", perf.IP)
-
-	eligible := ((t.AverageCorrectnessPct - pct) < t.cfg.CorrectnessThreshold)
-	if !eligible {
-		goLogger.Infow("isCorrectnessPolicyEligible: not eligible", "pct", pct, "avg", t.AverageCorrectnessPct)
-	}
-
-	// This function returns true when a node is eligible for the correctness policy and should be retained.
-	// If this function returns false, it means that the node is not eligible for the correctness policy and should be removed.
-	// So we return true here only if the difference between the average pool correctness and the node correctness is less than the acceptable threshold.
-	return pct, eligible
+	return pct, pct >= t.cfg.CorrectnessPct
 }
 
 func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
@@ -508,25 +468,16 @@ func (t *TieredHashing) removeFailedNode(node string) (mc, uc int) {
 
 func (t *TieredHashing) recordCorrectness(perf *NodePerf, success bool) {
 	if success {
-		t.OverAllCorrectnessDigest.Append(1)
 		perf.CorrectnessDigest.Append(1)
 	} else {
-		t.OverAllCorrectnessDigest.Append(0)
 		perf.CorrectnessDigest.Append(0)
 	}
 	perf.NCorrectnessDigest++
-	t.NOverAllCorrectnessDigest++
 
 	if perf.NCorrectnessDigest > float64(t.cfg.CorrectnessWindowSize) {
 		perf.NCorrectnessDigest = float64(t.cfg.CorrectnessWindowSize)
 	}
-
-	if t.NOverAllCorrectnessDigest > float64(t.cfg.CorrectnessWindowSize) {
-		t.NOverAllCorrectnessDigest = float64(t.cfg.CorrectnessWindowSize)
-	}
-
 	if time.Since(t.LastAverageCalcAt) > avrageCalcPeriod {
-		t.UpdateAverageCorrectnessPct()
 		t.LastAverageCalcAt = time.Now()
 	}
 }

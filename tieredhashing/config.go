@@ -10,7 +10,7 @@ type TieredHashingConfig struct {
 	CorrectnessWindowSize int
 	MaxMainTierSize       int
 	NoRemove              bool
-	CorrectnessThreshold  float64
+	CorrectnessPct        float64
 }
 
 type Option func(config *TieredHashingConfig)
@@ -33,9 +33,9 @@ func WithMaxMainTierSize(n int) Option {
 	}
 }
 
-func WithCorrectnessThreshold(pct float64) Option {
+func WithCorrectnessPct(pct float64) Option {
 	return func(c *TieredHashingConfig) {
-		c.CorrectnessThreshold = pct
+		c.CorrectnessPct = pct
 	}
 }
 

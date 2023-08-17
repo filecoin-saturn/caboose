@@ -9,7 +9,7 @@ import (
 )
 
 func TestPoolRefresh(t *testing.T) {
-	opts := []tieredhashing.Option{tieredhashing.WithCorrectnessWindowSize(1), tieredhashing.WithMaxPoolSize(5), tieredhashing.WithCorrectnessThreshold(10)}
+	opts := []tieredhashing.Option{tieredhashing.WithCorrectnessWindowSize(1), tieredhashing.WithMaxPoolSize(5)}
 
 	p := newPool(&Config{TieredHashingOpts: opts})
 
@@ -25,10 +25,6 @@ func TestPoolRefresh(t *testing.T) {
 
 	// add a new node with already added nodes
 	andAndAssertPool(t, p, []string{"node1", "node2", "node3", "node4", "node5"}, 0, 5, 5, 1)
-
-	p.th.RecordSuccess("node1", tieredhashing.ResponseMetrics{TTFBMs: 10})
-	p.th.RecordSuccess("node1", tieredhashing.ResponseMetrics{TTFBMs: 10})
-	p.th.UpdateAverageCorrectnessPct()
 
 	// record failure so that node is removed and then assert
 	rm := p.th.RecordFailure("node4", tieredhashing.ResponseMetrics{ConnFailure: true})

@@ -148,8 +148,6 @@ func (p *pool) refreshWithNodes(newEP []tieredhashing.NodeInfo) {
 	poolMembersNotAddedBecauseRemovedMetric.Set(float64(alreadyRemoved))
 	poolMembersRemovedAndAddedBackMetric.Set(float64(back))
 
-	p.th.UpdateAverageCorrectnessPct()
-
 	// update the tier set
 	mu, um := p.th.UpdateMainTierWithTopN()
 	poolTierChangeMetric.WithLabelValues(tierMainToUnknown).Set(float64(mu))
