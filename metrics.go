@@ -171,12 +171,12 @@ var (
 
 	successCarFetchRetriesErrorTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "success_car_fetch_error_retries_total"),
-		Help: "Number of times a car fetch was retried before it worked",
+		Help: "Number of times a car fetch was retried before it worked group by error",
 	}, []string{"error", "attempt"})
 
 	failedCarFetchRetriesTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "failed_car_fetch_retries_total"),
-		Help: "Number of times a car fetch was retried before it worked",
+		Help: "Number of times a car fetch was retried before it failed grouped by error",
 	}, []string{"error", "attempt"})
 )
 
@@ -325,4 +325,6 @@ func init() {
 
 	CabooseMetrics.MustRegister(successCarFetchRetriesTotalMetric)
 	CabooseMetrics.MustRegister(successCarFetchRetriesErrorTotalMetric)
+
+	CabooseMetrics.MustRegister(failedCarFetchRetriesTotalMetric)
 }
