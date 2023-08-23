@@ -163,6 +163,16 @@ var (
 		Help:    "Size in bytes of caboose CAR fetches",
 		Buckets: carSizeHistogram,
 	}, []string{"error_status"})
+
+	successCarFetchRetriesTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "success_car_fetch_retries_total"),
+		Help: "Number of times a car fetch was retried before it worked",
+	}, []string{"attempt"})
+
+	successCarFetchRetriesErrorTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "success_car_fetch_retries_502_total"),
+		Help: "Number of times a car fetch was retried before it worked",
+	}, []string{"error", "attempt"})
 )
 
 // Saturn Server-timings
@@ -307,4 +317,7 @@ func init() {
 	CabooseMetrics.MustRegister(mirroredTrafficTotalMetric)
 
 	CabooseMetrics.MustRegister(emptyCarErrorTotalMetric)
+
+	CabooseMetrics.MustRegister(successCarFetchRetriesTotalMetric)
+	CabooseMetrics.MustRegister(successCarFetchRetriesErrorTotalMetric)
 }

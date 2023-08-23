@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -443,6 +444,9 @@ func (p *pool) updateFetchKeyCoolDown(key string) {
 }
 
 func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallback, with string) (err error) {
+	seen502 := false
+	seen504 := false
+	seenPartial := false
 	fetchCalledTotalMetric.WithLabelValues(resourceTypeCar).Add(1)
 	if recordIfContextErr(resourceTypeCar, ctx, "fetchResourceWith") {
 		return ctx.Err()
@@ -486,7 +490,9 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 	carFetchStart := time.Now()
 
 	pq := []string{path}
+	attempt := 0
 	for i := 0; i < len(nodes); i++ {
+		attempt++
 		if recordIfContextErr(resourceTypeCar, ctx, "fetchResourceWithLoop") {
 			return ctx.Err()
 		}
@@ -512,6 +518,20 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 				// TODO: how to account for total retrieved data
 				//fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
 				fetchDurationCarSuccessMetric.Observe(float64(durationMs))
+				successCarFetchRetriesTotalMetric.WithLabelValues(strconv.Itoa(attempt)).Add(1)
+
+				if seen502 {
+					successCarFetchRetriesErrorTotalMetric.WithLabelValues("502", strconv.Itoa(attempt)).Add(1)
+				}
+
+				if seen504 {
+					successCarFetchRetriesErrorTotalMetric.WithLabelValues("504", strconv.Itoa(attempt)).Add(1)
+				}
+
+				if seenPartial {
+					successCarFetchRetriesErrorTotalMetric.WithLabelValues("partial", strconv.Itoa(attempt)).Add(1)
+				}
+
 				return
 			} else if pq[0] == old {
 				continue
@@ -523,6 +543,8 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 				i = -1
 			}
 		} else if errors.As(err, &epr) {
+			seenPartial = true
+
 			if len(epr.StillNeed) == 0 {
 				// the error was ErrPartial, but no additional needs were specified treat as
 				// any other transient error.
@@ -540,6 +562,12 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 				// for now: reset i on partials so we also give them a chance to retry.
 				i = -1
 			}
+		}
+
+		if errors.Is(err, ErrContentProviderNotFound) {
+			seen502 = true
+		} else if errors.Is(err, ErrSaturnTimeout) {
+			seen504 = true
 		}
 	}
 
