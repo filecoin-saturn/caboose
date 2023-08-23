@@ -170,7 +170,12 @@ var (
 	}, []string{"attempt"})
 
 	successCarFetchRetriesErrorTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: prometheus.BuildFQName("ipfs", "caboose", "success_car_fetch_retries_502_total"),
+		Name: prometheus.BuildFQName("ipfs", "caboose", "success_car_fetch_error_retries_total"),
+		Help: "Number of times a car fetch was retried before it worked",
+	}, []string{"error", "attempt"})
+
+	failedCarFetchRetriesTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prometheus.BuildFQName("ipfs", "caboose", "failed_car_fetch_retries_total"),
 		Help: "Number of times a car fetch was retried before it worked",
 	}, []string{"error", "attempt"})
 )

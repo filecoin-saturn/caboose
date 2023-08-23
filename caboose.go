@@ -89,7 +89,7 @@ const DefaultSaturnCarRequestTimeout = 30 * time.Minute
 const DefaultSaturnMirrorRequestTimeout = 30 * time.Second
 
 // default retries before failure unless overridden by MaxRetrievalAttempts
-const defaultMaxRetries = 3
+const defaultMaxRetries = 2
 
 // default percentage of requests to mirror for tracking how nodes perform unless overridden by MirrorFraction
 const defaultMirrorFraction = 0.02

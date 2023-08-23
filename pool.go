@@ -533,14 +533,6 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 				}
 
 				return
-			} else if pq[0] == old {
-				continue
-			} else {
-				// TODO: potentially worth doing something smarter here based on what the current state
-				// of permanent vs temporary errors is.
-
-				// for now: reset i on partials so we also give them a chance to retry.
-				i = -1
 			}
 		} else if errors.As(err, &epr) {
 			seenPartial = true
@@ -552,16 +544,6 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 			}
 			pq = pq[1:]
 			pq = append(pq, epr.StillNeed...)
-
-			if pq[0] == old {
-				continue
-			} else {
-				// TODO: potentially worth doing something smarter here based on what the current state
-				// of permanent vs temporary errors is.
-
-				// for now: reset i on partials so we also give them a chance to retry.
-				i = -1
-			}
 		}
 
 		if errors.Is(err, ErrContentProviderNotFound) {
@@ -573,6 +555,18 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 
 	fetchDurationCarFailureMetric.Observe(float64(time.Since(carFetchStart).Milliseconds()))
 	p.updateFetchKeyCoolDown(path)
+
+	if seen502 {
+		failedCarFetchRetriesTotalMetric.WithLabelValues("502", strconv.Itoa(attempt)).Add(1)
+	}
+
+	if seen504 {
+		failedCarFetchRetriesTotalMetric.WithLabelValues("504", strconv.Itoa(attempt)).Add(1)
+	}
+
+	if seenPartial {
+		failedCarFetchRetriesTotalMetric.WithLabelValues("partial", strconv.Itoa(attempt)).Add(1)
+	}
 
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
 	return
