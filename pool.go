@@ -557,15 +557,15 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 	p.updateFetchKeyCoolDown(path)
 
 	if seen502 {
-		failedCarFetchRetriesTotalMetric.WithLabelValues("502").Add(1)
+		failedCarFetchRetriesTotalMetric.WithLabelValues("502", fmt.Sprintf("%d", attempt)).Add(1)
 	}
 
 	if seen504 {
-		failedCarFetchRetriesTotalMetric.WithLabelValues("504").Add(1)
+		failedCarFetchRetriesTotalMetric.WithLabelValues("504", fmt.Sprintf("%d", attempt)).Add(1)
 	}
 
 	if seenPartial {
-		failedCarFetchRetriesTotalMetric.WithLabelValues("partial").Add(1)
+		failedCarFetchRetriesTotalMetric.WithLabelValues("partial", fmt.Sprintf("%d", attempt)).Add(1)
 	}
 
 	// Saturn fetch failed after exhausting all retrieval attempts, we can return the error.
