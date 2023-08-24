@@ -86,7 +86,7 @@ const DefaultSaturnOrchestratorRequestTimeout = 30 * time.Second
 
 const DefaultSaturnBlockRequestTimeout = 19 * time.Second
 
-const DefaultSaturnCarRequestTimeout = 1 * time.Minute
+const DefaultSaturnCarRequestTimeout = 30 * time.Minute
 const DefaultSaturnMirrorRequestTimeout = 30 * time.Second
 
 // default retries before failure unless overridden by MaxRetrievalAttempts
