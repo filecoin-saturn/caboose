@@ -236,9 +236,9 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	// which is the amount of time without any NEW data from the server, but
 	// that can be added later. We need both because a slow trickle of data
 	// could take a large amount of time.
-	requestTimeout := DefaultSaturnCarRequestTimeout
+	requestTimeout := time.Duration(DefaultSaturnCarRequestTimeout.Milliseconds()/int64(attempt+1)) * time.Millisecond
 	if isBlockRequest {
-		requestTimeout = DefaultSaturnBlockRequestTimeout
+		requestTimeout = time.Duration(DefaultSaturnBlockRequestTimeout.Milliseconds()/int64(attempt+1)) * time.Millisecond
 	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
