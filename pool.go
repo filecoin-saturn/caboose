@@ -92,7 +92,7 @@ func (p *pool) Start() {
 	go p.checkPool()
 }
 
-func (p *pool) doRefresh() {
+func (p *pool) DoRefresh() {
 	newEP, err := p.loadPool()
 	if err == nil {
 		for _, n := range newEP {
@@ -107,21 +107,21 @@ func (p *pool) doRefresh() {
 	}
 }
 
-// refreshPool is a background thread triggering `doRefresh` every `config.PoolRefresh` interval.
+// refreshPool is a background thread triggering `DoRefresh` every `config.PoolRefresh` interval.
 func (p *pool) refreshPool() {
 	t := time.NewTimer(0)
 	started := sync.Once{}
 	for {
 		select {
 		case <-t.C:
-			p.doRefresh()
+			p.DoRefresh()
 			started.Do(func() {
 				close(p.started)
 			})
 
 			t.Reset(p.config.PoolRefresh)
 		case <-p.refresh:
-			p.doRefresh()
+			p.DoRefresh()
 			started.Do(func() {
 				close(p.started)
 			})

@@ -164,6 +164,7 @@ func NewCaboose(config *Config) (*Caboose, error) {
 	if c.config.Harness != nil {
 		c.config.Harness.ActiveNodes = c.pool.ActiveNodes
 		c.config.Harness.AllNodes = c.pool.AllNodes
+		c.config.Harness.PoolController = c.pool
 	}
 
 	// start the pool
