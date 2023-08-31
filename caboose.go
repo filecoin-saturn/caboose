@@ -104,7 +104,7 @@ const defaultNodeCoolOff = 5 * time.Minute
 
 type Caboose struct {
 	config *Config
-	pool   *pool
+	Pool   *pool
 	logger *logger
 }
 
@@ -135,7 +135,7 @@ func NewCaboose(config *Config) (*Caboose, error) {
 	logger := newLogger(config)
 	c := Caboose{
 		config: config,
-		pool:   newPool(config, logger),
+		Pool:   newPool(config, logger),
 		logger: logger,
 	}
 
@@ -162,12 +162,12 @@ func NewCaboose(config *Config) (*Caboose, error) {
 
 	// Set during testing to leak internal state to the harness.
 	if c.config.Harness != nil {
-		c.config.Harness.ActiveNodes = c.pool.ActiveNodes
-		c.config.Harness.AllNodes = c.pool.AllNodes
+		c.config.Harness.ActiveNodes = c.Pool.ActiveNodes
+		c.config.Harness.AllNodes = c.Pool.AllNodes
 	}
 
 	// start the pool
-	c.pool.Start()
+	c.Pool.Start()
 
 	return &c, nil
 }
@@ -176,7 +176,7 @@ func NewCaboose(config *Config) (*Caboose, error) {
 var _ ipfsblockstore.Blockstore = (*Caboose)(nil)
 
 func (c *Caboose) Close() {
-	c.pool.Close()
+	c.Pool.Close()
 	if c.logger != nil {
 		c.logger.Close()
 	}
@@ -187,14 +187,14 @@ func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error
 	ctx, span := spanTrace(ctx, "Fetch", trace.WithAttributes(attribute.String("path", path)))
 	defer span.End()
 
-	return c.pool.fetchResourceWith(ctx, path, cb, c.getAffinity(ctx))
+	return c.Pool.fetchResourceWith(ctx, path, cb, c.getAffinity(ctx))
 }
 
 func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
 	ctx, span := spanTrace(ctx, "Has", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
-	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.Pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
 		return false, err
 	}
@@ -205,7 +205,7 @@ func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
 	ctx, span := spanTrace(ctx, "Get", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
-	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.Pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +217,7 @@ func (c *Caboose) GetSize(ctx context.Context, it cid.Cid) (int, error) {
 	ctx, span := spanTrace(ctx, "GetSize", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
-	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.Pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
 	if err != nil {
 		return 0, err
 	}

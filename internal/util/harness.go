@@ -92,6 +92,12 @@ type CabooseHarness struct {
 	goodOrch bool
 }
 
+type NodeStats struct {
+	Start time.Time
+	Latency float64
+	Size float64
+}
+
 func (ch *CabooseHarness) RunFetchesForRandCids(n int) {
 	for i := 0; i < n; i++ {
 		randCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte{uint8(i)})
@@ -121,6 +127,24 @@ func (ch *CabooseHarness) FetchAndAssertSuccess(t *testing.T, ctx context.Contex
 	require.NoError(t, err)
 	require.NotEmpty(t, blk)
 }
+
+func (ch *CabooseHarness) RecordSuccesses(t *testing.T, nodes []*caboose.Node, s NodeStats, n int) {
+	for _, node := range(nodes) {
+		s.Start = time.Now().Add(-time.Second*5)
+		for i := 0; i < n; i++ {
+			node.RecordSuccess(s.Start, s.Latency, s.Size)
+		}
+	}
+}
+
+func (ch *CabooseHarness) RecordFailures(t *testing.T, nodes []*caboose.Node, n int) {
+	for _, node := range(nodes) {
+		for i := 0; i < n; i++ {
+			node.RecordFailure()
+		}
+	}
+}
+
 
 func (ch *CabooseHarness) FailNodesWithCode(t *testing.T, selectorF func(ep *Endpoint) bool, code int) {
 	for _, n := range ch.Endpoints {

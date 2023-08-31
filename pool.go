@@ -92,7 +92,7 @@ func (p *pool) Start() {
 	go p.checkPool()
 }
 
-func (p *pool) doRefresh() {
+func (p *pool) DoRefresh() {
 	newEP, err := p.loadPool()
 	if err == nil {
 		for _, n := range newEP {
@@ -114,14 +114,14 @@ func (p *pool) refreshPool() {
 	for {
 		select {
 		case <-t.C:
-			p.doRefresh()
+			p.DoRefresh()
 			started.Do(func() {
 				close(p.started)
 			})
 
 			t.Reset(p.config.PoolRefresh)
 		case <-p.refresh:
-			p.doRefresh()
+			p.DoRefresh()
 			started.Do(func() {
 				close(p.started)
 			})

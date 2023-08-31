@@ -8,7 +8,7 @@ import (
 
 // NodeRing represents a set of nodes organized for stable hashing.
 type NodeRing struct {
-	nodes map[string]*Node
+	Nodes map[string]*Node
 	ring  hashring.HashRing
 
 	lk sync.RWMutex
@@ -16,7 +16,7 @@ type NodeRing struct {
 
 func NewNodeRing() *NodeRing {
 	return &NodeRing{
-		nodes: map[string]*Node{},
+		Nodes: map[string]*Node{},
 		ring:  *hashring.New([]string{}),
 	}
 }
@@ -24,7 +24,7 @@ func NewNodeRing() *NodeRing {
 func (nr *NodeRing) updateRing() error {
 	// this method expects that the lk is held when called.
 	rs := make(map[string]int)
-	for _, n := range nr.nodes {
+	for _, n := range nr.Nodes {
 		// TODO: weight multiples
 		rs[n.URL] = 1
 	}
@@ -39,7 +39,7 @@ func (nr *NodeRing) MaybeSubstituteOrAdd(candidate *Node, activationThreshold in
 	_, ok := nr.ring.GetNode(candidate.URL)
 	if !ok {
 		// ring is empty. in this case we always want to add.
-		nr.nodes[candidate.URL] = candidate
+		nr.Nodes[candidate.URL] = candidate
 		return true, nr.updateRing()
 	}
 
@@ -50,7 +50,7 @@ func (nr *NodeRing) MaybeSubstituteOrAdd(candidate *Node, activationThreshold in
 	delta := float64(0)
 
 	for n, v := range overlapEstimate {
-		neighbor = nr.nodes[n]
+		neighbor = nr.Nodes[n]
 		neighborVolume := neighbor.Rate()
 
 		// how much worse is candidate?
@@ -59,7 +59,7 @@ func (nr *NodeRing) MaybeSubstituteOrAdd(candidate *Node, activationThreshold in
 	}
 
 	if delta > float64(activationThreshold) {
-		nr.nodes[candidate.URL] = candidate
+		nr.Nodes[candidate.URL] = candidate
 		return true, nr.updateRing()
 	}
 	return false, nil
@@ -68,7 +68,7 @@ func (nr *NodeRing) MaybeSubstituteOrAdd(candidate *Node, activationThreshold in
 func (nr *NodeRing) Add(n *Node) error {
 	nr.lk.Lock()
 	defer nr.lk.Unlock()
-	nr.nodes[n.URL] = n
+	nr.Nodes[n.URL] = n
 	return nr.updateRing()
 }
 
@@ -76,8 +76,8 @@ func (nr *NodeRing) Remove(n *Node) error {
 	nr.lk.Lock()
 	defer nr.lk.Unlock()
 
-	if _, ok := nr.nodes[n.URL]; ok {
-		delete(nr.nodes, n.URL)
+	if _, ok := nr.Nodes[n.URL]; ok {
+		delete(nr.Nodes, n.URL)
 		return nr.updateRing()
 	}
 	return ErrNoBackend
@@ -87,7 +87,7 @@ func (nr *NodeRing) Contains(n *Node) bool {
 	nr.lk.RLock()
 	defer nr.lk.RUnlock()
 
-	_, ok := nr.nodes[n.URL]
+	_, ok := nr.Nodes[n.URL]
 	return ok
 }
 
@@ -104,7 +104,7 @@ func (nr *NodeRing) GetNodes(key string, number int) ([]*Node, error) {
 	}
 	nodes := make([]*Node, 0, len(keys))
 	for _, k := range keys {
-		if n, ok := nr.nodes[k]; ok {
+		if n, ok := nr.Nodes[k]; ok {
 			nodes = append(nodes, n)
 		}
 	}
