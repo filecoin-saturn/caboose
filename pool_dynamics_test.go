@@ -80,8 +80,7 @@ func TestPoolDynamics(t *testing.T) {
 	}
 
 
-	ch.Caboose.Pool.DoRefresh()
-
+	ch.CaboosePool.DoRefresh()
 	fmt.Println("Pool", ch.CabooseActiveNodes.Nodes)
 
 	for _,n := range(ch.CabooseAllNodes.Nodes) {

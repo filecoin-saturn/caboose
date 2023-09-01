@@ -107,7 +107,7 @@ func (p *pool) DoRefresh() {
 	}
 }
 
-// refreshPool is a background thread triggering `doRefresh` every `config.PoolRefresh` interval.
+// refreshPool is a background thread triggering `DoRefresh` every `config.PoolRefresh` interval.
 func (p *pool) refreshPool() {
 	t := time.NewTimer(0)
 	started := sync.Once{}
