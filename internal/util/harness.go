@@ -63,7 +63,7 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 
 		Client:               saturnClient,
 		DoValidation:         false,
-		PoolRefresh:          time.Millisecond * 50,
+		PoolRefresh:          time.Second * 50,
 		MaxRetrievalAttempts: maxRetries,
 		Harness:              &state.State{},
 	}
@@ -88,16 +88,16 @@ type CabooseHarness struct {
 
 	CabooseActiveNodes *caboose.NodeRing
 	CabooseAllNodes    *caboose.NodeHeap
-	CaboosePool state.PoolController
+	CaboosePool        state.PoolController
 
 	gol      sync.Mutex
 	goodOrch bool
 }
 
 type NodeStats struct {
-	Start time.Time
+	Start   time.Time
 	Latency float64
-	Size float64
+	Size    float64
 }
 
 func (ch *CabooseHarness) RunFetchesForRandCids(n int) {
@@ -131,8 +131,8 @@ func (ch *CabooseHarness) FetchAndAssertSuccess(t *testing.T, ctx context.Contex
 }
 
 func (ch *CabooseHarness) RecordSuccesses(t *testing.T, nodes []*caboose.Node, s NodeStats, n int) {
-	for _, node := range(nodes) {
-		s.Start = time.Now().Add(-time.Second*5)
+	for _, node := range nodes {
+		s.Start = time.Now().Add(-time.Second * 5)
 		for i := 0; i < n; i++ {
 			node.RecordSuccess(s.Start, s.Latency, s.Size)
 		}
@@ -140,13 +140,12 @@ func (ch *CabooseHarness) RecordSuccesses(t *testing.T, nodes []*caboose.Node, s
 }
 
 func (ch *CabooseHarness) RecordFailures(t *testing.T, nodes []*caboose.Node, n int) {
-	for _, node := range(nodes) {
+	for _, node := range nodes {
 		for i := 0; i < n; i++ {
 			node.RecordFailure()
 		}
 	}
 }
-
 
 func (ch *CabooseHarness) FailNodesWithCode(t *testing.T, selectorF func(ep *Endpoint) bool, code int) {
 	for _, n := range ch.Endpoints {

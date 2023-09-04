@@ -59,7 +59,7 @@ func (nh *NodeHeap) TopN(n int) []*Node {
 			m = append(m, n)
 		}
 	}
-	for _, n := range(m) {
+	for _, n := range m {
 		heap.Push(nh, n)
 	}
 	return m
