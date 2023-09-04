@@ -80,4 +80,10 @@ func (epr ErrPartialResponse) Error() string {
 // ErrInvalidResponse can be returned from a DataCallback to indicate that the data provided for the
 // requested resource was explicitly 'incorrect' - that blocks not in the requested dag, or non-car-conforming
 // data was returned.
-type ErrInvalidResponse error
+type ErrInvalidResponse struct {
+	Message string
+}
+
+func (e ErrInvalidResponse) Error() string {
+	return e.Message
+}

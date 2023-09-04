@@ -72,6 +72,7 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 	saturnTransferId := ""
 	isCacheHit := false
 	networkError := ""
+	verificationError := ""
 
 	isBlockRequest := false
 	if mime == "application/vnd.ipld.raw" {
@@ -152,12 +153,13 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 					HTTPProtocol:       proto,
 					TTFBMS:             int(ttfbMs),
 					// my address
-					Range:          "",
-					Referrer:       respReq.Referer(),
-					UserAgent:      respReq.UserAgent(),
-					NodeId:         saturnNodeId,
-					NodeIpAddress:  from.URL,
-					IfNetworkError: networkError,
+					Range:             "",
+					Referrer:          respReq.Referer(),
+					UserAgent:         respReq.UserAgent(),
+					NodeId:            saturnNodeId,
+					NodeIpAddress:     from.URL,
+					IfNetworkError:    networkError,
+					VerificationError: verificationError,
 				}
 			}
 		}
@@ -292,7 +294,15 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-%s", getCacheStatus(isCacheHit)), fmt.Sprintf("%d", code)).Add(1)
 		}
 
-		networkError = err.Error()
+		var target = ErrInvalidResponse{}
+		if errors.As(err, &target) {
+			verificationError = err.Error()
+			goLogger.Errorw("failed to read response; verification error", "err", err.Error())
+		} else {
+			networkError = err.Error()
+			goLogger.Errorw("failed to read response; no verification error", "err", err.Error())
+		}
+
 		return err
 	}
 
