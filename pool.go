@@ -189,7 +189,7 @@ func (p *pool) mirrorValidator(resource string, reader io.Reader) error {
 		return err
 	}
 
-	br, err := car.NewCarReader(reader)
+	br, err := car.NewCarReaderWithOptions(reader, car.WithErrorOnEmptyRoots(false))
 	if err != nil {
 		return err
 	}
