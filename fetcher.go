@@ -278,8 +278,6 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 	wrapped := TrackingReader{resp.Body, time.Time{}, 0}
 	err = cb(resource, &wrapped)
 	received = wrapped.len
-	// drain body so it can be re-used.
-	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if err != nil {
 		if isCtxError(reqCtx) {
