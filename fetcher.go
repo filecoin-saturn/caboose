@@ -49,7 +49,6 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 	}
 	// if the context is already cancelled, there's nothing we can do here.
 	if ce := ctx.Err(); ce != nil {
-		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("%t", errors.Is(ce, context.Canceled)), "fetchResource-init").Add(1)
 		return ce
 	}
 
@@ -117,19 +116,14 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 			ttfbMs = fb.Sub(start).Milliseconds()
 
 			cacheStatus := getCacheStatus(isCacheHit)
-			if isBlockRequest {
-				fetchSizeBlockMetric.Observe(float64(received))
-			} else {
+			if !isBlockRequest {
 				fetchSizeCarMetric.WithLabelValues("success").Observe(float64(received))
 			}
 			durationMs := response_success_end.Sub(start).Milliseconds()
 			fetchSpeedPerPeerSuccessMetric.WithLabelValues(resourceType, cacheStatus).Observe(float64(received) / float64(durationMs))
 			fetchCacheCountSuccessTotalMetric.WithLabelValues(resourceType, cacheStatus).Add(1)
 			// track individual block metrics separately
-			if isBlockRequest {
-				fetchTTFBPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(ttfbMs))
-				fetchDurationPerBlockPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
-			} else {
+			if !isBlockRequest {
 				ci := 0
 				for index, value := range carSizes {
 					if float64(received) < value {
@@ -142,19 +136,10 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 				fetchTTFBPerCARPerPeerSuccessMetric.WithLabelValues(cacheStatus, carSizeStr).Observe(float64(ttfbMs))
 				fetchDurationPerCarPerPeerSuccessMetric.WithLabelValues(cacheStatus).Observe(float64(response_success_end.Sub(start).Milliseconds()))
 			}
-
-			// update L1 server timings
-			updateSuccessServerTimingMetrics(respHeader.Values(servertiming.HeaderKey), resourceType, isCacheHit, durationMs, ttfbMs, received)
 		} else {
-			if isBlockRequest {
-				fetchDurationPerBlockPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
-			} else {
+			if !isBlockRequest {
 				fetchDurationPerCarPerPeerFailureMetric.Observe(float64(time.Since(start).Milliseconds()))
 				fetchSizeCarMetric.WithLabelValues("failure").Observe(float64(received))
-			}
-
-			if code == http.StatusBadGateway || code == http.StatusGatewayTimeout {
-				updateLassie5xxTime(respHeader.Values(servertiming.HeaderKey), resourceType)
 			}
 		}
 
@@ -195,7 +180,7 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
 	if err != nil {
-		if recordIfContextErr(resourceType, reqCtx, "build-http-request") {
+		if isCtxError(reqCtx) {
 			return reqCtx.Err()
 		}
 		return err
@@ -219,11 +204,10 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 
 	var resp *http.Response
 	saturnCallsTotalMetric.WithLabelValues(resourceType).Add(1)
-	startReq := time.Now()
 
 	resp, err = p.config.Client.Do(req)
 	if err != nil {
-		if recordIfContextErr(resourceType, reqCtx, "send-http-request") {
+		if isCtxError(reqCtx) {
 			if errors.Is(err, context.Canceled) {
 				return reqCtx.Err()
 			}
@@ -239,7 +223,6 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 	}
 
 	respHeader = resp.Header
-	headerTTFBPerPeerMetric.WithLabelValues(resourceType, getCacheStatus(respHeader.Get(saturnCacheHitKey) == saturnCacheHit)).Observe(float64(time.Since(startReq).Milliseconds()))
 
 	defer resp.Body.Close()
 
@@ -303,7 +286,7 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if err != nil {
-		if recordIfContextErr(resourceType, reqCtx, "read-http-response") {
+		if isCtxError(reqCtx) {
 			if errors.Is(err, context.Canceled) {
 				return reqCtx.Err()
 			}
@@ -324,20 +307,6 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 
 	// trace-metrics
 	// request life-cycle metrics
-
-	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tcp_connection").Observe(float64(result.TCPConnection.Milliseconds()))
-	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "tls_handshake").Observe(float64(result.TLSHandshake.Milliseconds()))
-	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "wait_after_request_sent_for_header").Observe(float64(result.ServerProcessing.Milliseconds()))
-
-	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "name_lookup").
-		Observe(float64(result.NameLookup.Milliseconds()))
-	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "connect").
-		Observe(float64(result.Connect.Milliseconds()))
-	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "pre_transfer").
-		Observe(float64(result.Pretransfer.Milliseconds()))
-	fetchRequestSuccessTimeTraceMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit), "start_transfer").
-		Observe(float64(result.StartTransfer.Milliseconds()))
-
 	saturnCallsSuccessTotalMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit)).Add(1)
 
 	from.RecordSuccess(start, float64(wrapped.firstByte.Sub(start).Milliseconds()), float64(received)/float64(response_success_end.Sub(start).Milliseconds()))
@@ -345,69 +314,11 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 	return nil
 }
 
-func recordIfContextErr(resourceType string, ctx context.Context, requestState string) bool {
+func isCtxError(ctx context.Context) bool {
 	if ce := ctx.Err(); ce != nil {
-		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("%t", errors.Is(ce, context.Canceled)), requestState).Add(1)
 		return true
 	}
 	return false
-}
-
-func updateLassie5xxTime(timingHeaders []string, resourceType string) {
-	if len(timingHeaders) == 0 {
-		goLogger.Debug("no timing headers in request response.")
-		return
-	}
-
-	for _, th := range timingHeaders {
-		if subReqTiming, err := servertiming.ParseHeader(th); err == nil {
-			for _, m := range subReqTiming.Metrics {
-				switch m.Name {
-				case "shim_lassie_headers":
-					if m.Duration.Milliseconds() != 0 {
-						lassie5XXTimeMetric.WithLabelValues(resourceType).Observe(float64(m.Duration.Milliseconds()))
-					}
-					return
-				default:
-				}
-			}
-		}
-	}
-}
-
-// todo: refactor for dryness
-func updateSuccessServerTimingMetrics(timingHeaders []string, resourceType string, isCacheHit bool, totalTimeMs, ttfbMs int64, recieved int) {
-	if len(timingHeaders) == 0 {
-		goLogger.Debug("no timing headers in request response.")
-		return
-	}
-
-	for _, th := range timingHeaders {
-		if subReqTiming, err := servertiming.ParseHeader(th); err == nil {
-			for _, m := range subReqTiming.Metrics {
-				switch m.Name {
-				case "shim_lassie_headers":
-					if m.Duration.Milliseconds() != 0 && !isCacheHit {
-						fetchDurationPerPeerSuccessCacheMissTotalLassieMetric.WithLabelValues(resourceType).Observe(float64(m.Duration.Milliseconds()))
-					}
-
-				case "nginx":
-					// sanity checks
-					if totalTimeMs != 0 && ttfbMs != 0 && m.Duration.Milliseconds() != 0 {
-						fetchDurationPerPeerSuccessTotalL1NodeMetric.WithLabelValues(resourceType, getCacheStatus(isCacheHit)).Observe(float64(m.Duration.Milliseconds()))
-						networkTimeMs := totalTimeMs - m.Duration.Milliseconds()
-						if networkTimeMs > 0 {
-							s := float64(recieved) / float64(networkTimeMs)
-							fetchNetworkSpeedPerPeerSuccessMetric.WithLabelValues(resourceType).Observe(s)
-						}
-						networkLatencyMs := ttfbMs - m.Duration.Milliseconds()
-						fetchNetworkLatencyPeerSuccessMetric.WithLabelValues(resourceType).Observe(float64(networkLatencyMs))
-					}
-				default:
-				}
-			}
-		}
-	}
 }
 
 func getCacheStatus(isCacheHit bool) string {
