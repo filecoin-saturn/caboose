@@ -9,11 +9,15 @@ import (
 	"strings"
 	"time"
 
+	requestcontext "github.com/willscott/go-requestcontext"
+
 	ipfsblockstore "github.com/ipfs/boxo/blockstore"
 	ipath "github.com/ipfs/boxo/coreiface/path"
 	gateway "github.com/ipfs/boxo/gateway"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -144,6 +148,9 @@ func NewCaboose(config *Config) (*Caboose, error) {
 			Timeout: DefaultCarRequestTimeout,
 		}
 	}
+
+	c.config.Client.Transport = otelhttp.NewTransport(c.config.Client.Transport)
+
 	if c.config.OrchestratorEndpoint == nil {
 		var err error
 		c.config.OrchestratorEndpoint, err = url.Parse(DefaultOrchestratorEndpoint)
@@ -185,8 +192,20 @@ func (c *Caboose) Close() {
 
 // Fetch allows fetching car archives by a path of the form `/ipfs/<cid>[/path/to/file]`
 func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error {
+	traceID := requestcontext.IDFromContext(ctx)
+	tid, err := trace.TraceIDFromHex(traceID)
+
 	ctx, span := spanTrace(ctx, "Fetch", trace.WithAttributes(attribute.String("path", path)))
 	defer span.End()
+
+	if err == nil {
+		sc := trace.NewSpanContext(trace.SpanContextConfig{
+			TraceID: tid,
+			SpanID:  span.SpanContext().SpanID(),
+			Remote:  true,
+		})
+		ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
+	}
 
 	return c.pool.fetchResourceWith(ctx, path, cb, c.getAffinity(ctx))
 }
