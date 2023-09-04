@@ -53,14 +53,9 @@ func (nh *NodeHeap) TopN(n int) []*Node {
 	m := make([]*Node, 0, n)
 	nh.lk.RLock()
 	defer nh.lk.RUnlock()
-	for i := 0; i < n; i++ {
-		node := heap.Pop(nh)
-		if n, ok := node.(*Node); ok {
-			m = append(m, n)
-		}
-	}
-	for _, n := range m {
-		heap.Push(nh, n)
+	for i := 0; i < n && i < len(nh.Nodes); i++ {
+		node := nh.Nodes[i]
+		m = append(m, node)
 	}
 	return m
 }
