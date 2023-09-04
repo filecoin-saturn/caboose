@@ -34,6 +34,7 @@ func TestPoolDynamics(t *testing.T) {
 
 	baseStatSize := 100000
 	baseStatLatency := 100
+	poolRefreshNo := 10
 	ctx := context.Background()
 	testCid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum(testBlock)
 
@@ -114,7 +115,7 @@ func TestPoolDynamics(t *testing.T) {
 			}
 		}
 
-		for i := 0; i < 1; i++ {
+		for i := 0; i < poolRefreshNo; i++ {
 
 			goodStats := util.NodeStats{
 				Start:   time.Now().Add(-time.Second * 2),
@@ -156,7 +157,7 @@ func TestPoolDynamics(t *testing.T) {
 
 		// Give the bad nodes some stats, those nodes then become the main active tier.
 		// The good nodes have 0 stats after this should not be picked at this point.
-		for i := 0; i < 5; i++ {
+		for i := 0; i < poolRefreshNo; i++ {
 			badStats := util.NodeStats{
 				Start:   time.Now().Add(-time.Second * 2),
 				Latency: float64(baseStatLatency) * float64(10),
@@ -167,7 +168,7 @@ func TestPoolDynamics(t *testing.T) {
 		}
 
 		// Add some new "good" nodes that have better stats over a longer period of time.
-		for i := 0; i < 10; i++ {
+		for i := 0; i < poolRefreshNo*2; i++ {
 			goodStats := util.NodeStats{
 				Start:   time.Now().Add(-time.Second * 2),
 				Latency: float64(baseStatLatency) / float64(10),
@@ -201,7 +202,7 @@ func TestPoolDynamics(t *testing.T) {
 		}
 
 		// Start with the bad nodes having better stats than the good nodes
-		for i := 0; i < 5; i++ {
+		for i := 0; i < poolRefreshNo; i++ {
 			goodStats := util.NodeStats{
 				Start:   time.Now().Add(-time.Second * 2),
 				Latency: float64(baseStatLatency) / float64(10),
@@ -219,7 +220,7 @@ func TestPoolDynamics(t *testing.T) {
 		}
 
 		// Start failing the bad nodes and keep giving the same stats to the good nodes.
-		for i := 0; i < 10; i++ {
+		for i := 0; i < poolRefreshNo*2; i++ {
 			badStats := util.NodeStats{
 				Start:   time.Now().Add(-time.Second * 2),
 				Latency: float64(baseStatLatency) * float64(10),
