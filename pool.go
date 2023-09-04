@@ -323,6 +323,7 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 			default:
 			}
 		}
+		old := pq[0]
 		err = p.fetchResourceAndUpdate(ctx, nodes[i], pq[0], i, cb)
 		if err != nil && errors.Is(err, context.Canceled) {
 			return err
@@ -337,6 +338,8 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 				//fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
 				fetchDurationCarSuccessMetric.Observe(float64(durationMs))
 				return
+			} else if pq[0] == old {
+				continue
 			} else {
 				// TODO: potentially worth doing something smarter here based on what the current state
 				// of permanent vs temporary errors is.
@@ -352,11 +355,16 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 			}
 			pq = pq[1:]
 			pq = append(pq, epr.StillNeed...)
-			// TODO: potentially worth doing something smarter here based on what the current state
-			// of permanent vs temporary errors is.
 
-			// for now: reset i on partials so we also give them a chance to retry.
-			i = -1
+			if pq[0] == old {
+				continue
+			} else {
+				// TODO: potentially worth doing something smarter here based on what the current state
+				// of permanent vs temporary errors is.
+
+				// for now: reset i on partials so we also give them a chance to retry.
+				i = -1
+			}
 		}
 	}
 
