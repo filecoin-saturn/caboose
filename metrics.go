@@ -106,6 +106,11 @@ var (
 	fetchCalledTotalMetric = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prometheus.BuildFQName("ipfs", "caboose", "fetch_called_total"),
 	}, []string{"resourceType"})
+
+	fetchRequestSuccessTimeTraceMetric = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prometheus.BuildFQName("ipfs", "caboose", "fetch_request_success_time_trace"),
+		Buckets: durationMsPerCarHistogram,
+	}, []string{"resourceType", "cache_status", "lifecycleStage"})
 )
 
 var (
@@ -162,4 +167,6 @@ func init() {
 	CabooseMetrics.MustRegister(saturnCallsSuccessTotalMetric)
 
 	CabooseMetrics.MustRegister(mirroredTrafficTotalMetric)
+
+	CabooseMetrics.MustRegister(fetchRequestSuccessTimeTraceMetric)
 }
