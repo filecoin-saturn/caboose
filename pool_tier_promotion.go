@@ -9,7 +9,7 @@ const (
 
 func updateActiveNodes(active *NodeRing, all *NodeHeap) error {
 	candidates := all.TopN(PoolConsiderationCount)
-	for _, c := range(candidates) {
+	for _, c := range candidates {
 		fmt.Println("Candidates", c.URL, c.PredictedThroughput)
 	}
 	added := 0
