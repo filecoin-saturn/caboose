@@ -275,7 +275,7 @@ func (p *pool) updateFetchKeyCoolDown(key string) {
 
 func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallback, with string) (err error) {
 	fetchCalledTotalMetric.WithLabelValues(resourceTypeCar).Add(1)
-	if recordIfContextErr(resourceTypeCar, ctx, "fetchResourceWith") {
+	if isCtxError(ctx) {
 		return ctx.Err()
 	}
 
@@ -312,7 +312,7 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 
 	pq := []string{path}
 	for i := 0; i < len(nodes); i++ {
-		if recordIfContextErr(resourceTypeCar, ctx, "fetchResourceWithLoop") {
+		if isCtxError(ctx) {
 			return ctx.Err()
 		}
 
