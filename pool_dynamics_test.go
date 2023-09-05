@@ -30,7 +30,6 @@ are picked randomly in the beginning of each test. At the end of each test, the 
 always be converging to the "good" nodes.
 */
 func TestPoolDynamics(t *testing.T) {
-
 	baseStatSize := 100000
 	baseStatLatency := 100
 	poolRefreshNo := 10
@@ -241,7 +240,9 @@ func TestPoolDynamics(t *testing.T) {
 }
 
 func getHarnessAndControlGroup(t *testing.T, nodesSize int, poolSize int) (*util.CabooseHarness, map[string]string) {
-	ch := util.BuildCabooseHarness(t, nodesSize, 3)
+	ch := util.BuildCabooseHarness(t, nodesSize, 3, func(config *caboose.Config) {
+		config.PoolTargetSize = 3
+	})
 
 	ch.StartOrchestrator()
 

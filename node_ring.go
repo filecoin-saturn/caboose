@@ -8,16 +8,18 @@ import (
 
 // NodeRing represents a set of nodes organized for stable hashing.
 type NodeRing struct {
-	Nodes map[string]*Node
-	ring  hashring.HashRing
+	Nodes      map[string]*Node
+	ring       hashring.HashRing
+	targetSize int
 
 	lk sync.RWMutex
 }
 
-func NewNodeRing() *NodeRing {
+func NewNodeRing(targetSize int) *NodeRing {
 	return &NodeRing{
-		Nodes: map[string]*Node{},
-		ring:  *hashring.New([]string{}),
+		Nodes:      map[string]*Node{},
+		ring:       *hashring.New([]string{}),
+		targetSize: targetSize,
 	}
 }
 
