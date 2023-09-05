@@ -1,17 +1,12 @@
 package caboose
 
-import "fmt"
-
 const (
-	PoolConsiderationCount = 3
+	PoolConsiderationCount = 30
 	activationThreshold    = 0
 )
 
 func updateActiveNodes(active *NodeRing, all *NodeHeap) error {
 	candidates := all.TopN(PoolConsiderationCount)
-	for _, c := range candidates {
-		fmt.Println("Candidates", c.URL, c.PredictedThroughput)
-	}
 	added := 0
 	for _, c := range candidates {
 		if active.Contains(c) {

@@ -16,8 +16,7 @@ import (
 )
 
 const (
-	nodesSize     = 6
-	nodesPoolSize = caboose.PoolConsiderationCount
+	nodesSize = 6
 )
 
 /*
@@ -41,7 +40,7 @@ func TestPoolDynamics(t *testing.T) {
 	// This test ensures that when the pool is intialized, it should converge to a set
 	// of nodes that have stats vs a set of nodes that don't have any stats.
 	t.Run("pool converges to good nodes vs nodes with no stats", func(t *testing.T) {
-		ch, controlGroup := getHarnessAndControlGroup(t, nodesSize, nodesPoolSize)
+		ch, controlGroup := getHarnessAndControlGroup(t, nodesSize, nodesSize/2)
 		ch.FetchAndAssertSuccess(t, ctx, testCid)
 
 		goodNodes := make([]*caboose.Node, 0)
@@ -96,13 +95,13 @@ func TestPoolDynamics(t *testing.T) {
 		fmt.Println("Final Node Pool", np)
 
 		for _, n := range ch.CabooseAllNodes.Nodes {
-			fmt.Println("Node", n.URL, "Priority", n.Priority(), "Rate", n.Rate())
+			fmt.Println("Node", n.URL, "Priority", n.Priority(), "Rate", n.Rate(), "samples ", len(n.Samples.PeekAll()))
 		}
 
 	})
 
 	t.Run("pool converges to good nodes vs nodes with worse stats", func(t *testing.T) {
-		ch, controlGroup := getHarnessAndControlGroup(t, nodesSize, nodesPoolSize)
+		ch, controlGroup := getHarnessAndControlGroup(t, nodesSize, nodesSize/2)
 
 		goodNodes := make([]*caboose.Node, 0)
 		badNodes := make([]*caboose.Node, 0)
@@ -142,7 +141,7 @@ func TestPoolDynamics(t *testing.T) {
 	// When new nodes join, if they start consistently performing better than the nodes in the current pool,
 	// then those nodes should replace the nodes in the current pool.
 	t.Run("pool converges to new nodes that are better than the current pool", func(t *testing.T) {
-		ch, controlGroup := getHarnessAndControlGroup(t, nodesSize, nodesPoolSize)
+		ch, controlGroup := getHarnessAndControlGroup(t, nodesSize, nodesSize/2)
 		goodNodes := make([]*caboose.Node, 0)
 		badNodes := make([]*caboose.Node, 0)
 
@@ -188,7 +187,7 @@ func TestPoolDynamics(t *testing.T) {
 	// If the current active main pool starts failing, the pool should converge to
 	// to nodes that are not failing.
 	t.Run("pool converges to other nodes if the current ones start failing", func(t *testing.T) {
-		ch, controlGroup := getHarnessAndControlGroup(t, nodesSize, nodesPoolSize)
+		ch, controlGroup := getHarnessAndControlGroup(t, nodesSize, nodesSize/2)
 		goodNodes := make([]*caboose.Node, 0)
 		badNodes := make([]*caboose.Node, 0)
 
