@@ -135,6 +135,9 @@ func NewCaboose(config *Config) (*Caboose, error) {
 	if override := os.Getenv(BackendOverrideKey); len(override) > 0 {
 		config.OrchestratorOverride = strings.Split(override, ",")
 	}
+	if config.PoolTargetSize == 0 {
+		config.PoolTargetSize = DefaultPoolTargetSize
+	}
 
 	logger := newLogger(config)
 	c := Caboose{
@@ -158,9 +161,6 @@ func NewCaboose(config *Config) (*Caboose, error) {
 
 	if c.config.PoolRefresh == 0 {
 		c.config.PoolRefresh = DefaultPoolRefreshInterval
-	}
-	if c.config.PoolTargetSize == 0 {
-		c.config.PoolTargetSize = DefaultPoolTargetSize
 	}
 
 	if c.config.MaxRetrievalAttempts == 0 {

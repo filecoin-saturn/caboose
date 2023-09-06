@@ -54,9 +54,12 @@ func (nr *NodeRing) MaybeSubstituteOrAdd(candidate *Node, activationThreshold in
 	for n, v := range overlapEstimate {
 		neighbor = nr.Nodes[n]
 		neighborVolume := neighbor.Rate()
+		if neighborVolume < 1 {
+			neighborVolume = 1
+		}
 
 		// how much worse is candidate?
-		diff := candidate.Priority() - neighbor.Priority()
+		diff := neighbor.Priority() - candidate.Priority()
 		delta += diff * neighborVolume * float64(v)
 	}
 
