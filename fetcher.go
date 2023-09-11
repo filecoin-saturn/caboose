@@ -16,6 +16,7 @@ import (
 	"github.com/filecoin-saturn/caboose/tieredhashing"
 	"github.com/willscott/go-requestcontext"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -311,9 +312,17 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		for _, th := range timingHeaders {
 			if subReqTiming, err := servertiming.ParseHeader(th); err == nil {
 				for _, m := range subReqTiming.Metrics {
+					// forward upstream
 					m.Extra["attempt"] = fmt.Sprintf("%d", attempt)
 					m.Extra["subreq"] = subReqID(from, resource)
 					timing.Add(m)
+
+					// record the otel span
+					_, subSpan := otel.Tracer("caboose/l1").Start(ctx, m.Name, trace.WithTimestamp(time.Now().Add(m.Duration*-1)))
+					for eK, eV := range m.Extra {
+						subSpan.SetAttributes(attribute.String(eK, eV))
+					}
+					subSpan.End()
 				}
 			}
 		}
