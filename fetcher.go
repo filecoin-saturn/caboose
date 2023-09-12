@@ -307,7 +307,7 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 	proto = resp.Proto
 	respReq = resp.Request
 
-	if timing != nil {
+	if timing != nil && respHeader.Get(saturnCacheHitKey) != saturnCacheHit {
 		timingHeaders := respHeader.Values(servertiming.HeaderKey)
 		for _, th := range timingHeaders {
 			if subReqTiming, err := servertiming.ParseHeader(th); err == nil {
