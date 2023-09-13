@@ -101,8 +101,11 @@ func (p *pool) fetchResource(ctx context.Context, from string, resource string, 
 		fetchRequestContextErrorTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("%t", errors.Is(ce, context.Canceled)), "fetchResource-init").Add(1)
 		return rm, ce
 	}
+	p.lk.RLock()
+	isCore := p.th.IsCore(from)
+	p.lk.RUnlock()
 
-	ctx, span := spanTrace(ctx, "Pool.FetchResource", trace.WithAttributes(attribute.String("from", from), attribute.String("of", resource), attribute.String("mime", mime)))
+	ctx, span := spanTrace(ctx, "Pool.FetchResource", trace.WithAttributes(attribute.String("from", from), attribute.String("of", resource), attribute.String("mime", mime), attribute.Bool("core", isCore)))
 	defer span.End()
 
 	requestId := uuid.NewString()
