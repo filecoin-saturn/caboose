@@ -52,6 +52,7 @@ type NodeInfo struct {
 	Distance      float32 `json:"distance"`
 	Weight        int     `json:"weight"`
 	ComplianceCid string  `json:"complianceCid"`
+	Core          bool    `json:"core"`
 }
 
 type NodePerf struct {
@@ -529,4 +530,12 @@ func (t *TieredHashing) recordCorrectness(perf *NodePerf, success bool) {
 		t.UpdateAverageCorrectnessPct()
 		t.LastAverageCalcAt = time.Now()
 	}
+}
+
+func (t *TieredHashing) IsCore(n string) bool {
+	nd, ok := t.nodes[n]
+	if !ok {
+		return false
+	}
+	return nd.Core
 }
