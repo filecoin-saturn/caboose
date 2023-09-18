@@ -51,8 +51,9 @@ func (nh *NodeHeap) PeekRandom() *Node {
 
 func (nh *NodeHeap) TopN(n int) []*Node {
 	m := make([]*Node, 0, n)
-	nh.lk.RLock()
-	defer nh.lk.RUnlock()
+	nh.lk.Lock()
+	defer nh.lk.Unlock()
+	heap.Init(nh)
 	for i := 0; i < n && i < len(nh.Nodes); i++ {
 		node := nh.Nodes[i]
 		m = append(m, node)

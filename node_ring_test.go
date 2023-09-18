@@ -8,7 +8,7 @@ import (
 )
 
 func TestNodeRing(t *testing.T) {
-	nr := caboose.NewNodeRing()
+	nr := caboose.NewNodeRing(30)
 	nodes := make([]*caboose.Node, 0)
 	for i := 0; i < 100; i++ {
 		nodes = append(nodes, &caboose.Node{URL: fmt.Sprintf("node%d", i)})

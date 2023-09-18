@@ -83,7 +83,7 @@ func newPool(c *Config, logger *logger) *pool {
 		fetchKeyCoolDownCache: cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 		fetchKeyFailureCache:  cache.New(c.FetchKeyCoolDownDuration, 1*time.Minute),
 
-		ActiveNodes: NewNodeRing(),
+		ActiveNodes: NewNodeRing(c.PoolTargetSize),
 		AllNodes:    NewNodeHeap(),
 	}
 

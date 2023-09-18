@@ -131,3 +131,7 @@ func (n *Node) Rate() float64 {
 	last := n.Samples.Peek()
 	return float64(len) / float64(time.Since(last.Start))
 }
+
+func (n *Node) String() string {
+	return n.URL
+}

@@ -2,7 +2,6 @@ package caboose_test
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"net/url"
 	"testing"
@@ -30,7 +29,6 @@ are picked randomly in the beginning of each test. At the end of each test, the 
 always be converging to the "good" nodes.
 */
 func TestPoolDynamics(t *testing.T) {
-
 	baseStatSize := 100000
 	baseStatLatency := 100
 	poolRefreshNo := 10
@@ -44,40 +42,19 @@ func TestPoolDynamics(t *testing.T) {
 		ch.FetchAndAssertSuccess(t, ctx, testCid)
 
 		goodNodes := make([]*caboose.Node, 0)
-		badNodes := make([]*caboose.Node, 0)
 		for _, n := range ch.CabooseAllNodes.Nodes {
 			_, ok := controlGroup[n.URL]
 			if ok {
 				goodNodes = append(goodNodes, n)
-			} else {
-				badNodes = append(badNodes, n)
 			}
 		}
 
 		for i := 0; i < 1; i++ {
-			nodes := make([]string, 0)
-			for _, n := range ch.CabooseAllNodes.Nodes {
-				nodes = append(nodes, n.URL)
-			}
-			fmt.Println("All nodes", nodes)
-
 			goodStats := util.NodeStats{
 				Start:   time.Now().Add(-time.Second * 2),
 				Latency: float64(baseStatLatency) / float64(10),
 				Size:    float64(baseStatSize) * float64(10),
 			}
-
-			bn := make([]string, 0)
-			gn := make([]string, 0)
-			for _, n := range goodNodes {
-				gn = append(gn, n.URL)
-			}
-
-			for _, n := range badNodes {
-				bn = append(bn, n.URL)
-			}
-			fmt.Println("Good Nodes", gn)
-			fmt.Println("Bad nodes", bn)
 
 			ch.RecordSuccesses(t, goodNodes, goodStats, 1000)
 			ch.CaboosePool.DoRefresh()
@@ -86,22 +63,11 @@ func TestPoolDynamics(t *testing.T) {
 		for n := range controlGroup {
 			assert.Contains(t, ch.CabooseActiveNodes.Nodes, n)
 		}
-
-		np := make([]string, 0)
-		for _, n := range ch.CabooseActiveNodes.Nodes {
-			np = append(np, n.URL)
-		}
-
-		fmt.Println("Final Node Pool", np)
-
-		for _, n := range ch.CabooseAllNodes.Nodes {
-			fmt.Println("Node", n.URL, "Priority", n.Priority(), "Rate", n.Rate(), "samples ", len(n.Samples.PeekAll()))
-		}
-
 	})
 
 	t.Run("pool converges to good nodes vs nodes with worse stats", func(t *testing.T) {
 		ch, controlGroup := getHarnessAndControlGroup(t, nodesSize, nodesSize/2)
+		ch.FetchAndAssertSuccess(t, ctx, testCid)
 
 		goodNodes := make([]*caboose.Node, 0)
 		badNodes := make([]*caboose.Node, 0)
@@ -135,13 +101,14 @@ func TestPoolDynamics(t *testing.T) {
 		for n := range controlGroup {
 			assert.Contains(t, ch.CabooseActiveNodes.Nodes, n)
 		}
-
 	})
 
 	// When new nodes join, if they start consistently performing better than the nodes in the current pool,
 	// then those nodes should replace the nodes in the current pool.
 	t.Run("pool converges to new nodes that are better than the current pool", func(t *testing.T) {
 		ch, controlGroup := getHarnessAndControlGroup(t, nodesSize, nodesSize/2)
+		ch.FetchAndAssertSuccess(t, ctx, testCid)
+
 		goodNodes := make([]*caboose.Node, 0)
 		badNodes := make([]*caboose.Node, 0)
 
@@ -188,6 +155,8 @@ func TestPoolDynamics(t *testing.T) {
 	// to nodes that are not failing.
 	t.Run("pool converges to other nodes if the current ones start failing", func(t *testing.T) {
 		ch, controlGroup := getHarnessAndControlGroup(t, nodesSize, nodesSize/2)
+		ch.FetchAndAssertSuccess(t, ctx, testCid)
+
 		goodNodes := make([]*caboose.Node, 0)
 		badNodes := make([]*caboose.Node, 0)
 
@@ -241,7 +210,9 @@ func TestPoolDynamics(t *testing.T) {
 }
 
 func getHarnessAndControlGroup(t *testing.T, nodesSize int, poolSize int) (*util.CabooseHarness, map[string]string) {
-	ch := util.BuildCabooseHarness(t, nodesSize, 3)
+	ch := util.BuildCabooseHarness(t, nodesSize, 3, func(config *caboose.Config) {
+		config.PoolTargetSize = 3
+	})
 
 	ch.StartOrchestrator()
 

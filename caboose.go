@@ -59,6 +59,9 @@ type Config struct {
 	// PoolRefresh is the interval at which we refresh the pool of upstreams from the orchestrator.
 	PoolRefresh time.Duration
 
+	// PoolTargetSize is a baseline size for the pool - the pool will accept decrements in performance to reach maintain at least this size.
+	PoolTargetSize int
+
 	// MirrorFraction is what fraction of requests will be mirrored to another random node in order to track metrics / determine the current best nodes.
 	MirrorFraction float64
 
@@ -94,6 +97,7 @@ const defaultMirrorFraction = 0.01
 
 const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=200"
 const DefaultPoolRefreshInterval = 5 * time.Minute
+const DefaultPoolTargetSize = 30
 
 // we cool off sending requests for a cid for a certain duration
 // if we've seen a certain number of failures for it already in a given duration.
@@ -134,6 +138,9 @@ func NewCaboose(config *Config) (*Caboose, error) {
 	}
 	if override := os.Getenv(BackendOverrideKey); len(override) > 0 {
 		config.OrchestratorOverride = strings.Split(override, ",")
+	}
+	if config.PoolTargetSize == 0 {
+		config.PoolTargetSize = DefaultPoolTargetSize
 	}
 
 	logger := newLogger(config)
