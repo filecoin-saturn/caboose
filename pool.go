@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/filecoin-saturn/caboose/internal/state"
 	"io"
 	"math/rand"
 	"net/url"
@@ -38,13 +39,22 @@ func (p *pool) loadPool() ([]string, error) {
 	}
 	defer resp.Body.Close()
 
-	responses := make([]string, 0)
+	responses := make([]state.NodeInfo, 0)
+
 	if err := json.NewDecoder(resp.Body).Decode(&responses); err != nil {
 		goLogger.Warnw("failed to decode backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint.String())
 		return nil, err
 	}
+
 	goLogger.Infow("got backends from orchestrators", "cnt", len(responses), "endpoint", p.config.OrchestratorEndpoint.String())
-	return responses, nil
+
+	var ips []string
+
+	for _, r := range responses {
+		ips = append(ips, r.IP)
+	}
+
+	return ips, nil
 }
 
 type mirroredPoolRequest struct {
