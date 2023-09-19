@@ -265,6 +265,12 @@ func WithComplianceCidPeriod(n int64) func(config *caboose.Config) {
 	}
 }
 
+func WithMirrorFraction(n float64) func(config *caboose.Config) {
+	return func(config *caboose.Config) {
+		config.MirrorFraction = n
+	}
+}
+
 func WithCidCoolDownDuration(duration time.Duration) func(config *caboose.Config) {
 	return func(config *caboose.Config) {
 		config.FetchKeyCoolDownDuration = duration

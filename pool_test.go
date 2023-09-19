@@ -70,7 +70,7 @@ func TestFetchComplianceCid(t *testing.T) {
 		t.Skip("skipping for 32bit architectures because too slow")
 	}
 
-	ch := util.BuildCabooseHarness(t, 1, 1, util.WithComplianceCidPeriod(1))
+	ch := util.BuildCabooseHarness(t, 1, 1, util.WithComplianceCidPeriod(1), util.WithMirrorFraction(1.0))
 
 	ch.CaboosePool.DoRefresh()
 
