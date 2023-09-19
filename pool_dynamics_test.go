@@ -207,9 +207,7 @@ func TestPoolDynamics(t *testing.T) {
 		for n := range controlGroup {
 			assert.Contains(t, ch.CabooseActiveNodes.Nodes, n)
 		}
-
 	})
-
 }
 
 func TestPoolAffinity(t *testing.T) {
@@ -226,14 +224,11 @@ func TestPoolAffinity(t *testing.T) {
 		_, _ = ch.Caboose.Get(ctx, cidList[0])
 
 		goodNodes := make([]*caboose.Node, 0)
-		badNodes := make([]*caboose.Node, 0)
 
 		for _, n := range ch.CabooseAllNodes.Nodes {
 			_, ok := controlGroup[n.URL]
 			if ok {
 				goodNodes = append(goodNodes, n)
-			} else {
-				badNodes = append(badNodes, n)
 			}
 		}
 
