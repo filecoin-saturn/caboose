@@ -221,7 +221,7 @@ func TestPoolAffinity(t *testing.T) {
 	ctx := context.Background()
 	cidList := generateRandomCIDs(20)
 
-	t.Run("selected nodes remain consistent for same cid reqs", func(t *testing.T) {
+	t.Run("select same nodes for same content", func(t *testing.T) {
 		ch, controlGroup := getHarnessAndControlGroup(t, nodesSize, nodesSize/2)
 		_, _ = ch.Caboose.Get(ctx, cidList[0])
 
@@ -257,46 +257,38 @@ func TestPoolAffinity(t *testing.T) {
 		}
 		ch.CaboosePool.DoRefresh()
 
-		// Introduce new nodes by sendng same stats to those nodes.
-		for i := 0; i < poolRefreshNo/2; i++ {
-			baseStats := util.NodeStats{
-				Start:   time.Now().Add(-time.Second * 2),
-				Latency: float64(baseStatLatency) / float64(10),
-				Size:    float64(baseStatSize) * float64(10),
-			}
+		orig := make(map[string]string)
 
-			// variedStats := util.NodeStats{
-			// 	Start:   time.Now().Add(-time.Second * 2),
-			// 	Latency: float64(baseStatLatency) / (float64(10) + (1 + statVarianceFactor)),
-			// 	Size:    float64(baseStatSize) * float64(10) * (1 + statVarianceFactor),
-			// }
-
-			ch.RecordSuccesses(t, goodNodes, baseStats, 100)
-			ch.RecordSuccesses(t, badNodes, baseStats, 10)
-
-			ch.CaboosePool.DoRefresh()
-		}
-
-		// for _, i := range ch.CabooseAllNodes.Nodes {
-		// 	fmt.Println(i.URL, i.Priority(), i.PredictedLatency)
-		// }
-
-		// Get the candidate nodes for a few cids from our formed cid list using
-		// the affinity of each cid.
-		for i := 0; i < 10; i++ {
-			rand.New(rand.NewSource(time.Now().Unix()))
-			idx := rand.Intn(len(cidList))
-			c := cidList[idx]
+		for _, c := range cidList {
 			aff := ch.Caboose.GetAffinity(ctx)
 			if aff == "" {
 				aff = fmt.Sprintf(blockPathPattern, c)
 			}
 			nodes, _ := ch.CabooseActiveNodes.GetNodes(aff, ch.Config.MaxRetrievalAttempts)
-
-			// We expect that the candidate nodes are part of the "good nodes" list.
-			assert.Contains(t, goodNodes, nodes[0])
+			orig[c.String()] = nodes[0].URL
 		}
 
+		// change stats for control group nodes
+		for i := 0; i < poolRefreshNo; i++ {
+			baseStats := util.NodeStats{
+				Start:   time.Now().Add(-time.Second * 2),
+				Latency: float64(baseStatLatency) / float64(2),
+				Size:    float64(baseStatSize) * float64(10),
+			}
+
+			ch.RecordSuccesses(t, goodNodes, baseStats, 1000)
+			ch.CaboosePool.DoRefresh()
+		}
+
+		// same nodes get selected
+		for _, c := range cidList {
+			aff := ch.Caboose.GetAffinity(ctx)
+			if aff == "" {
+				aff = fmt.Sprintf(blockPathPattern, c)
+			}
+			nodes, _ := ch.CabooseActiveNodes.GetNodes(aff, ch.Config.MaxRetrievalAttempts)
+			assert.EqualValues(t, orig[c.String()], nodes[0].URL)
+		}
 	})
 }
 
