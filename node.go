@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/filecoin-saturn/caboose/internal/state"
 	"github.com/zyedidia/generic/queue"
 )
 
@@ -14,7 +15,8 @@ const (
 )
 
 type Node struct {
-	URL string
+	URL           string
+	ComplianceCid string
 
 	PredictedLatency     float64
 	PredictedThroughput  float64
@@ -25,10 +27,11 @@ type Node struct {
 	lk        sync.RWMutex
 }
 
-func NewNode(url string) *Node {
+func NewNode(info state.NodeInfo) *Node {
 	return &Node{
-		URL:     url,
-		Samples: queue.New[NodeSample](),
+		URL:           info.IP,
+		ComplianceCid: info.ComplianceCid,
+		Samples:       queue.New[NodeSample](),
 	}
 }
 

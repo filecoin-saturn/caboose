@@ -3,15 +3,10 @@ package caboose_test
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"net/http"
-	"net/url"
-	"strings"
 	"testing"
 	"time"
 	"unsafe"
 
-	"github.com/filecoin-saturn/caboose"
 	"github.com/filecoin-saturn/caboose/internal/util"
 	"github.com/ipfs/go-cid"
 	"github.com/ipld/go-car/v2"
@@ -28,15 +23,7 @@ func TestPoolMirroring(t *testing.T) {
 		t.Skip("skipping for 32bit architectures because too slow")
 	}
 
-	saturnClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		},
-	}
-
-	data := []byte("hello world")
+	data := []byte("hello World")
 	ls := cidlink.DefaultLinkSystem()
 	lsm := memstore.Store{}
 	ls.SetReadStorage(&lsm)
@@ -50,32 +37,8 @@ func TestPoolMirroring(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	e := util.Endpoint{}
-	e.Setup()
-	e.SetResp(carBytes.Bytes(), false)
-	eURL := strings.TrimPrefix(e.Server.URL, "https://")
+	ch := util.BuildCabooseHarness(t, 2, 3)
 
-	e2 := util.Endpoint{}
-	e2.Setup()
-	e2.SetResp(carBytes.Bytes(), false)
-	e2URL := strings.TrimPrefix(e2.Server.URL, "https://")
-
-	conf := caboose.Config{
-		OrchestratorEndpoint: &url.URL{},
-		OrchestratorClient:   http.DefaultClient,
-		OrchestratorOverride: []string{eURL, e2URL},
-		LoggingEndpoint:      url.URL{},
-		LoggingClient:        http.DefaultClient,
-		LoggingInterval:      time.Hour,
-
-		Client:               saturnClient,
-		DoValidation:         false,
-		PoolRefresh:          time.Minute,
-		MaxRetrievalAttempts: 1,
-		MirrorFraction:       1.0,
-	}
-
-	c, err := caboose.NewCaboose(&conf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +47,7 @@ func TestPoolMirroring(t *testing.T) {
 	// Make 10 requests, and expect some fraction trigger a mirror.
 
 	for i := 0; i < 10; i++ {
-		_, err = c.Get(context.Background(), finalC)
+		_, err = ch.Caboose.Get(context.Background(), finalC)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,11 +55,43 @@ func TestPoolMirroring(t *testing.T) {
 	}
 
 	time.Sleep(100 * time.Millisecond)
-	c.Close()
+	ch.Caboose.Close()
 
-	ec := e.Count()
-	e2c := e2.Count()
+	ec := ch.Endpoints[0].Count()
+
+	e2c := ch.Endpoints[1].Count()
 	if ec+e2c < 10 {
 		t.Fatalf("expected at least 10 fetches, got %d", ec+e2c)
+	}
+}
+
+func TestFetchComplianceCid(t *testing.T) {
+	if unsafe.Sizeof(unsafe.Pointer(nil)) <= 4 {
+		t.Skip("skipping for 32bit architectures because too slow")
+	}
+
+	ch := util.BuildCabooseHarness(t, 1, 1, util.WithComplianceCidPeriod(1))
+
+	ch.CaboosePool.DoRefresh()
+
+	ls := cidlink.DefaultLinkSystem()
+	lsm := memstore.Store{}
+	ls.SetReadStorage(&lsm)
+	ls.SetWriteStorage(&lsm)
+	finalCL := ls.MustStore(ipld.LinkContext{}, cidlink.LinkPrototype{Prefix: cid.NewPrefixV1(uint64(multicodec.Raw), uint64(multicodec.Sha2_256))}, basicnode.NewBytes(testBlock))
+	finalC := finalCL.(cidlink.Link).Cid
+
+	_, err := ch.Caboose.Get(context.Background(), finalC)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	ch.Caboose.Close()
+
+	e := ch.Endpoints[0]
+
+	if e.Count() != 2 {
+		t.Fatalf("expected 2 primary fetch, got %d", e.Count())
 	}
 }
