@@ -2,6 +2,8 @@ package caboose_test
 
 import (
 	"context"
+	cryptoRand "crypto/rand"
+	"fmt"
 	"math/rand"
 	"net/url"
 	"testing"
@@ -15,8 +17,9 @@ import (
 )
 
 const (
-	nodesSize = 200
+	nodesSize = 6
 )
+const blockPathPattern = "/ipfs/%s?format=car&dag-scope=block"
 
 /*
 This function tests if the caboose pool converges to a set of nodes that are expected
@@ -209,6 +212,94 @@ func TestPoolDynamics(t *testing.T) {
 
 }
 
+func TestPoolAffinity(t *testing.T) {
+	baseStatSize := 100000
+	baseStatLatency := 100
+	// statVarianceFactor := 0.1
+	poolRefreshNo := 10
+	simReqCount := 10000
+	ctx := context.Background()
+	cidList := generateRandomCIDs(20)
+
+	t.Run("selected nodes remain consistent for same cid reqs", func(t *testing.T) {
+		ch, controlGroup := getHarnessAndControlGroup(t, nodesSize, nodesSize/2)
+		_, _ = ch.Caboose.Get(ctx, cidList[0])
+
+		goodNodes := make([]*caboose.Node, 0)
+		badNodes := make([]*caboose.Node, 0)
+
+		for _, n := range ch.CabooseAllNodes.Nodes {
+			_, ok := controlGroup[n.URL]
+			if ok {
+				goodNodes = append(goodNodes, n)
+			} else {
+				badNodes = append(badNodes, n)
+			}
+		}
+
+		// Send requests to control group nodes to bump their selection into the pool.
+		for i := 0; i < poolRefreshNo; i++ {
+			baseStats := util.NodeStats{
+				Start:   time.Now().Add(-time.Second * 2),
+				Latency: float64(baseStatLatency) / float64(10),
+				Size:    float64(baseStatSize) * float64(10),
+			}
+
+			ch.RecordSuccesses(t, goodNodes, baseStats, 1000)
+			ch.CaboosePool.DoRefresh()
+		}
+
+		// Make a bunch of requests to similar cids to establish a stable hashring
+		for i := 0; i < simReqCount; i++ {
+			rand.New(rand.NewSource(time.Now().Unix()))
+			idx := rand.Intn(len(cidList))
+			_, _ = ch.Caboose.Get(ctx, cidList[idx])
+		}
+		ch.CaboosePool.DoRefresh()
+
+		// Introduce new nodes by sendng same stats to those nodes.
+		for i := 0; i < poolRefreshNo/2; i++ {
+			baseStats := util.NodeStats{
+				Start:   time.Now().Add(-time.Second * 2),
+				Latency: float64(baseStatLatency) / float64(10),
+				Size:    float64(baseStatSize) * float64(10),
+			}
+
+			// variedStats := util.NodeStats{
+			// 	Start:   time.Now().Add(-time.Second * 2),
+			// 	Latency: float64(baseStatLatency) / (float64(10) + (1 + statVarianceFactor)),
+			// 	Size:    float64(baseStatSize) * float64(10) * (1 + statVarianceFactor),
+			// }
+
+			ch.RecordSuccesses(t, goodNodes, baseStats, 100)
+			ch.RecordSuccesses(t, badNodes, baseStats, 10)
+
+			ch.CaboosePool.DoRefresh()
+		}
+
+		// for _, i := range ch.CabooseAllNodes.Nodes {
+		// 	fmt.Println(i.URL, i.Priority(), i.PredictedLatency)
+		// }
+
+		// Get the candidate nodes for a few cids from our formed cid list using
+		// the affinity of each cid.
+		for i := 0; i < 10; i++ {
+			rand.New(rand.NewSource(time.Now().Unix()))
+			idx := rand.Intn(len(cidList))
+			c := cidList[idx]
+			aff := ch.Caboose.GetAffinity(ctx)
+			if aff == "" {
+				aff = fmt.Sprintf(blockPathPattern, c)
+			}
+			nodes, _ := ch.CabooseActiveNodes.GetNodes(aff, ch.Config.MaxRetrievalAttempts)
+
+			// We expect that the candidate nodes are part of the "good nodes" list.
+			assert.Contains(t, goodNodes, nodes[0])
+		}
+
+	})
+}
+
 func getHarnessAndControlGroup(t *testing.T, nodesSize int, poolSize int) (*util.CabooseHarness, map[string]string) {
 	ch := util.BuildCabooseHarness(t, nodesSize, 3, func(config *caboose.Config) {
 		config.PoolTargetSize = nodesSize / 2
@@ -230,4 +321,19 @@ func getHarnessAndControlGroup(t *testing.T, nodesSize int, poolSize int) (*util
 	}
 
 	return ch, controlGroup
+}
+
+func generateRandomCIDs(count int) []cid.Cid {
+	var cids []cid.Cid
+	for i := 0; i < count; i++ {
+		block := make([]byte, 32)
+		cryptoRand.Read(block)
+		c, _ := cid.V1Builder{
+			Codec:  uint64(multicodec.Raw),
+			MhType: uint64(multicodec.Sha2_256),
+		}.Sum(block)
+
+		cids = append(cids, c)
+	}
+	return cids
 }
