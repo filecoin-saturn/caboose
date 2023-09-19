@@ -292,7 +292,7 @@ func TestPoolAffinity(t *testing.T) {
 		}
 
 		// no more than 5 cids from the cid list of 20 should get re-routed (25%)
-		assert.LessOrEqual(t, rerouteCount, 4)
+		assert.LessOrEqual(t, rerouteCount, 5)
 	})
 }
 
