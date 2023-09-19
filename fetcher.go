@@ -55,7 +55,11 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 		return ce
 	}
 
-	ctx, span := spanTrace(ctx, "Pool.FetchResource", trace.WithAttributes(attribute.String("from", from.URL), attribute.String("of", resource), attribute.String("mime", mime)))
+	p.ActiveNodes.lk.RLock()
+	isCore := p.ActiveNodes.IsCore(from)
+	p.ActiveNodes.lk.RUnlock()
+
+	ctx, span := spanTrace(ctx, "Pool.FetchResource", trace.WithAttributes(attribute.String("from", from.URL), attribute.String("of", resource), attribute.String("mime", mime), attribute.Bool("core", isCore)))
 	defer span.End()
 
 	requestId := uuid.NewString()

@@ -17,6 +17,7 @@ const (
 type Node struct {
 	URL           string
 	ComplianceCid string
+	Core          bool
 
 	PredictedLatency     float64
 	PredictedThroughput  float64
@@ -31,6 +32,7 @@ func NewNode(info state.NodeInfo) *Node {
 	return &Node{
 		URL:           info.IP,
 		ComplianceCid: info.ComplianceCid,
+		Core:          info.Core,
 		Samples:       queue.New[NodeSample](),
 	}
 }

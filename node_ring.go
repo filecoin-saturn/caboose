@@ -137,6 +137,17 @@ func (nr *NodeRing) Contains(n *Node) bool {
 	return ok
 }
 
+func (nr *NodeRing) IsCore(n *Node) bool {
+	nr.lk.RLock()
+	defer nr.lk.RUnlock()
+
+	nd, ok := nr.Nodes[n.URL]
+	if !ok {
+		return false
+	}
+	return nd.Core
+}
+
 func (nr *NodeRing) GetNodes(key string, number int) ([]*Node, error) {
 	nr.lk.RLock()
 	defer nr.lk.RUnlock()
