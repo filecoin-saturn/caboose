@@ -222,8 +222,8 @@ func TestPoolAffinity(t *testing.T) {
 	cidList := generateRandomCIDs(20)
 
 	t.Run("selected nodes remain consistent for same cid reqs", func(t *testing.T) {
-		// 80 nodes will be in the good pool. 20 will be added later with the same stats
-		// so 20% of the nodes in the pool will eventually be "new nodes" that will be added later.
+		// 80 nodes will be in the good pool. 20 will be added later with the same stats.
+		// So, 20% of the nodes in the pool will eventually be "new nodes" that have been added later.
 		ch, controlGroup := getHarnessAndControlGroup(t, 100, 80)
 		_, _ = ch.Caboose.Get(ctx, cidList[0])
 
@@ -267,12 +267,6 @@ func TestPoolAffinity(t *testing.T) {
 				Size:    float64(baseStatSize) * float64(10),
 			}
 
-			// variedStats := util.NodeStats{
-			// 	Start:   time.Now().Add(-time.Second * 2),
-			// 	Latency: float64(baseStatLatency) / (float64(10) + (1 + statVarianceFactor)),
-			// 	Size:    float64(baseStatSize) * float64(10) * (1 + statVarianceFactor),
-			// }
-
 			ch.RecordSuccesses(t, goodNodes, baseStats, 100)
 			ch.RecordSuccesses(t, badNodes, baseStats, 10)
 
@@ -281,11 +275,7 @@ func TestPoolAffinity(t *testing.T) {
 
 		rerouteCount := 0
 
-		// for _, i := range ch.CabooseAllNodes.Nodes {
-		// 	fmt.Println(i.URL, i.Priority(), i.PredictedLatency)
-		// }
-
-		// Get the candidate nodes for each cid in the cid list to see
+		// Get the candidate nodes for each cid in the cid list to see if it's been rerouted to a new node.
 		for _, c := range cidList {
 			aff := ch.Caboose.GetAffinity(ctx)
 			if aff == "" {
