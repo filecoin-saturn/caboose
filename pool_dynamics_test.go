@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	nodesSize = 6
+	nodesSize = 200
 )
 
 /*
@@ -211,7 +211,7 @@ func TestPoolDynamics(t *testing.T) {
 
 func getHarnessAndControlGroup(t *testing.T, nodesSize int, poolSize int) (*util.CabooseHarness, map[string]string) {
 	ch := util.BuildCabooseHarness(t, nodesSize, 3, func(config *caboose.Config) {
-		config.PoolTargetSize = 3
+		config.PoolTargetSize = nodesSize / 2
 	})
 
 	ch.StartOrchestrator()
