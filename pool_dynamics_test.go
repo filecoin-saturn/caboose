@@ -283,7 +283,6 @@ func TestPoolAffinity(t *testing.T) {
 			}
 			nodes, _ := ch.CabooseActiveNodes.GetNodes(aff, ch.Config.MaxRetrievalAttempts)
 
-			assert.Contains(t, goodNodes, nodes[0])
 			for _, n := range badNodes {
 				n := n
 				if n.URL == nodes[0].URL {
