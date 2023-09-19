@@ -222,7 +222,9 @@ func TestPoolAffinity(t *testing.T) {
 	cidList := generateRandomCIDs(20)
 
 	t.Run("selected nodes remain consistent for same cid reqs", func(t *testing.T) {
-		ch, controlGroup := getHarnessAndControlGroup(t, nodesSize, nodesSize/2)
+		// 80 nodes will be in the good pool. 20 will be added later with the same stats
+		// so 20% of the nodes in the pool will eventually be "new nodes" that will be added later.
+		ch, controlGroup := getHarnessAndControlGroup(t, 100, 80)
 		_, _ = ch.Caboose.Get(ctx, cidList[0])
 
 		goodNodes := make([]*caboose.Node, 0)
@@ -277,26 +279,31 @@ func TestPoolAffinity(t *testing.T) {
 			ch.CaboosePool.DoRefresh()
 		}
 
+		rerouteCount := 0
+
 		// for _, i := range ch.CabooseAllNodes.Nodes {
 		// 	fmt.Println(i.URL, i.Priority(), i.PredictedLatency)
 		// }
 
-		// Get the candidate nodes for a few cids from our formed cid list using
-		// the affinity of each cid.
-		for i := 0; i < 10; i++ {
-			rand.New(rand.NewSource(time.Now().Unix()))
-			idx := rand.Intn(len(cidList))
-			c := cidList[idx]
+		// Get the candidate nodes for each cid in the cid list to see
+		for _, c := range cidList {
 			aff := ch.Caboose.GetAffinity(ctx)
 			if aff == "" {
 				aff = fmt.Sprintf(blockPathPattern, c)
 			}
 			nodes, _ := ch.CabooseActiveNodes.GetNodes(aff, ch.Config.MaxRetrievalAttempts)
 
-			// We expect that the candidate nodes are part of the "good nodes" list.
 			assert.Contains(t, goodNodes, nodes[0])
+			for _, n := range badNodes {
+				n := n
+				if n.URL == nodes[0].URL {
+					rerouteCount++
+				}
+			}
 		}
 
+		// no more than 5 cids from the cid list of 20 should get re-routed (25%)
+		assert.LessOrEqual(t, rerouteCount, 4)
 	})
 }
 
