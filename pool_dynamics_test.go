@@ -227,15 +227,15 @@ func TestPoolAffinity(t *testing.T) {
 		ch, controlGroup := getHarnessAndControlGroup(t, 100, 80)
 		_, _ = ch.Caboose.Get(ctx, cidList[0])
 
-		goodNodes := make([]*caboose.Node, 0)
-		badNodes := make([]*caboose.Node, 0)
+		existingNodes := make([]*caboose.Node, 0)
+		newNodes := make([]*caboose.Node, 0)
 
 		for _, n := range ch.CabooseAllNodes.Nodes {
 			_, ok := controlGroup[n.URL]
 			if ok {
-				goodNodes = append(goodNodes, n)
+				existingNodes = append(existingNodes, n)
 			} else {
-				badNodes = append(badNodes, n)
+				newNodes = append(newNodes, n)
 			}
 		}
 
@@ -247,7 +247,7 @@ func TestPoolAffinity(t *testing.T) {
 				Size:    float64(baseStatSize) * float64(10),
 			}
 
-			ch.RecordSuccesses(t, goodNodes, baseStats, 1000)
+			ch.RecordSuccesses(t, existingNodes, baseStats, 1000)
 			ch.CaboosePool.DoRefresh()
 		}
 
@@ -267,8 +267,8 @@ func TestPoolAffinity(t *testing.T) {
 				Size:    float64(baseStatSize) * float64(10),
 			}
 
-			ch.RecordSuccesses(t, goodNodes, baseStats, 100)
-			ch.RecordSuccesses(t, badNodes, baseStats, 10)
+			ch.RecordSuccesses(t, existingNodes, baseStats, 100)
+			ch.RecordSuccesses(t, newNodes, baseStats, 10)
 
 			ch.CaboosePool.DoRefresh()
 		}
@@ -283,7 +283,7 @@ func TestPoolAffinity(t *testing.T) {
 			}
 			nodes, _ := ch.CabooseActiveNodes.GetNodes(aff, ch.Config.MaxRetrievalAttempts)
 
-			for _, n := range badNodes {
+			for _, n := range newNodes {
 				n := n
 				if n.URL == nodes[0].URL {
 					rerouteCount++
