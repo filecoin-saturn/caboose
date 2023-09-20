@@ -220,7 +220,6 @@ func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error
 	ctx, span := spanTrace(ctx, "Fetch", trace.WithAttributes(attribute.String("path", path)))
 	defer span.End()
 
-
 	if err == nil {
 		sc := trace.NewSpanContext(trace.SpanContextConfig{
 			TraceID: tid,
@@ -230,7 +229,7 @@ func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error
 		ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
 	}
 
-	return c.pool.fetchResourceWith(ctx, path, cb, c.getAffinity(ctx))
+	return c.pool.fetchResourceWith(ctx, path, cb, c.GetAffinity(ctx))
 }
 
 func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
