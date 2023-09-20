@@ -2,6 +2,8 @@ package caboose_test
 
 import (
 	"context"
+	cryptoRand "crypto/rand"
+	"fmt"
 	"math/rand"
 	"net/url"
 	"testing"
@@ -17,6 +19,7 @@ import (
 const (
 	nodesSize = 6
 )
+const blockPathPattern = "/ipfs/%s?format=car&dag-scope=block"
 
 /*
 This function tests if the caboose pool converges to a set of nodes that are expected
@@ -209,9 +212,93 @@ func TestPoolDynamics(t *testing.T) {
 
 }
 
+func TestPoolAffinity(t *testing.T) {
+	baseStatSize := 100000
+	baseStatLatency := 100
+	// statVarianceFactor := 0.1
+	poolRefreshNo := 10
+	simReqCount := 10000
+	ctx := context.Background()
+	cidList := generateRandomCIDs(20)
+
+	t.Run("selected nodes remain consistent for same cid reqs", func(t *testing.T) {
+		// 80 nodes will be in the good pool. 20 will be added later with the same stats.
+		// So, 20% of the nodes in the pool will eventually be "new nodes" that have been added later.
+		ch, controlGroup := getHarnessAndControlGroup(t, 100, 80)
+		_, _ = ch.Caboose.Get(ctx, cidList[0])
+
+		existingNodes := make([]*caboose.Node, 0)
+		newNodes := make([]*caboose.Node, 0)
+
+		for _, n := range ch.CabooseAllNodes.Nodes {
+			_, ok := controlGroup[n.URL]
+			if ok {
+				existingNodes = append(existingNodes, n)
+			} else {
+				newNodes = append(newNodes, n)
+			}
+		}
+
+		// Send requests to control group nodes to bump their selection into the pool.
+		for i := 0; i < poolRefreshNo; i++ {
+			baseStats := util.NodeStats{
+				Start:   time.Now().Add(-time.Second * 2),
+				Latency: float64(baseStatLatency) / float64(10),
+				Size:    float64(baseStatSize) * float64(10),
+			}
+
+			ch.RecordSuccesses(t, existingNodes, baseStats, 1000)
+			ch.CaboosePool.DoRefresh()
+		}
+
+		// Make a bunch of requests to similar cids to establish a stable hashring
+		for i := 0; i < simReqCount; i++ {
+			rand.New(rand.NewSource(time.Now().Unix()))
+			idx := rand.Intn(len(cidList))
+			_, _ = ch.Caboose.Get(ctx, cidList[idx])
+		}
+		ch.CaboosePool.DoRefresh()
+
+		// Introduce new nodes by sendng same stats to those nodes.
+		for i := 0; i < poolRefreshNo/2; i++ {
+			baseStats := util.NodeStats{
+				Start:   time.Now().Add(-time.Second * 2),
+				Latency: float64(baseStatLatency) / float64(10),
+				Size:    float64(baseStatSize) * float64(10),
+			}
+
+			ch.RecordSuccesses(t, existingNodes, baseStats, 100)
+			ch.RecordSuccesses(t, newNodes, baseStats, 10)
+
+			ch.CaboosePool.DoRefresh()
+		}
+
+		rerouteCount := 0
+
+		// Get the candidate nodes for each cid in the cid list to see if it's been rerouted to a new node.
+		for _, c := range cidList {
+			aff := ch.Caboose.GetAffinity(ctx)
+			if aff == "" {
+				aff = fmt.Sprintf(blockPathPattern, c)
+			}
+			nodes, _ := ch.CabooseActiveNodes.GetNodes(aff, ch.Config.MaxRetrievalAttempts)
+
+			for _, n := range newNodes {
+				n := n
+				if n.URL == nodes[0].URL {
+					rerouteCount++
+				}
+			}
+		}
+
+		// no more than 5 cids from the cid list of 20 should get re-routed (25%)
+		assert.LessOrEqual(t, rerouteCount, 5)
+	})
+}
+
 func getHarnessAndControlGroup(t *testing.T, nodesSize int, poolSize int) (*util.CabooseHarness, map[string]string) {
 	ch := util.BuildCabooseHarness(t, nodesSize, 3, func(config *caboose.Config) {
-		config.PoolTargetSize = 3
+		config.PoolTargetSize = nodesSize / 2
 	})
 
 	ch.StartOrchestrator()
@@ -230,4 +317,19 @@ func getHarnessAndControlGroup(t *testing.T, nodesSize int, poolSize int) (*util
 	}
 
 	return ch, controlGroup
+}
+
+func generateRandomCIDs(count int) []cid.Cid {
+	var cids []cid.Cid
+	for i := 0; i < count; i++ {
+		block := make([]byte, 32)
+		cryptoRand.Read(block)
+		c, _ := cid.V1Builder{
+			Codec:  uint64(multicodec.Raw),
+			MhType: uint64(multicodec.Sha2_256),
+		}.Sum(block)
+
+		cids = append(cids, c)
+	}
+	return cids
 }

@@ -220,6 +220,7 @@ func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error
 	ctx, span := spanTrace(ctx, "Fetch", trace.WithAttributes(attribute.String("path", path)))
 	defer span.End()
 
+
 	if err == nil {
 		sc := trace.NewSpanContext(trace.SpanContextConfig{
 			TraceID: tid,
@@ -236,7 +237,7 @@ func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
 	ctx, span := spanTrace(ctx, "Has", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
-	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.pool.fetchBlockWith(ctx, it, c.GetAffinity(ctx))
 	if err != nil {
 		return false, err
 	}
@@ -247,7 +248,7 @@ func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
 	ctx, span := spanTrace(ctx, "Get", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
-	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.pool.fetchBlockWith(ctx, it, c.GetAffinity(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -259,14 +260,14 @@ func (c *Caboose) GetSize(ctx context.Context, it cid.Cid) (int, error) {
 	ctx, span := spanTrace(ctx, "GetSize", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
-	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.pool.fetchBlockWith(ctx, it, c.GetAffinity(ctx))
 	if err != nil {
 		return 0, err
 	}
 	return len(blk.RawData()), nil
 }
 
-func (c *Caboose) getAffinity(ctx context.Context) string {
+func (c *Caboose) GetAffinity(ctx context.Context) string {
 	// https://github.com/ipfs/bifrost-gateway/issues/53#issuecomment-1442732865
 	if affG := ctx.Value(gateway.ContentPathKey); affG != nil {
 		contentPath := affG.(ipath.Path).String()

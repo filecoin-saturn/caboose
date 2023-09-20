@@ -92,6 +92,7 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 	ch.CabooseActiveNodes = conf.Harness.ActiveNodes.(*caboose.NodeRing)
 	ch.CabooseAllNodes = conf.Harness.AllNodes.(*caboose.NodeHeap)
 	ch.CaboosePool = conf.Harness.PoolController
+	ch.Config = conf
 	return ch
 }
 
@@ -102,6 +103,7 @@ type CabooseHarness struct {
 	CabooseActiveNodes *caboose.NodeRing
 	CabooseAllNodes    *caboose.NodeHeap
 	CaboosePool        state.PoolController
+	Config             *caboose.Config
 
 	gol      sync.Mutex
 	goodOrch bool
