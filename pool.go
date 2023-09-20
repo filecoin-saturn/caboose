@@ -2,15 +2,18 @@ package caboose
 
 import (
 	"context"
+	cryptoRand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/filecoin-saturn/caboose/internal/state"
 	"io"
+	"math/big"
 	"math/rand"
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/filecoin-saturn/caboose/internal/state"
 
 	"github.com/patrickmn/go-cache"
 
@@ -25,9 +28,11 @@ const (
 	defaultMirroredConcurrency = 5
 )
 
+var complianceCidReqTemplate = "/ipfs/%s?format=raw"
+
 // loadPool refreshes the set of endpoints in the pool by fetching an updated list of nodes from the
 // Orchestrator.
-func (p *pool) loadPool() ([]string, error) {
+func (p *pool) loadPool() ([]state.NodeInfo, error) {
 	if p.config.OrchestratorOverride != nil {
 		return p.config.OrchestratorOverride, nil
 	}
@@ -48,13 +53,7 @@ func (p *pool) loadPool() ([]string, error) {
 
 	goLogger.Infow("got backends from orchestrators", "cnt", len(responses), "endpoint", p.config.OrchestratorEndpoint.String())
 
-	var ips []string
-
-	for _, r := range responses {
-		ips = append(ips, r.IP)
-	}
-
-	return ips, nil
+	return responses, nil
 }
 
 type mirroredPoolRequest struct {
@@ -149,6 +148,20 @@ func (p *pool) refreshPool() {
 	}
 }
 
+func (p *pool) fetchComplianceCid(node *Node) error {
+	sc := node.ComplianceCid
+	if len(node.ComplianceCid) == 0 {
+		goLogger.Warnw("failed to find compliance cid ", "for node", node)
+		return fmt.Errorf("compliance cid doesn't exist for node: %s ", node)
+	}
+	trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	reqUrl := fmt.Sprintf(complianceCidReqTemplate, sc)
+	goLogger.Debugw("fetching compliance cid", "cid", reqUrl, "from", node)
+	err := p.fetchResourceAndUpdate(trialTimeout, node, reqUrl, 0, p.mirrorValidator)
+	cancel()
+	return err
+}
+
 func (p *pool) checkPool() {
 	sem := make(chan struct{}, defaultMirroredConcurrency)
 
@@ -156,7 +169,6 @@ func (p *pool) checkPool() {
 		select {
 		case msg := <-p.mirrorSamples:
 			sem <- struct{}{}
-
 			go func(msg mirroredPoolRequest) {
 				defer func() { <-sem }()
 
@@ -169,11 +181,26 @@ func (p *pool) checkPool() {
 					return
 				}
 				if p.ActiveNodes.Contains(testNode) {
+					rand := big.NewInt(1)
+					if p.config.ComplianceCidPeriod > 0 {
+						rand, _ = cryptoRand.Int(cryptoRand.Reader, big.NewInt(p.config.ComplianceCidPeriod))
+					}
+
+					if rand.Cmp(big.NewInt(0)) == 0 {
+						err := p.fetchComplianceCid(testNode)
+						if err != nil {
+							goLogger.Warnw("failed to fetch compliance cid ", "err", err)
+							complianceCidCallsTotalMetric.WithLabelValues("error").Add(1)
+						} else {
+							complianceCidCallsTotalMetric.WithLabelValues("success").Add(1)
+						}
+					}
 					return
 				}
 
 				trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				err := p.fetchResourceAndUpdate(trialTimeout, testNode, msg.path, 0, p.mirrorValidator)
+
 				cancel()
 				if err != nil {
 					mirroredTrafficTotalMetric.WithLabelValues("error").Inc()

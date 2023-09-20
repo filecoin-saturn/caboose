@@ -2,6 +2,7 @@ package caboose
 
 import (
 	"container/heap"
+	"math/rand"
 	"sync"
 )
 
@@ -45,8 +46,13 @@ func (nh *NodeHeap) Best() *Node {
 func (nh *NodeHeap) PeekRandom() *Node {
 	nh.lk.RLock()
 	defer nh.lk.RUnlock()
-	// TODO
-	return nil
+
+	if len(nh.Nodes) == 0 {
+		return nil
+	}
+
+	randIdx := rand.Intn(len(nh.Nodes))
+	return nh.Nodes[randIdx]
 }
 
 func (nh *NodeHeap) TopN(n int) []*Node {

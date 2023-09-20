@@ -33,7 +33,7 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 		ch.Endpoints[i].Setup()
 		ip := strings.TrimPrefix(ch.Endpoints[i].Server.URL, "https://")
 
-		cid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte(ip))
+		cid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte(testBlock))
 
 		purls[i] = state.NodeInfo{
 			IP:            ip,
@@ -77,6 +77,8 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 		PoolRefresh:          time.Second * 50,
 		MaxRetrievalAttempts: maxRetries,
 		Harness:              &state.State{},
+
+		MirrorFraction: 1.0,
 	}
 
 	for _, opt := range opts {
@@ -254,6 +256,18 @@ type HarnessOption func(config *caboose.Config)
 func WithMaxFailuresBeforeCoolDown(max int) func(config *caboose.Config) {
 	return func(config *caboose.Config) {
 		config.MaxFetchFailuresBeforeCoolDown = max
+	}
+}
+
+func WithComplianceCidPeriod(n int64) func(config *caboose.Config) {
+	return func(config *caboose.Config) {
+		config.ComplianceCidPeriod = n
+	}
+}
+
+func WithMirrorFraction(n float64) func(config *caboose.Config) {
+	return func(config *caboose.Config) {
+		config.MirrorFraction = n
 	}
 }
 

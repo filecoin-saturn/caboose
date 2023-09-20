@@ -1,8 +1,12 @@
 package caboose
 
 import (
+	"math/rand"
 	"testing"
 
+	"github.com/filecoin-saturn/caboose/internal/state"
+	"github.com/ipfs/go-cid"
+	"github.com/multiformats/go-multicodec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,8 +33,25 @@ func TestPoolRefresh(t *testing.T) {
 }
 
 func addAndAssertPool(t *testing.T, p *pool, nodes []string, expectedTotal int) {
-	for _, n := range nodes {
+	nodeStructs := genNodeStructs(nodes)
+	for _, n := range nodeStructs {
 		p.AllNodes.AddIfNotPresent(NewNode(n))
 	}
 	require.Equal(t, expectedTotal, p.AllNodes.Len())
+}
+
+func genNodeStructs(nodes []string) []state.NodeInfo {
+	var nodeStructs []state.NodeInfo
+
+	for _, node := range nodes {
+		cid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte(node))
+		nodeStructs = append(nodeStructs, state.NodeInfo{
+			IP:            node,
+			ID:            node,
+			Weight:        rand.Intn(100),
+			Distance:      rand.Float32(),
+			ComplianceCid: cid.String(),
+		})
+	}
+	return nodeStructs
 }

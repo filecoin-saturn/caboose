@@ -2,11 +2,11 @@ package caboose
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
 
 	requestcontext "github.com/willscott/go-requestcontext"
@@ -34,7 +34,7 @@ type Config struct {
 	// OrchestratorClient is the HTTP client to use when communicating with the orchestrator.
 	OrchestratorClient *http.Client
 	// OrchestratorOverride replaces calls to the orchestrator with a fixed response.
-	OrchestratorOverride []string
+	OrchestratorOverride []state.NodeInfo
 
 	// LoggingEndpoint is the URL of the logging endpoint where we submit logs pertaining to retrieval requests.
 	LoggingEndpoint url.URL
@@ -81,6 +81,9 @@ type Config struct {
 
 	// Harness is an internal test harness that is set during testing.
 	Harness *state.State
+
+	// ComplianceCidPeriod controls how many requests caboose makes on average before requesting a compliance cid
+	ComplianceCidPeriod int64
 }
 
 const DefaultLoggingInterval = 5 * time.Second
@@ -95,9 +98,11 @@ const defaultMaxRetries = 3
 // default percentage of requests to mirror for tracking how nodes perform unless overridden by MirrorFraction
 const defaultMirrorFraction = 0.01
 
-const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=200"
+const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes?maxNodes=200"
 const DefaultPoolRefreshInterval = 5 * time.Minute
 const DefaultPoolTargetSize = 30
+
+const DefaultComplianceCidPeriod = int64(100)
 
 // we cool off sending requests for a cid for a certain duration
 // if we've seen a certain number of failures for it already in a given duration.
@@ -137,7 +142,13 @@ func NewCaboose(config *Config) (*Caboose, error) {
 		config.MirrorFraction = defaultMirrorFraction
 	}
 	if override := os.Getenv(BackendOverrideKey); len(override) > 0 {
-		config.OrchestratorOverride = strings.Split(override, ",")
+		var overrideNodes []state.NodeInfo
+		err := json.Unmarshal([]byte(override), &overrideNodes)
+		if err != nil {
+			goLogger.Warnf("Error parsing BackendOverrideKey:", "err", err)
+			return nil, err
+		}
+		config.OrchestratorOverride = overrideNodes
 	}
 	if config.PoolTargetSize == 0 {
 		config.PoolTargetSize = DefaultPoolTargetSize
@@ -164,6 +175,10 @@ func NewCaboose(config *Config) (*Caboose, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if c.config.ComplianceCidPeriod == 0 {
+		c.config.ComplianceCidPeriod = DefaultComplianceCidPeriod
 	}
 
 	if c.config.PoolRefresh == 0 {
