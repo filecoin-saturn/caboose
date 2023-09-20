@@ -7,10 +7,13 @@ import (
 	"hash/crc32"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -52,7 +55,11 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 		return ce
 	}
 
-	ctx, span := spanTrace(ctx, "Pool.FetchResource", trace.WithAttributes(attribute.String("from", from.URL), attribute.String("of", resource), attribute.String("mime", mime)))
+	p.ActiveNodes.lk.RLock()
+	isCore := p.ActiveNodes.IsCore(from)
+	p.ActiveNodes.lk.RUnlock()
+
+	ctx, span := spanTrace(ctx, "Pool.FetchResource", trace.WithAttributes(attribute.String("from", from.URL), attribute.String("of", resource), attribute.String("mime", mime), attribute.Bool("core", isCore)))
 	defer span.End()
 
 	requestId := uuid.NewString()
@@ -66,12 +73,20 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 	proto := "unknown"
 	respReq := &http.Request{}
 	received := 0
-	reqUrl := fmt.Sprintf("https://%s%s", from.URL, resource)
+
+	reqUrl := ""
+	if strings.Contains(from.URL, "://") {
+		reqUrl = fmt.Sprintf("%s%s", from.URL, resource)
+	} else {
+		reqUrl = fmt.Sprintf("https://%s%s", from.URL, resource)
+	}
+
 	var respHeader http.Header
 	saturnNodeId := ""
 	saturnTransferId := ""
 	isCacheHit := false
 	networkError := ""
+	verificationError := ""
 
 	isBlockRequest := false
 	if mime == "application/vnd.ipld.raw" {
@@ -99,10 +114,6 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 			cacheHit := respHeader.Get(saturnCacheHitKey)
 			if cacheHit == saturnCacheHit {
 				isCacheHit = true
-			}
-
-			for k, v := range respHeader {
-				received = received + len(k) + len(v)
 			}
 		}
 
@@ -156,12 +167,13 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 					HTTPProtocol:       proto,
 					TTFBMS:             int(ttfbMs),
 					// my address
-					Range:          "",
-					Referrer:       respReq.Referer(),
-					UserAgent:      respReq.UserAgent(),
-					NodeId:         saturnNodeId,
-					NodeIpAddress:  from.URL,
-					IfNetworkError: networkError,
+					Range:             "",
+					Referrer:          respReq.Referer(),
+					UserAgent:         respReq.UserAgent(),
+					NodeId:            saturnNodeId,
+					NodeIpAddress:     from.URL,
+					IfNetworkError:    networkError,
+					VerificationError: verificationError,
 				}
 			}
 		}
@@ -178,7 +190,9 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 
 	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, reqUrl, nil)
+	clientTrace := otelhttptrace.NewClientTrace(reqCtx)
+	subReqCtx := httptrace.WithClientTrace(reqCtx, clientTrace)
+	req, err := http.NewRequestWithContext(subReqCtx, http.MethodGet, reqUrl, nil)
 	if err != nil {
 		if isCtxError(reqCtx) {
 			return reqCtx.Err()
@@ -282,8 +296,6 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 	wrapped := TrackingReader{resp.Body, time.Time{}, 0}
 	err = cb(resource, &wrapped)
 	received = wrapped.len
-	// drain body so it can be re-used.
-	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if err != nil {
 		if isCtxError(reqCtx) {
@@ -298,7 +310,15 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 			saturnCallsFailureTotalMetric.WithLabelValues(resourceType, fmt.Sprintf("failed-response-read-%s", getCacheStatus(isCacheHit)), fmt.Sprintf("%d", code)).Add(1)
 		}
 
-		networkError = err.Error()
+		var target = ErrInvalidResponse{}
+		if errors.As(err, &target) {
+			verificationError = err.Error()
+			goLogger.Errorw("failed to read response; verification error", "err", err.Error())
+		} else {
+			networkError = err.Error()
+			goLogger.Errorw("failed to read response; no verification error", "err", err.Error())
+		}
+
 		return err
 	}
 

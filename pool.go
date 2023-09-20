@@ -2,14 +2,18 @@ package caboose
 
 import (
 	"context"
+	cryptoRand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"math/rand"
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/filecoin-saturn/caboose/internal/state"
 
 	"github.com/patrickmn/go-cache"
 
@@ -19,11 +23,16 @@ import (
 	"github.com/ipld/go-car"
 )
 
-const blockPathPattern = "/ipfs/%s?format=car&dag-scope=block"
+const (
+	blockPathPattern           = "/ipfs/%s?format=car&dag-scope=block"
+	defaultMirroredConcurrency = 5
+)
+
+var complianceCidReqTemplate = "/ipfs/%s?format=raw"
 
 // loadPool refreshes the set of endpoints in the pool by fetching an updated list of nodes from the
 // Orchestrator.
-func (p *pool) loadPool() ([]string, error) {
+func (p *pool) loadPool() ([]state.NodeInfo, error) {
 	if p.config.OrchestratorOverride != nil {
 		return p.config.OrchestratorOverride, nil
 	}
@@ -35,12 +44,15 @@ func (p *pool) loadPool() ([]string, error) {
 	}
 	defer resp.Body.Close()
 
-	responses := make([]string, 0)
+	responses := make([]state.NodeInfo, 0)
+
 	if err := json.NewDecoder(resp.Body).Decode(&responses); err != nil {
 		goLogger.Warnw("failed to decode backends from orchestrator", "err", err, "endpoint", p.config.OrchestratorEndpoint.String())
 		return nil, err
 	}
+
 	goLogger.Infow("got backends from orchestrators", "cnt", len(responses), "endpoint", p.config.OrchestratorEndpoint.String())
+
 	return responses, nil
 }
 
@@ -136,30 +148,67 @@ func (p *pool) refreshPool() {
 	}
 }
 
+func (p *pool) fetchComplianceCid(node *Node) error {
+	sc := node.ComplianceCid
+	if len(node.ComplianceCid) == 0 {
+		goLogger.Warnw("failed to find compliance cid ", "for node", node)
+		return fmt.Errorf("compliance cid doesn't exist for node: %s ", node)
+	}
+	trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	reqUrl := fmt.Sprintf(complianceCidReqTemplate, sc)
+	goLogger.Debugw("fetching compliance cid", "cid", reqUrl, "from", node)
+	err := p.fetchResourceAndUpdate(trialTimeout, node, reqUrl, 0, p.mirrorValidator)
+	cancel()
+	return err
+}
+
 func (p *pool) checkPool() {
+	sem := make(chan struct{}, defaultMirroredConcurrency)
+
 	for {
 		select {
 		case msg := <-p.mirrorSamples:
-			// see if it is to a main-tier node - if so find appropriate test node to test against.
-			if !p.ActiveNodes.Contains(msg.node) {
-				continue
-			}
-			testNode := p.AllNodes.PeekRandom()
-			if testNode == nil {
-				continue
-			}
-			if p.ActiveNodes.Contains(testNode) {
-				continue
-			}
+			sem <- struct{}{}
+			go func(msg mirroredPoolRequest) {
+				defer func() { <-sem }()
 
-			trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			err := p.fetchResourceAndUpdate(trialTimeout, testNode, msg.path, 0, p.mirrorValidator)
-			cancel()
-			if err != nil {
-				mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
-			} else {
-				mirroredTrafficTotalMetric.WithLabelValues("no-error").Inc()
-			}
+				// see if it is to a main-tier node - if so find appropriate test node to test against.
+				if !p.ActiveNodes.Contains(msg.node) {
+					return
+				}
+				testNode := p.AllNodes.PeekRandom()
+				if testNode == nil {
+					return
+				}
+				if p.ActiveNodes.Contains(testNode) {
+					rand := big.NewInt(1)
+					if p.config.ComplianceCidPeriod > 0 {
+						rand, _ = cryptoRand.Int(cryptoRand.Reader, big.NewInt(p.config.ComplianceCidPeriod))
+					}
+
+					if rand.Cmp(big.NewInt(0)) == 0 {
+						err := p.fetchComplianceCid(testNode)
+						if err != nil {
+							goLogger.Warnw("failed to fetch compliance cid ", "err", err)
+							complianceCidCallsTotalMetric.WithLabelValues("error").Add(1)
+						} else {
+							complianceCidCallsTotalMetric.WithLabelValues("success").Add(1)
+						}
+					}
+					return
+				}
+
+				trialTimeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				err := p.fetchResourceAndUpdate(trialTimeout, testNode, msg.path, 0, p.mirrorValidator)
+
+				cancel()
+				if err != nil {
+					mirroredTrafficTotalMetric.WithLabelValues("error").Inc()
+				} else {
+					mirroredTrafficTotalMetric.WithLabelValues("no-error").Inc()
+				}
+			}(msg)
+
 		case <-p.done:
 			return
 		}
@@ -189,7 +238,7 @@ func (p *pool) mirrorValidator(resource string, reader io.Reader) error {
 		return err
 	}
 
-	br, err := car.NewCarReader(reader)
+	br, err := car.NewCarReaderWithOptions(reader, car.WithErrorOnEmptyRoots(false))
 	if err != nil {
 		return err
 	}
@@ -323,6 +372,7 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 			default:
 			}
 		}
+		old := pq[0]
 		err = p.fetchResourceAndUpdate(ctx, nodes[i], pq[0], i, cb)
 		if err != nil && errors.Is(err, context.Canceled) {
 			return err
@@ -337,6 +387,8 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 				//fetchSpeedPerBlockMetric.Observe(float64(float64(len(blk.RawData())) / float64(durationMs)))
 				fetchDurationCarSuccessMetric.Observe(float64(durationMs))
 				return
+			} else if pq[0] == old {
+				continue
 			} else {
 				// TODO: potentially worth doing something smarter here based on what the current state
 				// of permanent vs temporary errors is.
@@ -352,11 +404,16 @@ func (p *pool) fetchResourceWith(ctx context.Context, path string, cb DataCallba
 			}
 			pq = pq[1:]
 			pq = append(pq, epr.StillNeed...)
-			// TODO: potentially worth doing something smarter here based on what the current state
-			// of permanent vs temporary errors is.
 
-			// for now: reset i on partials so we also give them a chance to retry.
-			i = -1
+			if pq[0] == old {
+				continue
+			} else {
+				// TODO: potentially worth doing something smarter here based on what the current state
+				// of permanent vs temporary errors is.
+
+				// for now: reset i on partials so we also give them a chance to retry.
+				i = -1
+			}
 		}
 	}
 

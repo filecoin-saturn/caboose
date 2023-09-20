@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -26,11 +27,21 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 	ch := &CabooseHarness{}
 
 	ch.Endpoints = make([]*Endpoint, n)
-	purls := make([]string, n)
+	purls := make([]state.NodeInfo, n)
 	for i := 0; i < len(ch.Endpoints); i++ {
 		ch.Endpoints[i] = &Endpoint{}
 		ch.Endpoints[i].Setup()
-		purls[i] = strings.TrimPrefix(ch.Endpoints[i].Server.URL, "https://")
+		ip := strings.TrimPrefix(ch.Endpoints[i].Server.URL, "https://")
+
+		cid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte(testBlock))
+
+		purls[i] = state.NodeInfo{
+			IP:            ip,
+			ID:            "node-id",
+			Weight:        rand.Intn(100),
+			Distance:      rand.Float32(),
+			ComplianceCid: cid.String(),
+		}
 	}
 	ch.goodOrch = true
 	orch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -66,6 +77,8 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 		PoolRefresh:          time.Second * 50,
 		MaxRetrievalAttempts: maxRetries,
 		Harness:              &state.State{},
+
+		MirrorFraction: 1.0,
 	}
 
 	for _, opt := range opts {
@@ -245,6 +258,18 @@ type HarnessOption func(config *caboose.Config)
 func WithMaxFailuresBeforeCoolDown(max int) func(config *caboose.Config) {
 	return func(config *caboose.Config) {
 		config.MaxFetchFailuresBeforeCoolDown = max
+	}
+}
+
+func WithComplianceCidPeriod(n int64) func(config *caboose.Config) {
+	return func(config *caboose.Config) {
+		config.ComplianceCidPeriod = n
+	}
+}
+
+func WithMirrorFraction(n float64) func(config *caboose.Config) {
+	return func(config *caboose.Config) {
+		config.MirrorFraction = n
 	}
 }
 
