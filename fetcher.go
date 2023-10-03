@@ -87,6 +87,7 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 	isCacheHit := false
 	networkError := ""
 	verificationError := ""
+	otherError := ""
 
 	isBlockRequest := false
 	if mime == "application/vnd.ipld.raw" {
@@ -174,6 +175,7 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 					NodeIpAddress:     from.URL,
 					IfNetworkError:    networkError,
 					VerificationError: verificationError,
+					OtherError:        otherError,
 				}
 			}
 		}
@@ -315,7 +317,7 @@ func (p *pool) fetchResource(ctx context.Context, from *Node, resource string, m
 			verificationError = err.Error()
 			goLogger.Errorw("failed to read response; verification error", "err", err.Error())
 		} else {
-			networkError = err.Error()
+			otherError = err.Error()
 			goLogger.Errorw("failed to read response; no verification error", "err", err.Error())
 		}
 

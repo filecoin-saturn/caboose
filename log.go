@@ -105,4 +105,5 @@ type log struct {
 	IfNetworkError     string    `json:"ifNetworkError"`
 	NodeIpAddress      string    `json:"nodeIpAddress"`
 	VerificationError  string    `json:"verificationError"`
+	OtherError         string    `json:"otherError"`
 }
