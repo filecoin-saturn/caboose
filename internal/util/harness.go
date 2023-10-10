@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -26,11 +27,21 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 	ch := &CabooseHarness{}
 
 	ch.Endpoints = make([]*Endpoint, n)
-	purls := make([]string, n)
+	purls := make([]state.NodeInfo, n)
 	for i := 0; i < len(ch.Endpoints); i++ {
 		ch.Endpoints[i] = &Endpoint{}
 		ch.Endpoints[i].Setup()
-		purls[i] = strings.TrimPrefix(ch.Endpoints[i].Server.URL, "https://")
+		ip := strings.TrimPrefix(ch.Endpoints[i].Server.URL, "https://")
+
+		cid, _ := cid.V1Builder{Codec: uint64(multicodec.Raw), MhType: uint64(multicodec.Sha2_256)}.Sum([]byte(testBlock))
+
+		purls[i] = state.NodeInfo{
+			IP:            ip,
+			ID:            "node-id",
+			Weight:        rand.Intn(100),
+			Distance:      rand.Float32(),
+			ComplianceCid: cid.String(),
+		}
 	}
 	ch.goodOrch = true
 	orch := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -63,9 +74,11 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 
 		Client:               saturnClient,
 		DoValidation:         false,
-		PoolRefresh:          time.Millisecond * 50,
+		PoolRefresh:          time.Second * 50,
 		MaxRetrievalAttempts: maxRetries,
 		Harness:              &state.State{},
+
+		MirrorFraction: 1.0,
 	}
 
 	for _, opt := range opts {
@@ -78,6 +91,8 @@ func BuildCabooseHarness(t *testing.T, n int, maxRetries int, opts ...HarnessOpt
 	ch.Caboose = bs
 	ch.CabooseActiveNodes = conf.Harness.ActiveNodes.(*caboose.NodeRing)
 	ch.CabooseAllNodes = conf.Harness.AllNodes.(*caboose.NodeHeap)
+	ch.CaboosePool = conf.Harness.PoolController
+	ch.Config = conf
 	return ch
 }
 
@@ -87,9 +102,17 @@ type CabooseHarness struct {
 
 	CabooseActiveNodes *caboose.NodeRing
 	CabooseAllNodes    *caboose.NodeHeap
+	CaboosePool        state.PoolController
+	Config             *caboose.Config
 
 	gol      sync.Mutex
 	goodOrch bool
+}
+
+type NodeStats struct {
+	Start   time.Time
+	Latency float64
+	Size    float64
 }
 
 func (ch *CabooseHarness) RunFetchesForRandCids(n int) {
@@ -120,6 +143,23 @@ func (ch *CabooseHarness) FetchAndAssertSuccess(t *testing.T, ctx context.Contex
 	blk, err := ch.Caboose.Get(ctx, c)
 	require.NoError(t, err)
 	require.NotEmpty(t, blk)
+}
+
+func (ch *CabooseHarness) RecordSuccesses(t *testing.T, nodes []*caboose.Node, s NodeStats, n int) {
+	for _, node := range nodes {
+		s.Start = time.Now().Add(-time.Second * 5)
+		for i := 0; i < n; i++ {
+			node.RecordSuccess(s.Start, s.Latency, s.Size)
+		}
+	}
+}
+
+func (ch *CabooseHarness) RecordFailures(t *testing.T, nodes []*caboose.Node, n int) {
+	for _, node := range nodes {
+		for i := 0; i < n; i++ {
+			node.RecordFailure()
+		}
+	}
 }
 
 func (ch *CabooseHarness) FailNodesWithCode(t *testing.T, selectorF func(ep *Endpoint) bool, code int) {
@@ -218,6 +258,18 @@ type HarnessOption func(config *caboose.Config)
 func WithMaxFailuresBeforeCoolDown(max int) func(config *caboose.Config) {
 	return func(config *caboose.Config) {
 		config.MaxFetchFailuresBeforeCoolDown = max
+	}
+}
+
+func WithComplianceCidPeriod(n int64) func(config *caboose.Config) {
+	return func(config *caboose.Config) {
+		config.ComplianceCidPeriod = n
+	}
+}
+
+func WithMirrorFraction(n float64) func(config *caboose.Config) {
+	return func(config *caboose.Config) {
+		config.MirrorFraction = n
 	}
 }
 

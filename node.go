@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/filecoin-saturn/caboose/internal/state"
 	"github.com/zyedidia/generic/queue"
 )
 
@@ -14,7 +15,9 @@ const (
 )
 
 type Node struct {
-	URL string
+	URL           string
+	ComplianceCid string
+	Core          bool
 
 	PredictedLatency     float64
 	PredictedThroughput  float64
@@ -25,10 +28,12 @@ type Node struct {
 	lk        sync.RWMutex
 }
 
-func NewNode(url string) *Node {
+func NewNode(info state.NodeInfo) *Node {
 	return &Node{
-		URL:     url,
-		Samples: queue.New[NodeSample](),
+		URL:           info.IP,
+		ComplianceCid: info.ComplianceCid,
+		Core:          info.Core,
+		Samples:       queue.New[NodeSample](),
 	}
 }
 
@@ -130,4 +135,8 @@ func (n *Node) Rate() float64 {
 	}
 	last := n.Samples.Peek()
 	return float64(len) / float64(time.Since(last.Start))
+}
+
+func (n *Node) String() string {
+	return n.URL
 }

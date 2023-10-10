@@ -2,18 +2,22 @@ package caboose
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"time"
+
+	requestcontext "github.com/willscott/go-requestcontext"
 
 	ipfsblockstore "github.com/ipfs/boxo/blockstore"
 	ipath "github.com/ipfs/boxo/coreiface/path"
 	gateway "github.com/ipfs/boxo/gateway"
 	blocks "github.com/ipfs/go-block-format"
 	"github.com/ipfs/go-cid"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -30,7 +34,7 @@ type Config struct {
 	// OrchestratorClient is the HTTP client to use when communicating with the orchestrator.
 	OrchestratorClient *http.Client
 	// OrchestratorOverride replaces calls to the orchestrator with a fixed response.
-	OrchestratorOverride []string
+	OrchestratorOverride []state.NodeInfo
 
 	// LoggingEndpoint is the URL of the logging endpoint where we submit logs pertaining to retrieval requests.
 	LoggingEndpoint url.URL
@@ -55,6 +59,9 @@ type Config struct {
 	// PoolRefresh is the interval at which we refresh the pool of upstreams from the orchestrator.
 	PoolRefresh time.Duration
 
+	// PoolTargetSize is a baseline size for the pool - the pool will accept decrements in performance to reach maintain at least this size.
+	PoolTargetSize int
+
 	// MirrorFraction is what fraction of requests will be mirrored to another random node in order to track metrics / determine the current best nodes.
 	MirrorFraction float64
 
@@ -74,6 +81,9 @@ type Config struct {
 
 	// Harness is an internal test harness that is set during testing.
 	Harness *state.State
+
+	// ComplianceCidPeriod controls how many requests caboose makes on average before requesting a compliance cid
+	ComplianceCidPeriod int64
 }
 
 const DefaultLoggingInterval = 5 * time.Second
@@ -88,8 +98,11 @@ const defaultMaxRetries = 3
 // default percentage of requests to mirror for tracking how nodes perform unless overridden by MirrorFraction
 const defaultMirrorFraction = 0.01
 
-const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes/nearby?count=200"
+const DefaultOrchestratorEndpoint = "https://orchestrator.strn.pl/nodes?maxNodes=200"
 const DefaultPoolRefreshInterval = 5 * time.Minute
+const DefaultPoolTargetSize = 30
+
+const DefaultComplianceCidPeriod = int64(100)
 
 // we cool off sending requests for a cid for a certain duration
 // if we've seen a certain number of failures for it already in a given duration.
@@ -129,7 +142,16 @@ func NewCaboose(config *Config) (*Caboose, error) {
 		config.MirrorFraction = defaultMirrorFraction
 	}
 	if override := os.Getenv(BackendOverrideKey); len(override) > 0 {
-		config.OrchestratorOverride = strings.Split(override, ",")
+		var overrideNodes []state.NodeInfo
+		err := json.Unmarshal([]byte(override), &overrideNodes)
+		if err != nil {
+			goLogger.Warnf("Error parsing BackendOverrideKey:", "err", err)
+			return nil, err
+		}
+		config.OrchestratorOverride = overrideNodes
+	}
+	if config.PoolTargetSize == 0 {
+		config.PoolTargetSize = DefaultPoolTargetSize
 	}
 
 	logger := newLogger(config)
@@ -144,12 +166,19 @@ func NewCaboose(config *Config) (*Caboose, error) {
 			Timeout: DefaultCarRequestTimeout,
 		}
 	}
+
+	c.config.Client.Transport = otelhttp.NewTransport(c.config.Client.Transport)
+
 	if c.config.OrchestratorEndpoint == nil {
 		var err error
 		c.config.OrchestratorEndpoint, err = url.Parse(DefaultOrchestratorEndpoint)
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if c.config.ComplianceCidPeriod == 0 {
+		c.config.ComplianceCidPeriod = DefaultComplianceCidPeriod
 	}
 
 	if c.config.PoolRefresh == 0 {
@@ -185,17 +214,29 @@ func (c *Caboose) Close() {
 
 // Fetch allows fetching car archives by a path of the form `/ipfs/<cid>[/path/to/file]`
 func (c *Caboose) Fetch(ctx context.Context, path string, cb DataCallback) error {
+	traceID := requestcontext.IDFromContext(ctx)
+	tid, err := trace.TraceIDFromHex(traceID)
+
 	ctx, span := spanTrace(ctx, "Fetch", trace.WithAttributes(attribute.String("path", path)))
 	defer span.End()
 
-	return c.pool.fetchResourceWith(ctx, path, cb, c.getAffinity(ctx))
+	if err == nil {
+		sc := trace.NewSpanContext(trace.SpanContextConfig{
+			TraceID: tid,
+			SpanID:  span.SpanContext().SpanID(),
+			Remote:  true,
+		})
+		ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
+	}
+
+	return c.pool.fetchResourceWith(ctx, path, cb, c.GetAffinity(ctx))
 }
 
 func (c *Caboose) Has(ctx context.Context, it cid.Cid) (bool, error) {
 	ctx, span := spanTrace(ctx, "Has", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
-	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.pool.fetchBlockWith(ctx, it, c.GetAffinity(ctx))
 	if err != nil {
 		return false, err
 	}
@@ -206,7 +247,7 @@ func (c *Caboose) Get(ctx context.Context, it cid.Cid) (blocks.Block, error) {
 	ctx, span := spanTrace(ctx, "Get", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
-	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.pool.fetchBlockWith(ctx, it, c.GetAffinity(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -218,14 +259,14 @@ func (c *Caboose) GetSize(ctx context.Context, it cid.Cid) (int, error) {
 	ctx, span := spanTrace(ctx, "GetSize", trace.WithAttributes(attribute.Stringer("cid", it)))
 	defer span.End()
 
-	blk, err := c.pool.fetchBlockWith(ctx, it, c.getAffinity(ctx))
+	blk, err := c.pool.fetchBlockWith(ctx, it, c.GetAffinity(ctx))
 	if err != nil {
 		return 0, err
 	}
 	return len(blk.RawData()), nil
 }
 
-func (c *Caboose) getAffinity(ctx context.Context) string {
+func (c *Caboose) GetAffinity(ctx context.Context) string {
 	// https://github.com/ipfs/bifrost-gateway/issues/53#issuecomment-1442732865
 	if affG := ctx.Value(gateway.ContentPathKey); affG != nil {
 		contentPath := affG.(ipath.Path).String()
